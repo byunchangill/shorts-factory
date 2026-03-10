@@ -1,0 +1,27 @@
+# 의존성
+node_modules/
+
+# API 키 (절대 커밋 금지)
+config/.env
+config/*.env*
+
+# 생성된 산출물
+output/
+
+# 작업 상태
+jobs/
+
+# bkit 런타임
+.bkit/runtime/
+.bkit/state/
+
+# Claude Code 자동 메모리
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 빌드
+dist/
+*.js.map

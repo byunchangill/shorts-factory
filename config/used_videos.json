@@ -1,0 +1,54 @@
+{
+  "videos": {
+    "nYLfckKBovY": {
+      "videoId": "nYLfckKBovY",
+      "title": "작은 강아지를 보자기에 싸서 병원으로 간 할머니",
+      "channelName": "감동접시",
+      "usageType": "selected_for_homage",
+      "jobId": "job_20260310_001",
+      "presentedAt": "2026-03-10T12:43:27.329Z",
+      "selectedAt": "2026-03-10T12:44:27.643Z"
+    },
+    "0UsBLDa4kOY": {
+      "videoId": "0UsBLDa4kOY",
+      "title": "동물들 앞에서 기절한 척 하면 보이는 반응들 (반전주의) #강아지 #반려견 #양 #오리 #염소 #거위 #감동 #동물쇼츠 #반전 #반전주의",
+      "channelName": "지구도리",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260310_001",
+      "presentedAt": "2026-03-10T12:43:27.331Z",
+      "expiresAt": "2026-03-17T12:43:27.331Z"
+    },
+    "mOhIoOXcLyg": {
+      "videoId": "mOhIoOXcLyg",
+      "title": "길 잃은 강아지 집 찾아주고 울컥함 #쇼츠 #반려동물 #감동사연",
+      "channelName": "나우박스",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260310_001",
+      "presentedAt": "2026-03-10T12:43:27.332Z",
+      "expiresAt": "2026-03-17T12:43:27.332Z"
+    },
+    "zW-5Pltwn_4": {
+      "videoId": "zW-5Pltwn_4",
+      "title": "준비없이 찾아온 이별에 오열하는 개 (반전주의) #강아지 #반려견 #댕댕이 #강아지쇼츠 #동물쇼츠 #감동 #슬픈영상 #오열 #우정 #사랑#반전 #반전주의 #김나영 #봄내음보다너를",
+      "channelName": "지구도리",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260310_001",
+      "presentedAt": "2026-03-10T12:43:27.333Z",
+      "expiresAt": "2026-03-17T12:43:27.333Z"
+    },
+    "vMR-08sWCLU": {
+      "videoId": "vMR-08sWCLU",
+      "title": "세상에서 가장 소중한 선택 #강아지 #동물키우기 #동물 #반려동물 #입양 #감동실화",
+      "channelName": "동실이",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260310_001",
+      "presentedAt": "2026-03-10T12:43:27.333Z",
+      "expiresAt": "2026-03-17T12:43:27.333Z"
+    }
+  },
+  "stats": {
+    "totalSelected": 0,
+    "totalPresented": 5,
+    "lastCleanupAt": null
+  }
+}
