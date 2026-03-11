@@ -19,9 +19,8 @@ import type {
   CharacterBible,
   ImageAsset,
   ImageVersion,
-  COMFYUI_SETTINGS,
-  COMMON_NEGATIVE_PROMPT,
 } from '../types/index.js';
+import { COMFYUI_SETTINGS, COMMON_NEGATIVE_PROMPT } from '../types/config.js';
 import type { GeneratedScript, Scene } from '../types/job.js';
 import { JobManager } from '../core/job-manager.js';
 import { emitEvent } from '../core/event-emitter.js';
@@ -456,16 +455,21 @@ export async function regenerateScene(
       throw new Error(`Scene not found: ${sceneId}`);
     }
 
+    // Get contentType from job
+    const job = jobManager.getJob(jobId);
+    if (!job) throw new Error(`Job not found: ${jobId}`);
+    const contentType = job.contentType;
+
     // Compose new prompt with scene delta
-    const styleBible = createStyleBible(script.meta as any); // Would load from saved bible
+    const styleBible = createStyleBible(contentType); // Would load from saved bible
     const characterBible = JSON.parse(
       readFileSync(join(outputDir, 'character_bible.json'), 'utf-8'),
     ) as CharacterBible;
 
-    const prompt = composePrompt(styleBible, characterBible, scene, script.meta as any);
+    const prompt = composePrompt(styleBible, characterBible, scene, contentType);
 
     // Generate new image
-    const settings = (COMFYUI_SETTINGS as any)[script.meta]; // Would get from config
+    const settings = COMFYUI_SETTINGS[contentType]; // Would get from config
     const response = await generateWithIPAdapter(
       prompt,
       join(outputDir, 'scene_1_v1.png'),
@@ -762,15 +766,4 @@ export function formatImagesForUser(
   }));
 }
 
-// ════════════════════════════════════════════════════════════════
-// Export all public functions and types
-// ════════════════════════════════════════════════════════════════
-
-export {
-  GenerationLogEntry,
-  GenerationLog,
-  ComfyUIRequest,
-  ComfyUIResponse,
-  RegenerationOptions,
-  RestorationOptions,
-};
+// All interfaces and functions above are exported inline with `export`

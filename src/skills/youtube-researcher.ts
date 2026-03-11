@@ -130,7 +130,7 @@ export async function searchYouTube(
       part: ['snippet'],
       q: query,
       type: ['video'],
-      videoDuration: ['short'],
+      videoDuration: 'short',
       order: 'viewCount',
       maxResults: Math.min(limit, 50),
       relevanceLanguage: 'ko',

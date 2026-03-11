@@ -61,7 +61,7 @@ interface CompositionParams {
  * 단일 씬의 TTS 생성 (edge-tts 사용)
  * @param scene - 생성할 씬
  * @param voiceConfig - 음성 설정 (voice, rate, pitch)
- * @param outputDir - 출력 디렉토리 (예: output/job_*/audio/)
+ * @param outputDir - 출력 디렉토리 (예: output/{jobId}/audio/)
  * @returns MP3 파일 경로 및 지속 시간 (초)
  */
 export async function generateSceneAudio(
@@ -369,7 +369,7 @@ export function composeFinalVideo(params: CompositionParams): void {
  * 각 이미지는 해당 씬의 오디오 길이만큼 표시됨
  * @param scenes - 씬 배열
  * @param timings - TTS 타이밍
- * @param imageDir - 이미지 디렉토리 (예: output/job_*/images/)
+ * @param imageDir - 이미지 디렉토리 (예: output/{jobId}/images/)
  * @param outputDir - 영상 출력 디렉토리
  * @returns 슬라이드쇼 영상 파일 경로 배열
  */
@@ -676,14 +676,14 @@ export async function executeTtsSync(jobId: string, projectDir: string): Promise
     });
 
     logger.addEntry('tts_sync_completed', { finalVideoPath });
-    logger.saveLog();
+    // addEntry() automatically persists the log
 
     return true;
   } catch (err) {
     const errorMsg = String(err);
     console.error('TTS Sync failed:', errorMsg);
     logger.addEntry('tts_sync_failed', { error: errorMsg });
-    logger.saveLog();
+    // addEntry() automatically persists the log
 
     // 실패 이벤트
     emitEvent({

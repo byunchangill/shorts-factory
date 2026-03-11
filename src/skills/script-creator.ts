@@ -292,13 +292,15 @@ export function runSimilarityCheck(
  * 건강 규정 검사 실행 (health 콘텐츠만)
  * @param script - 생성된 script
  * @param projectDir - 프로젝트 디렉토리
+ * @param contentType - 콘텐츠 타입
  * @returns ComplianceResult 또는 null (non-health는 스킵)
  */
 export function runHealthCheck(
   script: GeneratedScript,
   projectDir: string,
+  contentType: ContentType,
 ): ComplianceResult | null {
-  if (script.meta.titleCandidates[0]?.contentType !== 'health') {
+  if (contentType !== 'health') {
     return null;
   }
 
@@ -528,7 +530,7 @@ export async function onScriptGenerated(
 
     // 3. 건강 규정 검사 (health 콘텐츠만)
     if (job.contentType === 'health') {
-      const complianceResult = runHealthCheck(script, projectDir);
+      const complianceResult = runHealthCheck(script, projectDir, job.contentType);
       if (complianceResult) {
         // HealthComplianceAudit 구성
         const audit: HealthComplianceAudit = {
@@ -623,8 +625,6 @@ export function onScriptApproved(
     jobManager.transitionJob(jobId, 'script_approved', {
       eventType: 'SCRIPT_APPROVED',
       actor: 'user',
-      fromStatus: 'script_pending_approval',
-      toStatus: 'script_approved',
     });
   } catch (err) {
     console.error(`Failed to approve script for job ${jobId}:`, err);
@@ -650,8 +650,6 @@ export function onScriptRevisionRequested(
     jobManager.transitionJob(jobId, 'scripting', {
       eventType: 'SCRIPT_REVISION_REQUESTED',
       actor: 'user',
-      fromStatus: 'script_pending_approval',
-      toStatus: 'scripting',
       reasonDetail: feedback,
     });
 

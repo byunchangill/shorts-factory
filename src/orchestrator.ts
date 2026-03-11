@@ -476,4 +476,4 @@ main().catch(err => {
   process.exit(1);
 });
 
-export { ShortsOrchestrator };
+// ShortsOrchestrator is exported above as `export class`

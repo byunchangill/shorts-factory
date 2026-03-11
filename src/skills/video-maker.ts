@@ -91,7 +91,7 @@ const DOG_PRESETS: Record<string, PresetConfig> = {
     xFormula: 'if(eq(on,1),0,min(x+1.5,iw-iw/zoom))',
     yFormula: 'ih/2-(ih/zoom/2)',
     scaleWidth: -1,
-    scaleHeight: 3840,
+    scaleHeight: '3840',
     fps: 30,
     targetWidth: 1080,
     targetHeight: 1920,
@@ -130,7 +130,7 @@ const HEALTH_PRESETS: Record<string, PresetConfig> = {
     xFormula: 'if(eq(on,1),0,min(x+0.8,iw-iw/zoom))',
     yFormula: 'ih/2-(ih/zoom/2)',
     scaleWidth: -1,
-    scaleHeight: 3840,
+    scaleHeight: '3840',
     fps: 30,
     targetWidth: 1080,
     targetHeight: 1920,
@@ -632,6 +632,7 @@ export function regenerateSceneVideo(
   jobId: string,
   options: VideoRegenerationOptions,
 ): VideoAsset | null {
+  const startTime = Date.now();
   try {
     if (!existsSync(imagePath)) {
       throw new Error(`Image not found: ${imagePath}`);
@@ -726,7 +727,7 @@ export function regenerateSceneVideo(
       metadata: {
         newVersion,
         preset: preset.name,
-        durationMs: Date.now() - Date.now(),
+        durationMs: Date.now() - startTime,
       },
     });
 

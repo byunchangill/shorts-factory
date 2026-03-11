@@ -4,7 +4,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   Job,
@@ -71,7 +71,7 @@ export async function runQcReview(
   if (!job) throw new Error(`Job not found: ${jobId}`);
 
   // QC 시작 이벤트
-  await emitEvent({
+  emitEvent({
     jobId,
     fromStatus: job.status,
     toStatus: 'qc_reviewing',
@@ -94,7 +94,7 @@ export async function runQcReview(
 
   // 상태 전이 및 이벤트 발행
   if (result.overallGrade === 'pass') {
-    await emitEvent({
+    emitEvent({
       jobId,
       fromStatus: 'qc_reviewing',
       toStatus: 'qc_passed',
@@ -103,7 +103,7 @@ export async function runQcReview(
       metadata: { checks: result.checks },
     });
   } else if (result.overallGrade === 'warning') {
-    await emitEvent({
+    emitEvent({
       jobId,
       fromStatus: 'qc_reviewing',
       toStatus: 'qc_warning',
@@ -112,7 +112,7 @@ export async function runQcReview(
       metadata: { checks: result.checks, warnings: result.warnings },
     });
   } else {
-    await emitEvent({
+    emitEvent({
       jobId,
       fromStatus: 'qc_reviewing',
       toStatus: 'qc_failed',
@@ -124,8 +124,7 @@ export async function runQcReview(
 
   // 결과 저장
   const logPath = join(projectDir, job.workspace.final, 'qc_result.json');
-  const fs = await import('node:fs/promises');
-  await fs.writeFile(logPath, JSON.stringify(result, null, 2));
+  writeFileSync(logPath, JSON.stringify(result, null, 2), 'utf-8');
 
   return result;
 }
@@ -758,8 +757,8 @@ export function formatQcResult(result: QcResult): string {
 /**
  * QC 경고 무시 처리
  */
-export async function onQcOverride(jobId: string): Promise<void> {
-  await emitEvent({
+export function onQcOverride(jobId: string): void {
+  emitEvent({
     jobId,
     fromStatus: 'qc_warning',
     toStatus: 'exporting',
@@ -772,7 +771,7 @@ export async function onQcOverride(jobId: string): Promise<void> {
 /**
  * QC 실패/경고 후 특정 단계로 복귀
  */
-export async function onQcRevise(jobId: string, targetStep: 'script' | 'images' | 'video' | 'tts'): Promise<void> {
+export function onQcRevise(jobId: string, targetStep: 'script' | 'images' | 'video' | 'tts'): void {
   const eventTypeMap = {
     script: 'QC_REVISE_TO_SCRIPT' as const,
     images: 'QC_REVISE_TO_IMAGES' as const,
@@ -787,7 +786,7 @@ export async function onQcRevise(jobId: string, targetStep: 'script' | 'images' 
     tts: 'tts_generating' as const,
   };
 
-  await emitEvent({
+  emitEvent({
     jobId,
     fromStatus: null,
     toStatus: statusMap[targetStep],

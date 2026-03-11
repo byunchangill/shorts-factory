@@ -140,7 +140,7 @@ export function rewriteSentence(
 
       const result = (rewrite.template ?? '').replace('${action_stem}', stem);
       // "먹하는 것을..." 같은 부자연스러운 결과 체크
-      if (result.includes('먹하') || result.includes('먹는') === false && stem.length === 1) {
+      if (result.includes('먹하') || (!result.includes('먹는') && stem.length === 1)) {
         return rewrite.fallback ?? sentence;
       }
       return result;
