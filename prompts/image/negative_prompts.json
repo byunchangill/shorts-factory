@@ -1,0 +1,29 @@
+{
+  "version": "v1",
+  "description": "콘텐츠 타입별 Negative Prompt 정책. 재생성 시에도 항상 적용.",
+
+  "common": {
+    "description": "모든 타입에 공통 적용",
+    "prompt": "worst quality, low quality, blurry, pixelated, jpeg artifacts, watermark, signature, text overlay, username, cropped, out of frame, extra limbs, duplicate, mutilated, disfigured, deformed, ugly, bad anatomy, bad proportions, cloned face, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck, mutation, poorly drawn face, poorly drawn hands"
+  },
+
+  "dog": {
+    "description": "강아지 쇼츠 전용 네거티브 프롬프트",
+    "prompt": "realistic photo, photorealistic, 3D render, scary, aggressive, violent, blood, dark horror, sad dying, abuse imagery, skinny malnourished, medical procedures explicit, hyperrealistic fur, uncanny valley, harsh shadows, neon colors, cluttered background, text, watermark",
+    "combined": "{{common}}, realistic photo, photorealistic, 3D render, scary, aggressive, violent, blood, dark horror, sad dying, abuse imagery, skinny malnourished, medical procedures explicit, hyperrealistic fur, uncanny valley, harsh shadows, neon colors, cluttered background, text, watermark"
+  },
+
+  "sseoltoon": {
+    "description": "썰툰 전용 네거티브 프롬프트",
+    "prompt": "photorealistic, 3D, watercolor style, painted texture, blurry lineart, inconsistent line weight, messy coloring, speech bubbles, text in image, dialogue boxes, real faces, celebrity faces, political figures, gore, explicit violence, sexual content, offensive gestures",
+    "combined": "{{common}}, photorealistic, 3D, watercolor style, painted texture, blurry lineart, inconsistent line weight, messy coloring, speech bubbles, text in image, dialogue boxes, real faces, celebrity faces, political figures, gore, explicit violence, sexual content, offensive gestures"
+  },
+
+  "health": {
+    "description": "건강 쇼츠 전용 네거티브 프롬프트",
+    "prompt": "real human faces, photorealistic people, dark backgrounds, cluttered design, poor readability, serif fonts mixed, inconsistent icon style, blood, graphic medical imagery, scary anatomy, horror medical, misleading charts, blurry text areas, watermark, low contrast",
+    "combined": "{{common}}, real human faces, photorealistic people, dark backgrounds, cluttered design, poor readability, serif fonts mixed, inconsistent icon style, blood, graphic medical imagery, scary anatomy, horror medical, misleading charts, blurry text areas, watermark, low contrast"
+  },
+
+  "usage_note": "{{common}}을 실제 common.prompt 내용으로 치환하여 사용. image-generator.ts의 buildNegativePrompt() 함수에서 처리."
+}

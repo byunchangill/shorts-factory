@@ -1,0 +1,75 @@
+{
+  "_comment": "ComfyUI 워크플로우 — 썰툰 (한국 웹툰 클린 라인아트 스타일)",
+  "_version": "v1",
+  "_model_required": "counterfeit-v30.safetensors 또는 flat-2D-animerge.safetensors (웹툰 특화)",
+
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 25,
+      "cfg": 8,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "flat2DAnimerge_v45Sharp.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 768,
+      "height": 1344,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__POSITIVE_PROMPT__",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "sseoltoon_scene",
+      "images": ["8", 0]
+    }
+  },
+
+  "_lora_recommendation": {
+    "_comment": "웹툰 스타일 강화를 위한 LoRA 추천 (선택사항)",
+    "webtoon_lora": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "lora_name": "korean_webtoon_style_v2.safetensors",
+        "strength_model": 0.7,
+        "strength_clip": 0.7
+      }
+    }
+  }
+}

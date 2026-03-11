@@ -1,0 +1,67 @@
+{
+  "version": "v1",
+  "description": "강아지 쇼츠 기본 캐릭터 바이블. Job 생성 시 이 템플릿을 기반으로 커스터마이징.",
+  "usage": "image-generator.ts에서 CharacterBible 초기화 시 사용. frozen 항목은 씬 간 반드시 유지.",
+
+  "template": {
+    "characterId": "dog_main",
+    "identity": {
+      "species": "강아지 (품종은 Job별 커스터마이징)",
+      "defaultBreed": "골든 리트리버",
+      "size": "중형견",
+      "age": "성견 (3~5세 추정)",
+      "personality": "온순하고 충직하며 애정 표현이 풍부한"
+    },
+    "promptBase": "a {breed} dog, {color} fur, {size} sized, warm expressive eyes, {distinctive_feature}, watercolor illustration style",
+    "variables": {
+      "breed": "golden retriever (기본값 — Job별 변경 가능)",
+      "color": "golden blonde (기본값)",
+      "distinctive_feature": "soft fluffy tail, gentle eyes (기본값)"
+    },
+    "frozen": [
+      "breed (품종)",
+      "fur color and pattern (털 색/패턴)",
+      "body size (체형)",
+      "distinctive physical feature (핵심 외형 특징)",
+      "rendering style (수채화 일러스트)"
+    ],
+    "flexible": [
+      "facial expression (표정)",
+      "body pose (포즈)",
+      "camera angle (구도)",
+      "paw/tail position (손발/꼬리 위치)",
+      "props (소품)",
+      "background details (배경 디테일)",
+      "lighting variation (조명 변화)"
+    ],
+    "consistencyTips": [
+      "씬마다 breed와 fur color를 프롬프트에 명시적으로 포함할 것",
+      "IP-Adapter 사용 시 scene_01 이미지를 레퍼런스로 고정",
+      "표정 변화 시에도 눈 색상과 눈 모양은 유지",
+      "재생성 시 seed 값이 달라져도 frozen 항목은 프롬프트로 강제"
+    ]
+  },
+
+  "breed_presets": {
+    "golden_retriever": {
+      "promptFragment": "golden retriever, golden blonde fluffy fur, floppy ears, warm brown eyes",
+      "colorHex": "#C8860A"
+    },
+    "shiba_inu": {
+      "promptFragment": "shiba inu, orange and white fur, pointy ears, curled tail, almond eyes",
+      "colorHex": "#D2691E"
+    },
+    "corgi": {
+      "promptFragment": "pembroke welsh corgi, orange and white fur, large upright ears, short legs",
+      "colorHex": "#E67E22"
+    },
+    "maltese": {
+      "promptFragment": "maltese, pure white fluffy fur, round dark eyes, small delicate frame",
+      "colorHex": "#F5F5F5"
+    },
+    "pomeranian": {
+      "promptFragment": "pomeranian, fluffy orange-cream fur, fox-like face, small pointy ears",
+      "colorHex": "#F4A460"
+    }
+  }
+}

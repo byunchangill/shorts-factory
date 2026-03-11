@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "contentType": "health",
+  "renderStyle": "clean infographic illustration, modern flat design, 2D vector style",
+  "palette": ["#FFFFFF", "#E3F2FD", "#1565C0", "#2E7D32", "#F57F17"],
+  "lineWeight": "clean vector strokes, icon-style elements",
+  "lightingMood": "flat bright lighting, no shadows, clean clinical look",
+  "backgroundDensity": "minimal backgrounds with grid or subtle pattern",
+  "expressionTone": "informative, trustworthy, professional but approachable"
+}

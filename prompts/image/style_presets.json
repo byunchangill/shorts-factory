@@ -1,0 +1,68 @@
+{
+  "version": "v1",
+  "description": "콘텐츠 타입별 Style Bible 프리셋. image-generator.ts에서 StyleBible 초기화 시 사용.",
+
+  "dog": {
+    "renderStyle": "warm watercolor illustration, soft anime style, hand-painted texture",
+    "palette": ["#FFF3E0", "#FFCCBC", "#A5D6A7", "#B3E5FC", "#F8BBD9"],
+    "paletteDescription": "warm cream, peach, soft green, sky blue, blush pink",
+    "lineWeight": "soft, semi-transparent outlines",
+    "lightingMood": "warm afternoon sunlight, gentle shadows, golden hour tones",
+    "backgroundDensity": "soft bokeh or simple clean backgrounds",
+    "expressionTone": "emotionally expressive, warm, heartwarming",
+    "aspectRatio": "9:16",
+    "resolution": "768x1344",
+    "sampler": "DPM++ 2M Karras",
+    "steps": 28,
+    "cfgScale": 7,
+    "positiveBase": "masterpiece, best quality, warm watercolor illustration, soft anime style, heartwarming, emotionally expressive, 9:16 vertical composition, shorts format",
+    "styleKeywords": [
+      "watercolor wash", "soft gradients", "warm lighting",
+      "kawaii adjacent", "gentle pastel tones", "emotional warmth"
+    ]
+  },
+
+  "sseoltoon": {
+    "renderStyle": "Korean webtoon style, clean lineart, digital illustration",
+    "palette": ["#FFFFFF", "#1A1A2E", "#E94560", "#0F3460", "#F5A623"],
+    "paletteDescription": "white, deep navy, vivid red, dark blue, accent orange",
+    "lineWeight": "clean bold outlines, 2-3px stroke, flat color fills",
+    "lightingMood": "flat cell shading, high contrast, dramatic highlights",
+    "backgroundDensity": "simple or speed-line backgrounds for action, detailed for establishing shots",
+    "expressionTone": "dynamic expressions, comedic or dramatic reactions",
+    "aspectRatio": "9:16",
+    "resolution": "768x1344",
+    "sampler": "Euler a",
+    "steps": 25,
+    "cfgScale": 8,
+    "positiveBase": "masterpiece, best quality, Korean webtoon style, clean lineart, vivid colors, dynamic composition, 9:16 vertical format, shorts webtoon panel",
+    "styleKeywords": [
+      "clean lineart", "flat cell shading", "vibrant colors",
+      "webtoon panel composition", "expressive characters", "speed lines for action"
+    ],
+    "noTextInImage": true,
+    "noTextNote": "말풍선·텍스트·대사는 이미지에 포함하지 않음 — 자막으로 처리"
+  },
+
+  "health": {
+    "renderStyle": "clean infographic illustration, modern flat design, 2D vector style",
+    "palette": ["#FFFFFF", "#E3F2FD", "#1565C0", "#2E7D32", "#F57F17"],
+    "paletteDescription": "white background, light blue, medical blue, green, amber accent",
+    "lineWeight": "clean vector strokes, icon-style elements",
+    "lightingMood": "flat bright lighting, no shadows, clean clinical look",
+    "backgroundDensity": "minimal backgrounds with grid or subtle pattern",
+    "expressionTone": "informative, trustworthy, professional but approachable",
+    "aspectRatio": "9:16",
+    "resolution": "768x1344",
+    "sampler": "DPM++ SDE Karras",
+    "steps": 25,
+    "cfgScale": 7,
+    "positiveBase": "masterpiece, best quality, clean infographic illustration, modern flat design, professional medical style, clear visual hierarchy, 9:16 vertical format, no real faces",
+    "styleKeywords": [
+      "flat design", "infographic icons", "clean typography space",
+      "medical blue palette", "data visualization style", "modern minimalist"
+    ],
+    "noRealFaces": true,
+    "noRealFacesNote": "실제 사람 얼굴 사용 금지 — 아이콘·캐릭터·일러스트만 허용"
+  }
+}

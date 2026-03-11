@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "contentType": "dog",
+  "renderStyle": "warm watercolor illustration, soft anime style, hand-painted texture",
+  "palette": ["#FFF3E0", "#FFCCBC", "#A5D6A7", "#B3E5FC", "#F8BBD9"],
+  "lineWeight": "soft, semi-transparent outlines",
+  "lightingMood": "warm afternoon sunlight, gentle shadows, golden hour tones",
+  "backgroundDensity": "soft bokeh or simple clean backgrounds",
+  "expressionTone": "emotionally expressive, warm, heartwarming"
+}

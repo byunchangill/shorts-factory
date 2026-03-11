@@ -1,0 +1,85 @@
+{
+  "_comment": "ComfyUI 워크플로우 — 건강 쇼츠 (클린 인포그래픽 플랫 디자인 스타일)",
+  "_version": "v1",
+  "_model_required": "deliberate_v6.safetensors 또는 realisticVisionV60B1.safetensors + 플랫 디자인 LoRA",
+
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 25,
+      "cfg": 7,
+      "sampler_name": "dpm_2_ancestral",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "deliberate_v6.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 768,
+      "height": 1344,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__POSITIVE_PROMPT__",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "health_scene",
+      "images": ["8", 0]
+    }
+  },
+
+  "_flat_design_lora": {
+    "_comment": "플랫 디자인/인포그래픽 강화 LoRA (선택사항)",
+    "flat_lora": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "lora_name": "flat_design_infographic_v1.safetensors",
+        "strength_model": 0.6,
+        "strength_clip": 0.6
+      }
+    }
+  },
+
+  "_upscale_optional": {
+    "_comment": "건강 쇼츠는 텍스트 가독성 중요 → 업스케일 권장",
+    "upscale_node": {
+      "class_type": "UpscaleModelLoader",
+      "inputs": {
+        "model_name": "RealESRGAN_x4plus.pth"
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "version": "v1",
+  "description": "썰툰 기본 캐릭터 바이블. 1인칭 화자 + 주변 인물 구성.",
+  "usage": "image-generator.ts에서 CharacterBible 초기화 시 사용.",
+
+  "mainCharacter": {
+    "characterId": "narrator_main",
+    "identity": {
+      "role": "1인칭 화자 (주인공)",
+      "gender": "unspecified (Job별 설정)",
+      "age": "20~30대 직장인/학생",
+      "style": "casual modern Korean style"
+    },
+    "promptBase": "a {gender} young Korean adult, {hair_style}, wearing {outfit}, webtoon style character, expressive face, {expression}",
+    "variables": {
+      "gender": "female (기본값 — Job별 변경)",
+      "hair_style": "medium length dark hair (기본값)",
+      "outfit": "casual everyday clothes (기본값)"
+    },
+    "frozen": [
+      "face shape (얼굴형)",
+      "hair color and style (머리 색/스타일)",
+      "body type (체형)",
+      "skin tone (피부 톤)",
+      "clothing style (의상 스타일)"
+    ],
+    "flexible": [
+      "facial expression (표정 — 씬마다 다름)",
+      "body pose (포즈)",
+      "background (배경)",
+      "props (소품)",
+      "camera angle (구도)",
+      "reaction pose (리액션 포즈)"
+    ]
+  },
+
+  "supportingCharacters": {
+    "description": "조연 캐릭터. Job 스크립트에서 역할 확정 후 추가.",
+    "template": {
+      "characterId": "supporting_01",
+      "identity": {
+        "role": "역할 (예: 직장 상사, 친구, 낯선 사람)",
+        "distinctiveFeature": "구별 가능한 외형 특징"
+      },
+      "frozen": ["distinctive feature", "clothing tone"],
+      "flexible": ["expression", "pose", "background"]
+    }
+  },
+
+  "expressionLibrary": {
+    "shock": "eyes wide open, mouth agape, sweat drops",
+    "angry": "furrowed brows, gritted teeth, red face marks",
+    "happy": "big smile, sparkling eyes, rosy cheeks",
+    "embarrassed": "blushing, nervous smile, hand behind head",
+    "suspicious": "one eyebrow raised, narrowed eyes, crossed arms",
+    "crying": "tears streaming, quivering lip, closed eyes",
+    "neutral": "relaxed expression, straight mouth",
+    "surprised_positive": "starry eyes, open mouth, raised eyebrows"
+  },
+
+  "panelCompositionRules": [
+    "훅 씬: close-up on face, strong expression",
+    "배경 설명 씬: wide establishing shot with character small in frame",
+    "갈등 씬: medium shot, dynamic pose, speed lines optional",
+    "반전 씬: extreme close-up on eyes, or dramatic pull-back wide shot",
+    "해소 씬: medium warm shot, relaxed body language",
+    "CTA 씬: character facing camera, fourth-wall break friendly pose"
+  ]
+}

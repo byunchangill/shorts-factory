@@ -1,0 +1,88 @@
+{
+  "_comment": "ComfyUI 워크플로우 — 강아지 쇼츠 (수채화 일러스트 스타일)",
+  "_version": "v1",
+  "_usage": "image-generator.ts에서 ComfyUI API 호출 시 이 워크플로우 JSON을 /prompt 엔드포인트에 POST",
+  "_model_required": "dreamshaper_8.safetensors 또는 anything-v5.safetensors (수채화 특화)",
+
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "_comment_seed": "image-generator.ts에서 동적으로 주입",
+      "steps": 28,
+      "cfg": 7,
+      "sampler_name": "dpm_2_ancestral",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "dreamshaper_8.safetensors",
+      "_comment": "로컬 ComfyUI models/checkpoints/ 에 위치해야 함"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 768,
+      "height": 1344,
+      "batch_size": 1,
+      "_comment": "9:16 세로 포맷 (Shorts 규격)"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__POSITIVE_PROMPT__",
+      "_comment": "image-generator.ts에서 씬별 프롬프트로 치환",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__",
+      "_comment": "prompts/image/negative_prompts.json dog.combined 값으로 치환",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "dog_scene",
+      "images": ["8", 0]
+    }
+  },
+
+  "_ip_adapter_extension": {
+    "_comment": "IP-Adapter 일관성 노드 (캐릭터 일관성용). ComfyUI-IPAdapter-plus 설치 필요.",
+    "_reference": "https://github.com/cubiq/ComfyUI_IPAdapter_plus",
+    "_activation": "scene_02부터 scene_01 이미지를 reference로 사용",
+    "ip_adapter_node": {
+      "class_type": "IPAdapterApply",
+      "inputs": {
+        "ipadapter": ["ip_loader", 0],
+        "clip_vision": ["clip_vision_loader", 0],
+        "image": "__REFERENCE_IMAGE__",
+        "model": ["4", 0],
+        "weight": 0.5,
+        "noise": 0.1,
+        "start_at": 0,
+        "end_at": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "contentType": "sseoltoon",
+  "renderStyle": "Korean webtoon style, clean lineart, digital illustration",
+  "palette": ["#FFFFFF", "#1A1A2E", "#E94560", "#0F3460", "#F5A623"],
+  "lineWeight": "clean bold outlines, 2-3px stroke, flat color fills",
+  "lightingMood": "flat cell shading, high contrast, dramatic highlights",
+  "backgroundDensity": "simple or speed-line backgrounds for action, detailed for establishing shots",
+  "expressionTone": "dynamic expressions, comedic or dramatic reactions"
+}
