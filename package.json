@@ -5,8 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/index.ts",
+    "dev": "concurrently -n \"API,UI\" -c \"cyan,magenta\" \"npm run dev:api\" \"npm run dev:ui\"",
+    "dev:api": "tsx watch src/server.ts",
+    "dev:ui": "npm run dev --prefix client",
+    "dev:cli": "tsx src/index.ts",
+    "build": "tsc && npm run build --prefix client",
+    "build:api": "tsc",
+    "build:ui": "npm run build --prefix client",
+    "install:all": "npm install && npm install --prefix client",
     "start": "tsx src/orchestrator.ts",
     "status": "tsx src/orchestrator.ts --status",
     "preflight": "tsx src/orchestrator.ts --dry-run",
@@ -17,12 +23,16 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.59.0",
+    "concurrently": "^9.1.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "express": "^4.21.2",
     "googleapis": "^134.0.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
     "@types/node": "^20.17.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

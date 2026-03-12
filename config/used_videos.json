@@ -44,11 +44,101 @@
       "jobId": "job_20260310_001",
       "presentedAt": "2026-03-10T12:43:27.333Z",
       "expiresAt": "2026-03-17T12:43:27.333Z"
+    },
+    "v2gTJ-br9sU": {
+      "videoId": "v2gTJ-br9sU",
+      "title": "강아지한테 선택받은 순간... 다들 왜 우는 걸까요?",
+      "channelName": "재미짱",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_001",
+      "presentedAt": "2026-03-11T13:11:21.440Z",
+      "expiresAt": "2026-03-18T13:11:21.440Z"
+    },
+    "hNw9kt7AznY": {
+      "videoId": "hNw9kt7AznY",
+      "title": "음료 사러갔다가 잃어버린 반려견과 마주친 남자",
+      "channelName": "잼얘내놔",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_001",
+      "presentedAt": "2026-03-11T13:11:21.442Z",
+      "expiresAt": "2026-03-18T13:11:21.442Z"
+    },
+    "TeDHoXKQltc": {
+      "videoId": "TeDHoXKQltc",
+      "title": "문제는 강아지가 아니었습니다 #shorts",
+      "channelName": "펫피소드",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_001",
+      "presentedAt": "2026-03-11T13:11:21.443Z",
+      "expiresAt": "2026-03-18T13:11:21.443Z"
+    },
+    "1qGm12iCCyU": {
+      "videoId": "1qGm12iCCyU",
+      "title": "서울 가는 강아지에게 건넨 할머니의 마지막 한마디..😭 #Shorts #강아지 #할머니 #감동",
+      "channelName": "@감자와 맘",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_001",
+      "presentedAt": "2026-03-11T13:11:21.444Z",
+      "expiresAt": "2026-03-18T13:11:21.444Z"
+    },
+    "P_TEs4Q8hEw": {
+      "videoId": "P_TEs4Q8hEw",
+      "title": "19살 ,리트리버가 오늘도 문 앞으로 #강아지 #리트리버 #감동",
+      "channelName": "꾸르잼애니멀",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_001",
+      "presentedAt": "2026-03-11T13:11:21.444Z",
+      "expiresAt": "2026-03-18T13:11:21.444Z"
+    },
+    "jkTHfXVhSFQ": {
+      "videoId": "jkTHfXVhSFQ",
+      "title": "(감동😥🐶) 이 세상에 약한 강아지는 없습니다 #shorts",
+      "channelName": "펫피소드",
+      "usageType": "selected_for_homage",
+      "jobId": "job_20260311_002",
+      "presentedAt": "2026-03-11T00:00:00.000Z",
+      "selectedAt": "2026-03-11T00:00:00.000Z"
+    },
+    "NReqkBCG9fw": {
+      "videoId": "NReqkBCG9fw",
+      "title": "강아지가 냉장고 위에서 주인을 지켜본 이유",
+      "channelName": "감동접시",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_002",
+      "presentedAt": "2026-03-11T00:00:00.000Z",
+      "expiresAt": "2026-03-18T00:00:00.000Z"
+    },
+    "7kFfMea6S1A": {
+      "videoId": "7kFfMea6S1A",
+      "title": "나를 싫어하던 강아지의 진심",
+      "channelName": "마음다락방",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_002",
+      "presentedAt": "2026-03-11T00:00:00.000Z",
+      "expiresAt": "2026-03-18T00:00:00.000Z"
+    },
+    "WJt1oLypOK4": {
+      "videoId": "WJt1oLypOK4",
+      "title": "잃어버린 강아지를 4년만에 찾은 순간",
+      "channelName": "감동접시",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_002",
+      "presentedAt": "2026-03-11T00:00:00.000Z",
+      "expiresAt": "2026-03-18T00:00:00.000Z"
+    },
+    "WAyx8qUTn4o": {
+      "videoId": "WAyx8qUTn4o",
+      "title": "1살 리트리버 구조이야기",
+      "channelName": "한국리트리버레스큐",
+      "usageType": "presented_not_selected",
+      "jobId": "job_20260311_002",
+      "presentedAt": "2026-03-11T00:00:00.000Z",
+      "expiresAt": "2026-03-18T00:00:00.000Z"
     }
   },
   "stats": {
-    "totalSelected": 0,
-    "totalPresented": 5,
+    "totalSelected": 1,
+    "totalPresented": 15,
     "lastCleanupAt": null
   }
 }
