@@ -357,7 +357,12 @@ router.post('/tts/preview', async (req, res) => {
     emotion: z.string().optional(),
   }).parse(req.body ?? {});
   try {
-    const audio = await typecastSynthesize(body.text, body.voiceId, { emotion: body.emotion });
+    // 미리듣기도 실제 합성과 같은 속도로 들려줘야 판단이 맞는다
+    const settings = await loadSettings();
+    const audio = await typecastSynthesize(body.text, body.voiceId, {
+      emotion: body.emotion,
+      tempo: settings.speechRate,
+    });
     res.setHeader('Content-Type', AUDIO_MIME);
     res.send(audio);
   } catch (e) {

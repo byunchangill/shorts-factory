@@ -252,6 +252,12 @@ export const SettingsSchema = z.object({
   }).default({ anthropic: 'claude-sonnet-4-5', openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash' }),
   // 음성: 타입캐스트 API로 합성하거나 씬별 음성 파일을 첨부한다
   typecastVoiceId: z.string().default(''),
+  /**
+   * 나레이션 속도 배율. 쇼츠는 빠른 낭독이 유지율에 유리해 기본 1.25배.
+   * 합성 음성에만 적용된다 — 첨부 파일은 사용자가 의도한 속도로 본다.
+   * 이 값이 대본 분량 기준을 좌우한다 (300자/분 × 배율).
+   */
+  speechRate: z.number().min(0.5).max(2).default(1.25),
   // 한글 폰트 (자막 번인·텍스트 카드에 필요). 비우면 시스템에서 자동 탐색
   fontPath: z.string().default(''),
   /**

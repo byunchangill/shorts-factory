@@ -121,6 +121,37 @@ export const COUPANG_PARTNERS_DISCLOSURE =
 
 export const API_PORT = 4310;
 
+// ── 대본 분량 ─────────────────────────────────────────────────────
+
+/** 한국어 TTS 정속 낭독 속도 (분당 글자 수) */
+export const CHARS_PER_MIN = 300;
+
+/**
+ * 목표 영상 길이 (초).
+ * 짧게 끝내 완주율을 올리는 전략이라 상한이 30초다.
+ * 이 길이는 배속과 함께 계산돼야 한다 — 1.25배속에서 30초는 약 187자다.
+ */
+export const TARGET_SEC = { min: 20, recommended: 27, max: 30 } as const;
+
+/**
+ * 배속을 반영한 글자 수 상·하한.
+ * 상한은 내림, 하한은 올림한다 — 반올림하면 경계에서 목표 시간을 넘긴다
+ * (1.25배속 30초는 187.5자라, 반올림 188자는 30.08초가 되어 상한 위반).
+ */
+export function charBudget(speechRate: number): { min: number; recommended: number; max: number } {
+  const perSec = (CHARS_PER_MIN * speechRate) / 60;
+  return {
+    min: Math.ceil(TARGET_SEC.min * perSec),
+    recommended: Math.round(TARGET_SEC.recommended * perSec),
+    max: Math.floor(TARGET_SEC.max * perSec),
+  };
+}
+
+/** 글자 수 → 예상 낭독 시간 (초) */
+export function estimateSeconds(chars: number, speechRate: number): number {
+  return (chars / (CHARS_PER_MIN * speechRate)) * 60;
+}
+
 // ── API 키 ────────────────────────────────────────────────────────
 
 export const API_KEY_NAMES = ['youtube', 'anthropic', 'openai', 'gemini', 'typecast'] as const;

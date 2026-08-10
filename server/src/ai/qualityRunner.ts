@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { RESULT_SCHEMAS } from '@shared/types';
-import type { AiProvider } from '@shared/constants';
+import { charBudget, type AiProvider } from '@shared/constants';
 import { REPO_ROOT, loadSettings } from '../store/workspace.js';
 import { readPacket, writePacket, resolvePacketDir } from '../claude/packets.js';
 import { runProvider } from './providers.js';
@@ -87,6 +87,7 @@ async function runQc(
   requestMd: string,
   scriptJson: string,
   knowledge: string,
+  budget: { min: number; recommended: number; max: number },
 ): Promise<QcVerdict> {
   const prompt = `너는 쇼핑쇼츠 대본 검수자다. 아래 대본을 냉정하게 채점하라.
 
@@ -100,7 +101,7 @@ ${knowledge.slice(0, 6000)}
 ${scriptJson}
 
 [배점 100점]
-- 낭독 시간 20점: 나레이션 총 글자수 ÷ 300 × 60초가 30~58초 범위. 범위 밖이면 0점
+- 낭독 시간 20점: 나레이션 총 글자수가 ${budget.min}~${budget.max}자 범위 (${settings.speechRate}배속 기준 20~30초). 범위 밖이면 0점
 - 훅 강도 20점: 첫 씬이 가격충격/질문/반전/문제상황/시연 중 하나. 설명형이면 0점
 - 소재 정합성 20점: clipRef의 clipId가 요청서 소재현황 표에 실제로 있는가. 없으면 0점
 - 나레이션/자막 분리 10점: 같은 문장이면 0점
@@ -157,6 +158,7 @@ export async function runPacketQuality(packetId: string, provider: AiProvider): 
   const settings = await loadSettings();
   const requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   const knowledge = await loadStructureKnowledge();
+  const budget = charBudget(settings.speechRate);
 
   const outputSpec = packet.resultSpec
     .map((s) => `- \`${s.file}\`: ${s.schema === 'markdown' ? '마크다운 본문' : '유효한 JSON'}`)
@@ -184,7 +186,8 @@ ${knowledge}
 - 짧은 문장 → 감탄 → 반전 → 리액션 → 추가 정보 리듬
 - 광고처럼 느껴지면 실패다. "해당 제품은/장점은/추천드립니다/결론적으로" 사용 금지
 - 감정 표현(미친, 환장하는, 레전드)은 허용. 단 효능·성능 허위 과장(무조건, 100%, 기적, 완치)은 금지
-- 나레이션 총 230~280자 (약 46~56초)
+- **30초 이내로 끝낸다.** 나레이션 총 ${budget.min}~${budget.max}자 (권장 ${budget.recommended}자, ${settings.speechRate}배속 기준)
+- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중하고 배경 설명은 넣지 않는다 — 훅 → 핵심 → 반전 → CTA
 - 저장·댓글·공유·구매욕 포인트를 각각 넣는다
 
 [출력 형식]
@@ -216,7 +219,7 @@ JSON은 파싱 가능한 형태여야 하며 설명 문장은 붙이지 마라.`
     if (!scriptFile || !files[scriptFile]) break; // 대본이 아닌 패킷은 검수 없이 통과
 
     report(packetId, 'qc', `검수 중 (${attempt + 1}회차)`);
-    const verdict = await runQc(provider, settings, requestMd, files[scriptFile], knowledge);
+    const verdict = await runQc(provider, settings, requestMd, files[scriptFile], knowledge, budget);
     lastVerdict = verdict;
     report(packetId, 'qc-result', `${verdict.score}점 ${verdict.pass ? '통과' : '반려'}`);
 

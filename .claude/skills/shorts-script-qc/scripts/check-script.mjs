@@ -9,10 +9,14 @@
  */
 import { readFileSync } from 'node:fs';
 
-/** 한국어 TTS 낭독 속도 — 분당 약 300자 */
+/**
+ * 한국어 TTS 정속 낭독 속도 — 분당 약 300자.
+ * 실제 낭독 시간은 배속 설정에 따라 달라지므로 speechRate를 곱해 계산한다.
+ * 배속은 workspace/settings.json에서 읽고, --rate 로 덮어쓸 수 있다.
+ */
 const CHARS_PER_MIN = 300;
-const MIN_SEC = 45;
-const MAX_SEC = 58;
+const MIN_SEC = 20;
+const MAX_SEC = 30;
 
 /** 과장·단정 표현. 적발 시 점수와 무관하게 반려 */
 const BANNED = [
@@ -23,11 +27,30 @@ const BANNED = [
 /** 효능 단정 패턴 — "~에 좋다" 단정형은 완화 표현으로 바꿔야 한다 */
 const STRONG_CLAIM = /(치료|완화)(된다|됩니다|해준다|해줍니다)|효과가 (있습니다|확실)/;
 
-const path = process.argv[2];
+const args = process.argv.slice(2);
+const path = args.find((a) => !a.startsWith('--'));
 if (!path) {
-  console.error('사용: node check-script.mjs <script.json 경로>');
+  console.error('사용: node check-script.mjs <script.json 경로> [--rate 1.25]');
   process.exit(2);
 }
+
+/** 배속 결정: --rate > settings.json > 기본 1.25 */
+function resolveRate() {
+  const flagIdx = args.indexOf('--rate');
+  if (flagIdx >= 0 && args[flagIdx + 1]) {
+    const v = parseFloat(args[flagIdx + 1]);
+    if (v > 0) return v;
+  }
+  for (const p of ['workspace/settings.json', '../workspace/settings.json']) {
+    try {
+      const s = JSON.parse(readFileSync(p, 'utf8'));
+      if (typeof s.speechRate === 'number' && s.speechRate > 0) return s.speechRate;
+    } catch { /* 다음 후보 */ }
+  }
+  return 1.25;
+}
+const RATE = resolveRate();
+const charsPerSec = (CHARS_PER_MIN * RATE) / 60;
 
 let script;
 try {
@@ -44,18 +67,18 @@ if (scenes.length === 0) {
 }
 
 const narrationTotal = scenes.reduce((s, sc) => s + (sc.narration ?? '').length, 0);
-const estSec = (narrationTotal / CHARS_PER_MIN) * 60;
+const estSec = narrationTotal / charsPerSec;
 
 const problems = [];
 const warnings = [];
 
-// 1. 낭독 시간
+// 1. 낭독 시간 (배속 반영)
 const timeOk = estSec >= MIN_SEC && estSec <= MAX_SEC;
 if (!timeOk) {
   const target = estSec > MAX_SEC ? MAX_SEC : MIN_SEC;
-  const diffChars = Math.round(((estSec - target) / 60) * CHARS_PER_MIN);
+  const diffChars = Math.round((estSec - target) * charsPerSec);
   problems.push(
-    `낭독 시간 ${estSec.toFixed(1)}초 (허용 ${MIN_SEC}~${MAX_SEC}초) — ` +
+    `낭독 시간 ${estSec.toFixed(1)}초 (허용 ${MIN_SEC}~${MAX_SEC}초, ${RATE}배속 기준) — ` +
     `${diffChars > 0 ? `${diffChars}자 줄여야` : `${-diffChars}자 늘려야`} 합니다`,
   );
 }
@@ -106,11 +129,16 @@ console.log(`대본 기계 검사: ${script.title || '(제목 없음)'}`);
 console.log(line);
 console.log(`씬 수          ${scenes.length}개`);
 console.log(`나레이션 총량  ${narrationTotal}자`);
+// 상한은 내림·하한은 올림 — 반올림하면 경계에서 목표 시간을 넘긴다 (shared/constants.ts와 동일 규칙)
+console.log(
+  `낭독 배속      ${RATE}배 (${MIN_SEC}~${MAX_SEC}초 = ` +
+  `${Math.ceil(MIN_SEC * charsPerSec)}~${Math.floor(MAX_SEC * charsPerSec)}자)`,
+);
 console.log(`예상 낭독      ${estSec.toFixed(1)}초  ${timeOk ? '적정' : '범위 밖'}`);
 console.log(`\n씬별 분포`);
 for (const sc of scenes) {
   const len = (sc.narration ?? '').length;
-  const sec = ((len / CHARS_PER_MIN) * 60).toFixed(1);
+  const sec = (len / charsPerSec).toFixed(1);
   const ref = sc.clipRef?.clipId ?? (sc.imagePrompt ? '이미지' : '—');
   console.log(`  ${sc.sceneId}  ${String(len).padStart(3)}자 / ${String(sec).padStart(4)}초  ${ref}`);
 }

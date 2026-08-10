@@ -19,6 +19,7 @@ interface Settings {
   defaultAiProvider: 'anthropic' | 'openai' | 'gemini';
   aiModels: { anthropic: string; openai: string; gemini: string };
   typecastVoiceId: string;
+  speechRate: number;
   fontPath: string;
   layout: 'fullscreen' | 'framed';
   frameTitle: string;
@@ -244,6 +245,23 @@ export default function SettingsPage() {
         <p className="text-sm text-slate-500">
           나레이션은 <b>타입캐스트 API</b>로 합성하거나, 작업 화면에서 <b>씬별 음성 파일을 첨부</b>합니다.
           첨부된 씬은 합성하지 않고 그 파일을 그대로 사용합니다.
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="w-28 shrink-0 font-medium">낭독 속도</span>
+          <Input
+            type="number" step="0.05" min={0.5} max={2}
+            className="w-24"
+            value={form.speechRate}
+            onChange={(e) => set({ speechRate: Number(e.target.value) })}
+          />
+          <span className="text-xs text-slate-400">배 (합성 음성에만 적용)</span>
+        </div>
+        <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
+          이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 30초 영상에
+          최대 <b>{Math.round((30 * 300 * (form.speechRate || 1)) / 60)}자</b>
+          (권장 {Math.round((27 * 300 * (form.speechRate || 1)) / 60)}자)까지 쓸 수 있습니다.
+          첨부한 음성 파일은 원본 속도 그대로 사용됩니다.
         </p>
         <p className="mt-2 text-xs text-slate-500">
           타입캐스트 키는 "API 키" 메뉴에서 등록하고, 캐릭터는 작업의 음성 단계에서 미리듣기로 고릅니다.

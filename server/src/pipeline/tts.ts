@@ -57,6 +57,7 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
       fileName = `scene_${String(i + 1).padStart(2, '0')}${AUDIO_EXT}`;
       await typecastSynthesize(scene.narration, typecastVoiceId, path.join(voiceDir, fileName), {
         emotion: typecastEmotion,
+        tempo: settings.speechRate, // 쇼츠는 빠른 낭독이 유지율에 유리하다
       });
       source = 'typecast';
     }
