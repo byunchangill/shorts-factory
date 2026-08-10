@@ -4,7 +4,7 @@ import type { Settings, Script } from '@shared/types';
 import { ensureDir, exists, writeJsonAtomic } from '../util/fsx.js';
 import { probeDuration } from './probe.js';
 import { broadcast } from '../sse.js';
-import { synthesizeToFile as typecastSynthesize } from './voice/typecast.js';
+import { synthesizeToFile as typecastSynthesize, AUDIO_EXT } from './voice/typecast.js';
 
 export interface SceneTiming {
   sceneId: string;
@@ -21,6 +21,8 @@ export interface NarrationOptions {
   jobId: string;
   /** 타입캐스트 캐릭터 id. 모든 씬에 파일이 첨부됐다면 없어도 된다 */
   typecastVoiceId: string;
+  /** 감정 프리셋 (선택) */
+  typecastEmotion?: string;
   /** sceneId → voice/ 안의 업로드된 파일명. 있으면 합성 대신 이 파일을 쓴다 */
   sceneVoiceFiles: Record<string, string>;
 }
@@ -31,7 +33,7 @@ export interface NarrationOptions {
  * voice/timing.json이 자막·조립의 기준이 되며, 어느 경로든 이 인터페이스는 같다.
  */
 export async function synthesizeNarration(opts: NarrationOptions): Promise<SceneTiming[]> {
-  const { settings, script, voiceDir, jobId, typecastVoiceId, sceneVoiceFiles } = opts;
+  const { settings, script, voiceDir, jobId, typecastVoiceId, typecastEmotion, sceneVoiceFiles } = opts;
   await ensureDir(voiceDir);
   const timings: SceneTiming[] = [];
   let cursor = 0;
@@ -51,8 +53,11 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
           `씬 ${scene.sceneId}: 음성 파일이 첨부되지 않았고 타입캐스트 캐릭터도 선택되지 않았습니다`,
         );
       }
-      fileName = `scene_${String(i + 1).padStart(2, '0')}.mp3`;
-      await typecastSynthesize(scene.narration, typecastVoiceId, path.join(voiceDir, fileName));
+      // 확장자는 실제 요청한 오디오 포맷과 일치해야 ffprobe/조립이 오작동하지 않는다
+      fileName = `scene_${String(i + 1).padStart(2, '0')}${AUDIO_EXT}`;
+      await typecastSynthesize(scene.narration, typecastVoiceId, path.join(voiceDir, fileName), {
+        emotion: typecastEmotion,
+      });
       source = 'typecast';
     }
 

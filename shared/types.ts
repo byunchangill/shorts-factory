@@ -194,6 +194,7 @@ export const JobSchema = z.object({
   }).default({ currentVersion: 0, approved: false }),
   voiceEngine: z.enum(['typecast', 'file']).optional(), // 실제 사용된 엔진
   typecastVoiceId: z.string().optional(),
+  typecastEmotion: z.string().optional(), // ssfm-v30 감정 프리셋
   sceneVoiceFiles: z.record(z.string()).default({}), // sceneId → 업로드된 음성 파일명
   exportedAt: z.string().optional(), // 마지막 내보내기 시각
   rightsConfirmed: z.boolean().default(false), // 조립 전 저작권 확인 게이트

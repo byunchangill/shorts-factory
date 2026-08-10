@@ -12,7 +12,9 @@ import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQue
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
-import { listVoices as listTypecastVoices, synthesize as typecastSynthesize } from '../pipeline/voice/typecast.js';
+import {
+  listVoices as listTypecastVoices, synthesize as typecastSynthesize, AUDIO_MIME,
+} from '../pipeline/voice/typecast.js';
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir } from '../pipeline/exporter.js';
 import { hasKey } from '../store/secrets.js';
@@ -325,15 +327,16 @@ router.get('/tts/engine', async (_req, res) => {
   res.json({ typecastReady, typecastVoices: voices, error });
 });
 
-/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 mp3로 바로 반환 */
+/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 오디오로 바로 반환 */
 router.post('/tts/preview', async (req, res) => {
   const body = z.object({
     voiceId: z.string().min(1),
     text: z.string().default('안녕하세요, 이 목소리로 나레이션을 만들어 드릴게요.'),
+    emotion: z.string().optional(),
   }).parse(req.body ?? {});
   try {
-    const audio = await typecastSynthesize(body.text, body.voiceId);
-    res.setHeader('Content-Type', 'audio/mpeg');
+    const audio = await typecastSynthesize(body.text, body.voiceId, { emotion: body.emotion });
+    res.setHeader('Content-Type', AUDIO_MIME);
     res.send(audio);
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
@@ -372,6 +375,7 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({
     typecastVoiceId: z.string().optional(), // 타입캐스트 캐릭터
+    emotion: z.string().optional(), // 감정 프리셋
   }).parse(req.body ?? {});
   const settings = await loadSettings();
   const job = await jobs.readJob(ref);
@@ -383,6 +387,7 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   if (!script) return res.status(400).json({ error: '대본 파일 없음' });
 
   const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
+  const typecastEmotion = body.emotion ?? job.typecastEmotion;
 
   // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
   const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
@@ -404,6 +409,7 @@ router.post('/jobs/:jid/tts', async (req, res) => {
     await jobs.advanceTo(ref, 'voicing');
     await jobs.mutateJob(ref, (j) => {
       j.typecastVoiceId = typecastVoiceId;
+      j.typecastEmotion = typecastEmotion;
       j.voiceEngine = allUploaded ? 'file' : 'typecast';
     });
     await synthesizeNarration({
@@ -412,6 +418,7 @@ router.post('/jobs/:jid/tts', async (req, res) => {
       voiceDir,
       jobId: ref.jobId,
       typecastVoiceId,
+      typecastEmotion,
       sceneVoiceFiles: job.sceneVoiceFiles,
     });
     await jobs.logJobEvent(ref, {

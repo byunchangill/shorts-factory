@@ -473,11 +473,24 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
 
 // ── 음성 ──────────────────────────────────────────────────────────
 
+interface TypecastVoice {
+  id: string;
+  name: string;
+  model: string;
+  emotions: string[];
+}
 interface EngineInfo {
   typecastReady: boolean;
-  typecastVoices: Array<{ id: string; name: string; language: string; gender: string }>;
+  typecastVoices: TypecastVoice[];
   error?: string;
 }
+
+/** ssfm-v30 감정 프리셋 한글 라벨 */
+const EMOTION_LABELS: Record<string, string> = {
+  normal: '기본', happy: '밝게', sad: '차분하게', angry: '강하게',
+  whisper: '속삭임', toneup: '톤 높게', tonedown: '톤 낮게',
+  tonemid: '톤 중간',
+};
 
 function VoicePanel({ job }: { job: JobDetail }) {
   const qc = useQueryClient();
@@ -492,8 +505,11 @@ function VoicePanel({ job }: { job: JobDetail }) {
   });
 
   const [typecastVoiceId, setTypecastVoiceId] = useState(job.typecastVoiceId ?? '');
+  const [emotion, setEmotion] = useState('');
   const [runningTts, setRunningTts] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+
+  const selectedVoice = (engineInfo.data?.typecastVoices ?? []).find((v) => v.id === typecastVoiceId);
 
   const upload = useMutation({
     mutationFn: ({ sceneId, file }: { sceneId: string; file: File }) => {
@@ -512,7 +528,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
   const tts = useMutation({
     mutationFn: () => {
       setRunningTts(true);
-      return api.post(`/jobs/${job.id}/tts`, { typecastVoiceId });
+      return api.post(`/jobs/${job.id}/tts`, { typecastVoiceId, emotion: emotion || undefined });
     },
     onError: (e: Error) => {
       setRunningTts(false);
@@ -531,7 +547,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
       const r = await fetch('/api/tts/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voiceId: typecastVoiceId }),
+        body: JSON.stringify({ voiceId: typecastVoiceId, emotion: emotion || undefined }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({ error: '미리듣기 실패' }));
@@ -573,17 +589,29 @@ function VoicePanel({ job }: { job: JobDetail }) {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">캐릭터</span>
                 <select
-                  className="min-w-[240px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  className="min-w-[220px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   value={typecastVoiceId}
-                  onChange={(e) => setTypecastVoiceId(e.target.value)}
+                  onChange={(e) => { setTypecastVoiceId(e.target.value); setEmotion(''); }}
                 >
-                  <option value="">선택하세요</option>
+                  <option value="">선택하세요 ({engineInfo.data?.typecastVoices.length ?? 0}종)</option>
                   {(engineInfo.data?.typecastVoices ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}{v.gender ? ` · ${v.gender}` : ''}{v.language ? ` · ${v.language}` : ''}
-                    </option>
+                    <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
                 </select>
+
+                {selectedVoice && selectedVoice.emotions.length > 0 && (
+                  <select
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    value={emotion}
+                    onChange={(e) => setEmotion(e.target.value)}
+                  >
+                    <option value="">감정 기본</option>
+                    {selectedVoice.emotions.map((em) => (
+                      <option key={em} value={em}>{EMOTION_LABELS[em] ?? em}</option>
+                    ))}
+                  </select>
+                )}
+
                 <Button variant="secondary" onClick={preview} disabled={!typecastVoiceId || previewing}>
                   {previewing ? <Spinner /> : <Play size={14} />} 미리듣기
                 </Button>
