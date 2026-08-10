@@ -8,7 +8,7 @@ import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel } from '../store/workspace.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
-import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
+import { downloadAll, retrySource, isDownloading, reconcileDownloadState } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
@@ -121,20 +121,19 @@ router.post('/jobs/:jid/download/start', async (req, res) => {
   if (!job) return res.status(404).json({ error: '잡 없음' });
   if (job.state === 'collecting') await jobs.transition(ref, 'downloading', 'server');
 
+  // 이미 전부 받아둔 잡이 이전 실행에서 멈춰 있었다면 여기서 풀어준다
+  // (다운로드할 게 없으면 아래 downloadAll은 즉시 끝나므로 어느 쪽이든 전진한다)
+  if (await reconcileDownloadState(ref)) {
+    return res.json({ started: false, advanced: true });
+  }
+
   // 비동기 실행 — 진행률은 SSE로 푸시. 실패해도 서버가 죽지 않도록 반드시 catch한다
   void downloadAll(settings, ref)
-    .then(async () => {
-      const j = await jobs.readJob(ref);
-      if (j && j.state === 'downloading') {
-        const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
-        if (allDone && j.sources.length > 0) {
-          // probe/프레임은 다운로드 직후 이미 끝났으므로 정리 단계까지 보낸다
-          await jobs.advanceTo(ref, 'cleaning');
-        }
-      }
-    })
+    .then(() => reconcileDownloadState(ref))
     .catch(async (e) => {
       const msg = e instanceof Error ? e.message : String(e);
+      // 콘솔에도 남긴다 — 안 그러면 events.ndjson을 직접 열어보기 전까지 아무 흔적이 없다
+      console.error(`[download] ${ref.jobId} 실패:`, msg);
       await jobs.logJobEvent(ref, { type: 'download.failed', error: msg }).catch(() => {});
       broadcast('download.failed', { jobId: ref.jobId, error: msg });
     });

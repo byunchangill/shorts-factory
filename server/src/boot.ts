@@ -1,5 +1,6 @@
 import { initWorkspace } from './store/workspace.js';
-import { scanJobs } from './store/jobs.js';
+import { scanJobs, listJobRefs } from './store/jobs.js';
+import { reconcileDownloadState } from './pipeline/downloadQueue.js';
 import { scanPackets } from './claude/packets.js';
 import { startResultWatcher, startResultSweep, catchUpPendingResults } from './claude/resultWatcher.js';
 
@@ -56,6 +57,26 @@ async function step(name: string, fn: () => Promise<void> | void): Promise<void>
 }
 
 /**
+ * 다운로드는 끝났는데 다음 단계로 못 넘어간 잡을 풀어준다.
+ * 전진은 다운로드 요청의 백그라운드 콜백에서 일어나므로, 그 사이 서버가 재시작되면
+ * 소스는 전부 "완료"인데 상태만 `downloading`에 갇힌다. 부팅 때 한 번 훑어 수습한다.
+ */
+async function recoverStalledDownloads(): Promise<void> {
+  let recovered = 0;
+  for (const ref of listJobRefs()) {
+    try {
+      if (await reconcileDownloadState(ref)) {
+        recovered++;
+        console.log(`[boot] 중단된 다운로드 수습: ${ref.jobId} → 자막/워터마크 제거 단계`);
+      }
+    } catch (e) {
+      console.error(`[boot] ${ref.jobId} 수습 실패:`, e instanceof Error ? e.message : e);
+    }
+  }
+  if (recovered) console.log(`[boot] 멈춰 있던 잡 ${recovered}건을 다음 단계로 전진시켰습니다`);
+}
+
+/**
  * workspace 초기화 + 인덱스 재구성 + 요청서 워처 기동.
  * 절대 throw 하지 않는다 — 실패는 부팅 상태에 기록되고 phase가 degraded가 된다.
  */
@@ -66,6 +87,7 @@ export async function bootstrap(): Promise<BootState> {
   await step('요청서 결과 워처', () => startResultWatcher());
   await step('밀린 결과 수습', () => catchUpPendingResults());
   await step('결과 재확인 타이머', () => startResultSweep());
+  await step('중단된 다운로드 수습', recoverStalledDownloads);
 
   const failed = state.steps.filter((s) => s.error);
   state.phase = failed.length ? 'degraded' : 'ready';

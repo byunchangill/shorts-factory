@@ -37,6 +37,11 @@ export function resolveJob(jobId: string): JobRef | null {
   return jobIndex.get(jobId) ?? null;
 }
 
+/** 인덱싱된 모든 잡 — 부팅 시 일괄 점검용 */
+export function listJobRefs(): JobRef[] {
+  return [...jobIndex.values()];
+}
+
 export async function readJob(ref: JobRef): Promise<Job | null> {
   const raw = await readJson<unknown>(paths.jobJson(ref.menu, ref.projectId, ref.jobId));
   const parsed = JobSchema.safeParse(raw);

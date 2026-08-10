@@ -21,6 +21,10 @@ export function useServerEvents(): void {
       qc.setQueryData(['source-progress', data.jobId, data.sourceId], data.progress);
     });
     es.addEventListener('download.finished', () => invalidate('job', 'clips', 'active-jobs'));
+    es.addEventListener('download.failed', (e) => {
+      alert(`다운로드 실패: ${JSON.parse((e as MessageEvent).data).error}`);
+      invalidate('job', 'active-jobs');
+    });
     es.addEventListener('clip', () => invalidate('clips'));
     es.addEventListener('clean.done', () => invalidate('clips'));
     es.addEventListener('clean.failed', (e) => {

@@ -121,6 +121,11 @@ function SourcesPanel({ job }: { job: JobDetail }) {
   });
   const retry = (sid: string) => api.post(`/jobs/${job.id}/sources/${sid}/retry`).then(() => qc.invalidateQueries({ queryKey: ['job'] }));
 
+  // 전부 받았는데 아직 다음 단계로 안 넘어간 상태 (서버 재시작 등으로 전진이 끊긴 경우)
+  const allSourcesReady =
+    job.sources.length > 0 &&
+    job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+
   const statusBadge = (s: SourceInfo) => {
     const map: Record<string, { label: string; color: 'slate' | 'blue' | 'green' | 'red' | 'amber' }> = {
       queued: { label: '대기', color: 'slate' },
@@ -150,11 +155,23 @@ function SourcesPanel({ job }: { job: JobDetail }) {
           URL 추가
         </Button>
         {job.sources.length > 0 && (
-          <Button variant="secondary" onClick={() => start.mutate()} disabled={job.downloading || start.isPending}>
-            {job.downloading ? <>다운로드 진행 중… <Spinner /></> : '다운로드 시작'}
+          <Button
+            variant={allSourcesReady ? 'primary' : 'secondary'}
+            onClick={() => start.mutate()}
+            disabled={job.downloading || start.isPending}
+          >
+            {job.downloading
+              ? <>다운로드 진행 중… <Spinner /></>
+              : allSourcesReady ? '다음 단계로' : '다운로드 시작'}
           </Button>
         )}
       </div>
+
+      {allSourcesReady && !job.downloading && (
+        <p className="mt-2 text-sm text-slate-500">
+          소스를 모두 받았습니다. <strong>다음 단계로</strong>를 누르면 자막/워터마크 제거로 넘어갑니다.
+        </p>
+      )}
 
       {job.sources.length > 0 && (
         <table className="mt-4 w-full text-sm">
