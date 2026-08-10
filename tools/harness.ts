@@ -622,6 +622,31 @@ async function main(): Promise<void> {
     return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
   });
 
+  // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
+  await step('요청서 파일 감시 — result/.done 감지 → 자동 반영', async () => {
+    const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'upload-kit' });
+    const resultDir = path.join(jobDir, 'requests', p.id, 'result');
+    await fsp.mkdir(resultDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(resultDir, 'upload-kit.md'),
+      '# 업로드 킷\n\n## 제목 후보 (5개)\n1. 3만원 충전기 실화\n\n## 설명\n' +
+      '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n' +
+      '## 해시태그\n#충전기\n\n## 썸네일 문구\n3만원의 실력\n',
+      'utf8',
+    );
+    // AI는 산출물을 다 쓴 뒤 마지막에 .done을 만든다 — 서버는 이걸 보고 검증·반영한다
+    const t0 = Date.now();
+    await fsp.writeFile(path.join(resultDir, '.done'), '', 'utf8');
+    const d = await waitFor('결과 감지', async () => {
+      const v = await get<PacketView>(`/packets/${p.id}`);
+      return v.status === 'received' ? v : null;
+    }, 12_000, 200);
+    const sec = (Date.now() - t0) / 1000;
+    assert(d.validationErrors.length === 0, `검증 오류: ${d.validationErrors.join(', ')}`);
+    // 5초 스윕이 안전망으로 잡아주긴 하지만, 그건 워처가 놓쳤다는 뜻이다
+    return `${sec.toFixed(1)}초 만에 반영 ${sec < 4 ? '(파일 워처)' : '⚠ 스윕 폴백 — 워처가 놓침'}`;
+  });
+
   // ── 완료 + 내보내기 ──
   await step('완료 처리 → 제품 폴더 자동 내보내기', async () => {
     await post(`/jobs/${jid}/transition`, { to: 'done' });

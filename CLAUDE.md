@@ -91,6 +91,10 @@
   단계를 건너뛰는 `transition()` 호출은 실패한다
 - 백그라운드 작업(`void fn()`)에는 반드시 `.catch()`를 단다 — 없으면 로컬 서버가 통째로 죽는다
 - 서브프로세스는 `util/exec.ts`의 `run()` 사용 — 인자 배열 방식만, 셸 문자열 조립 금지
+- ffmpeg **필터** 안에 파일 경로를 넣을 때는 `escapeFilterPath()` 경유, **concat 목록**에는 `toConcatPath()` 경유.
+  윈도우 경로의 `\`와 `:`가 필터·데먹서 문법과 충돌한다 (필터그래프는 2단계로 파싱되므로 콜론은 `\\:`)
+- 작업공간 파일 감시 대상은 `isWatchIgnored()`로 좁힌다 — 원자적 쓰기 임시 파일을 감시하면
+  윈도우에서 rename이 EPERM으로 막힌다
 - 스키마 변경은 `shared/types.ts`에서만 (서버·클라이언트·요청서 검증이 모두 여기 의존)
 - API 키는 `workspace/secrets.json`에만 저장, 응답에는 마스킹된 값만 (`store/secrets.ts`)
 - 유튜브 API는 반드시 `youtube/client.ts`의 `ytFetch` 경유 — 쿼터 확인·차감·캐시가 여기 있다. 무료 한도(10,000유닛/일) 밖의 기능은 구현하지 않는다
