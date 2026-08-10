@@ -99,7 +99,11 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
 
   // 2) 비디오 concat — 타임라인 순서 그대로
   const concatList = path.join(tmpDir, 'concat.txt');
-  await fsp.writeFile(concatList, timeline.map((t) => `file '${t.file}'`).join('\n'), 'utf8');
+  await fsp.writeFile(
+    concatList,
+    timeline.map((t) => `file '${toConcatPath(t.file)}'`).join('\n'),
+    'utf8',
+  );
   const videoOnly = path.join(tmpDir, 'video_concat.mp4');
   await run(settings.ffmpegPath, [
     '-y', '-f', 'concat', '-safe', '0', '-i', concatList,
@@ -134,7 +138,11 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     normalized.push(out);
   }
   const audioList = path.join(tmpDir, 'audio_concat.txt');
-  await fsp.writeFile(audioList, normalized.map((f) => `file '${f}'`).join('\n'), 'utf8');
+  await fsp.writeFile(
+    audioList,
+    normalized.map((f) => `file '${toConcatPath(f)}'`).join('\n'),
+    'utf8',
+  );
   const audioOnly = path.join(tmpDir, 'narration.m4a');
   await run(settings.ffmpegPath, [
     '-y', '-f', 'concat', '-safe', '0', '-i', audioList,
@@ -174,7 +182,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   // 5) 합치기 (+자막 번인)
   const finalPath = path.join(outDir, `final_v${version}.mp4`);
   const vf = input.burnSubtitles
-    ? ['-vf', `ass=${assPath.replace(/([:\\])/g, '\\$1')}`]
+    ? ['-vf', `ass=${escapeFilterPath(assPath)}`]
     : [];
   await run(settings.ffmpegPath, [
     '-y', '-i', videoOnly, '-i', audioOnly,
@@ -234,6 +242,16 @@ export function buildLayoutFilter(settings: Settings, font: string | null): stri
       `fontcolor=white:fontsize=52:x=(w-text_w)/2:y=${Math.round(H * 0.085)}`;
   }
   return graph;
+}
+
+/**
+ * concat 목록에 넣을 경로.
+ * ffmpeg의 concat 데먹서는 백슬래시를 이스케이프 문자로 해석하므로,
+ * 윈도우 경로를 그대로 쓰면 `C:\Users\...`의 `\U`가 깨진다.
+ * 윈도우 ffmpeg도 슬래시 경로를 받아들이므로 통일한다.
+ */
+export function toConcatPath(p: string): string {
+  return p.replace(/\\/g, '/');
 }
 
 async function resolveVisual(

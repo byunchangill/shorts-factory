@@ -75,11 +75,42 @@ async function softStep(name: string, fn: () => Promise<string>): Promise<boolea
 
 class HarnessFailure extends Error {}
 
+/**
+ * 폴링을 즉시 중단시키는 오류.
+ * 서버가 이미 실패를 기록했다면 더 기다려봐야 타임아웃까지 버티는 시간만 낭비된다.
+ */
+class ProbeAbort extends Error {}
+
 /** 서버가 죽었을 때 원인을 바로 보여주기 위한 로그 꼬리 */
 async function tailServerLog(lines = 12): Promise<string> {
   if (!serverLog) return '(로그 없음)';
   const text = await fsp.readFile(serverLog, 'utf8').catch(() => '');
   return text.trim().split('\n').slice(-lines).join('\n      ') || '(로그 비어 있음)';
+}
+
+/**
+ * 잡 이벤트 로그(events.ndjson)에서 실패 기록을 찾는다.
+ * 파이프라인 실패는 잡 상태를 바꾸지 않고 이벤트로만 남으므로,
+ * 이걸 보지 않으면 "완료 대기"가 타임아웃까지 계속 돈다.
+ */
+async function jobFailure(...types: string[]): Promise<string | null> {
+  if (!jobDir) return null;
+  const text = await fsp.readFile(path.join(jobDir, 'events.ndjson'), 'utf8').catch(() => '');
+  const lines = text.trim().split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]) continue;
+    try {
+      const e = JSON.parse(lines[i]) as { type?: string; error?: string };
+      if (e.type && types.includes(e.type)) return e.error || '(사유 미기록)';
+    } catch { /* 기록 중이라 잘린 줄 — 무시 */ }
+  }
+  return null;
+}
+
+/** 실패 이벤트가 있으면 폴링을 즉시 끊는다 */
+async function abortIfFailed(...types: string[]): Promise<void> {
+  const err = await jobFailure(...types);
+  if (err) throw new ProbeAbort(`${types[0]} — ${err}\n      서버 로그:\n      ${await tailServerLog(20)}`);
 }
 
 function assert(cond: unknown, message: string): asserts cond {
@@ -125,6 +156,7 @@ async function waitFor<T>(
       const v = await probe();
       if (v !== null && v !== undefined) return v;
     } catch (e) {
+      if (e instanceof ProbeAbort) throw e; // 재시도해도 소용없는 실패
       lastErr = e instanceof Error ? e.message : String(e);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -214,6 +246,7 @@ let workspace = '';
 let exportRoot = '';
 let serverLog = '';
 let serverDied = '';
+let jobDir = ''; // 잡 폴더 절대경로 — 실패 이벤트 조기 감지에 쓴다
 let timingsTotal = 0; // 나레이션 총 길이 — 카드 삽입 검증 기준
 
 async function main(): Promise<void> {
@@ -341,6 +374,7 @@ async function main(): Promise<void> {
     return [j, `${j.id} (draft)`];
   });
   const jid = job.id;
+  jobDir = path.join(workspace, 'menu-a', productName, 'jobs', jid);
 
   // ── 다운로드 ──
   await step('소스 URL 등록 (draft → collecting)', async () => {
@@ -358,9 +392,10 @@ async function main(): Promise<void> {
   await step('yt-dlp 다운로드 실행', async () => {
     await post(`/jobs/${jid}/download/start`);
     const v = await waitFor('다운로드 완료', async () => {
+      await abortIfFailed('download.failed');
       const j = await get<JobView>(`/jobs/${jid}`);
       const failed = j.sources.filter((s) => s.status === 'failed');
-      if (failed.length) throw new Error(`다운로드 실패: ${failed[0].error}`);
+      if (failed.length) throw new ProbeAbort(`다운로드 실패: ${failed[0].error}`);
       return j.sources.every((s) => s.status === 'downloaded') ? j : null;
     });
     assert(v.sources.every((s) => s.filePath), '다운로드 파일 경로가 기록되지 않음');
@@ -397,6 +432,7 @@ async function main(): Promise<void> {
   await step('1차 제거 실행 (ffmpeg filtergraph)', async () => {
     for (const clip of clips) await post(`/jobs/${jid}/clips/${clip.id}/clean`, { tier: 1 });
     const done = await waitFor('정리본 생성', async () => {
+      await abortIfFailed('clip.clean_failed');
       const c = await get<ClipView[]>(`/jobs/${jid}/clips`);
       return c.every((x) => x.currentCleanVersion) ? c : null;
     }, 180_000);
@@ -525,7 +561,10 @@ async function main(): Promise<void> {
 
     await step('첨부 파일로 타이밍 생성', async () => {
       await post(`/jobs/${jid}/tts`, {});
-      const timings = await waitFor('타이밍 생성', readTiming, 60_000);
+      const timings = await waitFor('타이밍 생성', async () => {
+        await abortIfFailed('tts.failed');
+        return readTiming();
+      }, 60_000);
       assert(Array.isArray(timings) && timings.length === scenes.length,
         `타이밍 씬 수 불일치: ${timings.length}`);
       assert(timings.every((t: { source: string }) => t.source === 'file'),
@@ -551,12 +590,12 @@ async function main(): Promise<void> {
   await step('최종 조립 (9:16 · 자막 번인 · 공시문구)', async () => {
     await post(`/jobs/${jid}/assemble`, {});
     const j = await waitFor('조립 완료', async () => {
+      await abortIfFailed('assemble.failed');
       const v = await get<JobView>(`/jobs/${jid}`);
-      if (v.state === 'failed') throw new Error('조립 실패 상태');
+      if (v.state === 'failed') throw new ProbeAbort('조립 실패 상태');
       return v.output.currentVersion ? v : null;
     }, 300_000);
-    const finalPath = path.join(
-      workspace, 'menu-a', productName, 'jobs', jid, 'output', `final_v${j.output.currentVersion}.mp4`);
+    const finalPath = path.join(jobDir, 'output', `final_v${j.output.currentVersion}.mp4`);
     const stat = await fsp.stat(finalPath);
     assert(stat.size > 10_000, `최종 영상이 너무 작음: ${stat.size} bytes`);
 
@@ -588,6 +627,7 @@ async function main(): Promise<void> {
     await post(`/jobs/${jid}/transition`, { to: 'done' });
     const dir = path.join(exportRoot, productName);
     await waitFor('내보내기 완료', async () => {
+      await abortIfFailed('export.failed');
       const j = await get<JobView>(`/jobs/${jid}`);
       return j.exportedAt ? j : null;
     }, 120_000);
@@ -613,7 +653,6 @@ async function main(): Promise<void> {
 
   // ── 상태 파일 무결성 ──
   await step('상태 파일 · 감사 로그 무결성', async () => {
-    const jobDir = path.join(workspace, 'menu-a', productName, 'jobs', jid);
     const jobJson = JSON.parse(await fsp.readFile(path.join(jobDir, 'job.json'), 'utf8'));
     assert(jobJson.state === 'done', `최종 상태가 done이 아님: ${jobJson.state}`);
     const history: string[] = jobJson.stateHistory.map((h: { state: string }) => h.state);
@@ -679,7 +718,8 @@ async function countFiles(dir: string): Promise<number> {
   return n;
 }
 
-async function cleanup(): Promise<void> {
+/** @param keepFiles 실패 시 true — 서버 로그·중간 산출물을 남겨 원인을 볼 수 있게 한다 */
+async function cleanup(keepFiles: boolean): Promise<void> {
   // 서버를 확실히 정리한다. 남아 있으면 다음 실행이 낡은 작업공간을 가리키는
   // 이 서버에 붙어버려 원인 파악이 어려운 실패가 난다.
   if (server?.pid) {
@@ -692,12 +732,12 @@ async function cleanup(): Promise<void> {
   }
   mediaServer?.close();
   await new Promise((r) => setTimeout(r, 200));
-  if (!KEEP && workspace) {
+  if (!KEEP && !keepFiles && workspace) {
     await fsp.rm(path.dirname(workspace), { recursive: true, force: true }).catch(() => {});
   }
 }
 
-function report(): boolean {
+async function report(): Promise<boolean> {
   const failed = results.filter((r) => !r.ok);
   const skipped = results.filter((r) => r.skipped);
   const total = results.reduce((s, r) => s + r.ms, 0);
@@ -707,23 +747,31 @@ function report(): boolean {
   if (failed.length) {
     console.log(C.red('\n실패한 단계:'));
     for (const f of failed) console.log(`  ✘ ${f.name}\n    ${f.detail}`);
-    if (serverLog) console.log(C.dim(`\n  서버 로그: ${serverLog}`));
+    // 실패 원인은 대개 서버 쪽 스택에 있다. 파일을 열어보라고 안내만 하지 말고 바로 보여준다
+    if (serverLog) {
+      console.log(C.dim('\n  서버 로그 (마지막 25줄):'));
+      console.log(C.dim(`      ${await tailServerLog(25)}`));
+      console.log(C.dim(`\n  전체 로그: ${serverLog}`));
+    }
   }
-  if (KEEP) console.log(C.dim(`\n산출물 보존됨: ${path.dirname(workspace)}`));
+  if (KEEP || failed.length) {
+    console.log(C.dim(`\n산출물 보존됨: ${path.dirname(workspace)}`));
+  }
   console.log();
   return failed.length === 0;
 }
 
 main()
   .then(async () => {
-    await cleanup();
-    process.exit(report() ? 0 : 1);
+    const ok = await report();
+    await cleanup(!ok);
+    process.exit(ok ? 0 : 1);
   })
   .catch(async (e) => {
     if (!(e instanceof HarnessFailure)) {
       console.error(C.red(`\n하네스 오류: ${e instanceof Error ? e.stack : String(e)}`));
     }
-    await cleanup();
-    report();
+    await report();
+    await cleanup(true);
     process.exit(1);
   });

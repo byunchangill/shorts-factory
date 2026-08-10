@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SettingsSchema } from '@shared/types';
 import { wrapCardText, suggestCards } from './cards.js';
-import { buildLayoutFilter } from './assemble.js';
+import { buildLayoutFilter, toConcatPath } from './assemble.js';
 import { fontFamilyOf, escapeDrawText, escapeFilterPath } from './fonts.js';
 
 describe('wrapCardText', () => {
@@ -86,7 +86,18 @@ describe('폰트 유틸', () => {
     expect(escapeDrawText('50%')).toContain('\\%');
   });
 
-  it('윈도우 경로의 드라이브 콜론을 이스케이프', () => {
-    expect(escapeFilterPath('C:/Windows/Fonts/malgun.ttf')).toBe('C\\:/Windows/Fonts/malgun.ttf');
+  it('윈도우 경로의 드라이브 콜론을 2단계 이스케이프', () => {
+    // 필터그래프는 두 번 파싱되므로 백슬래시 하나로는 옵션 구분자로 먹힌다
+    expect(escapeFilterPath('C:/Windows/Fonts/malgun.ttf')).toBe('C\\\\:/Windows/Fonts/malgun.ttf');
+  });
+
+  it('윈도우 백슬래시 경로를 슬래시로 정규화', () => {
+    expect(escapeFilterPath('C:\\Windows\\Fonts\\malgun.ttf')).toBe('C\\\\:/Windows/Fonts/malgun.ttf');
+  });
+
+  it('concat 목록 경로는 백슬래시를 슬래시로 바꾼다', () => {
+    // concat 데먹서는 백슬래시를 이스케이프로 해석해 `\U`, `\s` 등이 깨진다
+    expect(toConcatPath('C:\\Users\\me\\jobs\\seg_01.mp4')).toBe('C:/Users/me/jobs/seg_01.mp4');
+    expect(toConcatPath('/home/me/jobs/seg_01.mp4')).toBe('/home/me/jobs/seg_01.mp4');
   });
 });

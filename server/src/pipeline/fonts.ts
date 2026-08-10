@@ -70,9 +70,17 @@ export function fontFamilyOf(fontPath: string | null): string {
   return 'Sans';
 }
 
-/** ffmpeg 필터 인자에 넣을 때 쓰는 이스케이프 (경로의 : 와 \ 는 필터 문법과 충돌) */
+/**
+ * ffmpeg 필터 인자에 넣을 경로 이스케이프.
+ *
+ * 윈도우 경로(`C:\Users\...`)가 필터 문법과 충돌하는 지점이 두 곳이다:
+ * - 백슬래시는 이스케이프 문자로 먹히므로 슬래시로 바꾼다 (윈도우 ffmpeg도 슬래시를 받는다)
+ * - 콜론은 필터 옵션 구분자다. 필터그래프 문자열은 **두 단계**로 파싱되므로
+ *   (그래프 분해 → 옵션 분해) 백슬래시 하나로는 부족하고 `\\:`가 되어야 한다.
+ *   실측: `ass=C\:/x.ass`는 "/x.ass를 image size로 파싱 실패"로 죽고 `ass=C\\:/x.ass`는 통과한다.
+ */
 export function escapeFilterPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/:/g, '\\:');
+  return p.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 }
 
 /** drawtext의 text= 값 이스케이프 */
