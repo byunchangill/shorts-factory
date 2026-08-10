@@ -6,9 +6,15 @@ import { ensureDir, readJson, writeJsonAtomic, exists } from '../util/fsx.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** 리포 루트의 workspace/ — Claude Code와 서버가 공유하는 유일한 데이터 저장소 */
-export const WORKSPACE_ROOT = path.resolve(dirname, '../../../workspace');
 export const REPO_ROOT = path.resolve(dirname, '../../..');
+
+/**
+ * 리포 루트의 workspace/ — AI와 서버가 공유하는 유일한 데이터 저장소.
+ * SHORTS_WORKSPACE로 덮어쓸 수 있다 (하네스가 실제 데이터를 건드리지 않고 돌기 위해).
+ */
+export const WORKSPACE_ROOT = process.env.SHORTS_WORKSPACE
+  ? path.resolve(process.env.SHORTS_WORKSPACE)
+  : path.resolve(REPO_ROOT, 'workspace');
 
 export const paths = {
   root: () => WORKSPACE_ROOT,

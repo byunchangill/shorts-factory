@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal } from 'lucide-react';
+import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal, Zap, Users } from 'lucide-react';
 import {
   PACKET_KIND_LABELS, AI_PROVIDERS, AI_PROVIDER_LABELS,
   type PacketKind, type AiProvider,
@@ -22,7 +22,7 @@ export interface PacketInfo {
 }
 
 interface PacketDetail extends PacketInfo {
-  command: string;
+  commands: { fast: string; quality: string };
   requestMd: string;
   resultSpec: Array<{ file: string; schema: string }>;
 }
@@ -37,6 +37,15 @@ const STATUS_LABEL: Record<string, { label: string; color: 'slate' | 'blue' | 'g
 
 type Tab = 'claude-code' | 'api' | 'manual';
 
+/** 고품질 모드 진행 단계 표시 */
+const PROGRESS_LABELS: Record<string, string> = {
+  research: '경쟁 쇼츠 리서치',
+  draft: '대본 작성',
+  qc: '검수',
+  'qc-result': '검수 결과',
+  retry: '재작성',
+};
+
 export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: boolean }) {
   const qc = useQueryClient();
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -47,6 +56,22 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
   const [pasteText, setPasteText] = useState('');
   const [runError, setRunError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [mode, setMode] = useState<'fast' | 'quality'>('quality');
+  const [progress, setProgress] = useState<string | null>(null);
+
+  // 고품질 모드는 여러 단계를 거치므로 진행 상황을 실시간으로 보여준다
+  useEffect(() => {
+    if (!running) return;
+    const es = new EventSource('/api/events');
+    const onProgress = (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      if (d.packetId !== packet.id) return;
+      setProgress(PROGRESS_LABELS[d.step] ?? d.step);
+      if (d.detail) setProgress(`${PROGRESS_LABELS[d.step] ?? d.step} — ${d.detail}`);
+    };
+    es.addEventListener('packet.progress', onProgress as EventListener);
+    return () => es.close();
+  }, [running, packet.id]);
 
   const active = packet.status === 'waiting' || packet.status === 'received';
   const detail = useQuery({
@@ -73,10 +98,11 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
     },
   });
   const runApi = useMutation({
-    mutationFn: (provider: AiProvider) => {
+    mutationFn: ({ provider, mode }: { provider: AiProvider; mode: 'fast' | 'quality' }) => {
       setRunning(true);
       setRunError(null);
-      return api.post(`/packets/${packet.id}/run`, { provider });
+      setProgress(mode === 'quality' ? '시작하는 중…' : null);
+      return api.post(`/packets/${packet.id}/run`, { provider, mode });
     },
     onError: (e: Error) => {
       setRunning(false);
@@ -142,24 +168,90 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
           </div>
 
           {tab === 'claude-code' && (
-            <div className="space-y-1.5">
-              <p className="text-xs text-slate-500">이 리포의 Claude Code 터미널에서 실행하세요. 결과는 자동 감지됩니다.</p>
-              <div className="flex items-center gap-1.5">
-                <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
-                  {detail.data.command}
-                </code>
-                <Button variant="secondary" className="px-2 py-1.5" onClick={() => copy(detail.data!.command, 'cmd')}>
-                  {copied === 'cmd' ? <Check size={14} /> : <Copy size={14} />}
-                </Button>
+            <div className="space-y-2.5">
+              <p className="text-xs text-slate-500">
+                이 리포의 Claude Code 터미널에서 실행하세요. 결과는 자동 감지됩니다.
+              </p>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Zap size={13} className="text-slate-400" />
+                  <span className="text-xs font-medium">빠르게 — 혼자 처리</span>
+                  <span className="text-xs text-slate-400">토큰 적게, 수십 초</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
+                    {detail.data.commands.fast}
+                  </code>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-1.5"
+                    onClick={() => copy(detail.data!.commands.fast, 'fast')}
+                  >
+                    {copied === 'fast' ? <Check size={14} /> : <Copy size={14} />}
+                  </Button>
+                </div>
               </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Users size={13} className="text-violet-500" />
+                  <span className="text-xs font-medium">고품질 — 팀 처리</span>
+                  <span className="text-xs text-slate-400">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-violet-300">
+                    {detail.data.commands.quality}
+                  </code>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-1.5"
+                    onClick={() => copy(detail.data!.commands.quality, 'quality')}
+                  >
+                    {copied === 'quality' ? <Check size={14} /> : <Copy size={14} />}
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-400">
+                반복 양산은 빠르게, 채널 대표 영상이나 새 포맷 첫 편은 고품질을 권합니다.
+              </p>
             </div>
           )}
 
           {tab === 'api' && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <p className="text-xs text-slate-500">
-                등록된 API 키로 서버가 직접 실행합니다. 결과가 형식에 안 맞으면 한 번 자동 재시도합니다.
+                등록된 API 키로 서버가 직접 실행합니다. 터미널 없이 버튼만 누르면 됩니다.
               </p>
+
+              {/* 품질 모드 선택 — 웹에서 바로 고른다 */}
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {([
+                  ['fast', '빠르게', Zap, '1회 호출 · 수십 초 · 토큰 적게'],
+                  ['quality', '고품질', Users, '리서치 → 대본 → 검수 → 재작성 · 몇 분 · 토큰 많이'],
+                ] as const).map(([key, label, Icon, desc]) => (
+                  <button
+                    key={key}
+                    onClick={() => setMode(key)}
+                    disabled={running}
+                    className={clsx(
+                      'rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50',
+                      mode === key
+                        ? 'border-brand-500 bg-brand-50'
+                        : 'border-slate-200 bg-white hover:border-slate-300',
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 text-sm font-medium">
+                      <Icon size={14} className={key === 'quality' ? 'text-violet-500' : 'text-slate-400'} />
+                      {label}
+                      {mode === key && <Check size={13} className="text-brand-600" />}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-500">{desc}</span>
+                  </button>
+                ))}
+              </div>
+
               {availableProviders.length === 0 ? (
                 <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
                   등록된 AI API 키가 없습니다. "API 키" 메뉴에서 Anthropic·OpenAI·Gemini 중 하나를 등록하세요.
@@ -167,15 +259,21 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {availableProviders.map((p) => (
-                    <Button key={p} variant="secondary" onClick={() => runApi.mutate(p)} disabled={running}>
+                    <Button key={p} onClick={() => runApi.mutate({ provider: p, mode })} disabled={running}>
                       {AI_PROVIDER_LABELS[p]}(으)로 실행
                     </Button>
                   ))}
                 </div>
               )}
+
               {running && (
                 <p className="flex items-center gap-1.5 text-sm text-slate-500">
-                  <Spinner /> AI가 작성 중… 완료되면 자동으로 표시됩니다
+                  <Spinner /> {progress ?? 'AI가 작성 중…'} — 완료되면 자동으로 표시됩니다
+                </p>
+              )}
+              {mode === 'quality' && !running && (
+                <p className="text-xs text-slate-400">
+                  고품질은 실측 69편 기반 조회수 구조를 적용하고, 85점 미만이면 최대 2회 다시 씁니다.
                 </p>
               )}
             </div>

@@ -3,14 +3,23 @@ import { createApp } from './app.js';
 import { initWorkspace } from './store/workspace.js';
 import { scanJobs } from './store/jobs.js';
 import { scanPackets } from './claude/packets.js';
-import { startResultWatcher, catchUpPendingResults } from './claude/resultWatcher.js';
+import { startResultWatcher, startResultSweep, catchUpPendingResults } from './claude/resultWatcher.js';
 import { runDoctor } from './doctor.js';
+
+// 백그라운드 작업(다운로드·조립 등)의 예외가 로컬 서버를 통째로 죽이지 않도록 방어
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.stack ?? err);
+});
 
 await initWorkspace();
 await scanJobs();
 await scanPackets();
 startResultWatcher();
 await catchUpPendingResults();
+startResultSweep();
 
 const doctor = await runDoctor();
 for (const t of doctor.tools) {

@@ -63,14 +63,16 @@ export async function testKey(name: ApiKeyName, key: string): Promise<KeyTestRes
         return { ok: true, detail: `모델 ${data.models?.length ?? 0}종 사용 가능` };
       }
       case 'typecast': {
-        const r = await fetchWithTimeout('https://typecast.ai/api/voices', {
+        const r = await fetchWithTimeout('https://api.typecast.ai/v1/voices', {
           method: 'GET',
           headers: { 'X-API-KEY': key },
         });
         if (!r.ok) return { ok: false, error: await shortError(r) };
         const data = await r.json();
-        const count = Array.isArray(data) ? data.length : (data.result?.length ?? data.voices?.length ?? 0);
-        return { ok: true, detail: `보이스 ${count}종 사용 가능` };
+        const count = Array.isArray(data)
+          ? data.length
+          : (data.voices?.length ?? data.result?.length ?? data.items?.length ?? 0);
+        return { ok: true, detail: `캐릭터 ${count}종 사용 가능` };
       }
     }
   } catch (e) {

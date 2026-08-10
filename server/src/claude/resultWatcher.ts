@@ -11,6 +11,10 @@ import { saveFormat } from '../store/formats.js';
 import { broadcast } from '../sse.js';
 
 let watcher: FSWatcher | null = null;
+let sweepTimer: NodeJS.Timeout | null = null;
+
+/** 워처가 이벤트를 놓쳐도 결과가 반드시 반영되도록 하는 안전망 주기 */
+const SWEEP_INTERVAL_MS = 5_000;
 
 /**
  * requests/{packetId}/result/.done 파일 생성을 감지 → 결과 검증 → 반영.
@@ -34,11 +38,18 @@ export function startResultWatcher(): void {
 }
 
 export async function stopResultWatcher(): Promise<void> {
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
   await watcher?.close();
   watcher = null;
 }
 
-/** 부팅 시: 대기 중인데 .done이 이미 있는 패킷 처리 (서버 꺼진 사이 도착한 결과) */
+/**
+ * 대기 중인데 .done이 이미 있는 패킷을 처리한다.
+ * - 부팅 시 1회: 서버가 꺼진 사이 도착한 결과 수습
+ * - 이후 주기 실행: 파일 워처가 이벤트를 놓쳐도 결과가 결국 반영되게 하는 안전망
+ *   (대기 상태 패킷만 훑으므로 비용이 거의 없다)
+ */
 export async function catchUpPendingResults(): Promise<void> {
   const packets = await listAllPackets();
   for (const p of packets) {
@@ -48,6 +59,16 @@ export async function catchUpPendingResults(): Promise<void> {
       await ingestPacketResult(p.id);
     }
   }
+}
+
+export function startResultSweep(): void {
+  if (sweepTimer) return;
+  sweepTimer = setInterval(() => {
+    void catchUpPendingResults().catch((e) => {
+      console.error('[resultSweep]', e instanceof Error ? e.message : e);
+    });
+  }, SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
 }
 
 export async function ingestPacketResult(packetId: string): Promise<void> {

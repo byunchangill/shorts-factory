@@ -14,10 +14,12 @@
     "dev:ui": "npm run dev -w client",
     "build": "npm run build -w server && npm run build -w client",
     "test": "npm run test -w server",
+    "harness": "tsx tools/harness.ts",
     "doctor": "npm run doctor -w server"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2"
   },
   "engines": {
     "node": ">=20"

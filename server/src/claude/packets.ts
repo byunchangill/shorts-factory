@@ -1,8 +1,8 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { PacketSchema, type Packet, type Product, type Clip } from '@shared/types';
-import { PACKET_KIND_LABELS, type PacketKind, type Menu } from '@shared/constants';
-import { paths, toWorkspaceRel, WORKSPACE_ROOT } from '../store/workspace.js';
+import { PACKET_KIND_LABELS, charBudget, type PacketKind, type Menu } from '@shared/constants';
+import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
 import { ensureDir, listDirs, readJson, writeJsonAtomic } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
 import { readAllGuidelines, readProduct, listProductFiles } from '../store/projects.js';
@@ -132,9 +132,20 @@ const RESULT_SPECS: Record<PacketKind, Array<{ file: string; schema: string }>> 
   revision: [{ file: 'script.json', schema: 'script' }],
 };
 
-/** Claude Code에서 실행할 명령 문자열 (UI 복사 버튼용) */
-export function packetCommand(packet: Packet): string {
-  return `claude "/answer-job workspace/${packet.dir.replace(/^\/?/, '')}"`;
+export interface PacketCommands {
+  /** 단독 처리 — 빠르고 저렴 */
+  fast: string;
+  /** 에이전트 팀 처리 — 리서치·검수를 거쳐 품질이 높지만 느리고 토큰을 많이 쓴다 */
+  quality: string;
+}
+
+/** Claude Code에서 실행할 명령 (UI 복사 버튼용) */
+export function packetCommands(packet: Packet): PacketCommands {
+  const dir = `workspace/${packet.dir.replace(/^\/?/, '')}`;
+  return {
+    fast: `claude "/answer-job ${dir}"`,
+    quality: `claude "/shorts-content-team ${dir}"`,
+  };
 }
 
 // ── request.md 빌더 ───────────────────────────────────────────────
@@ -259,7 +270,16 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
 
   // ⑥ 검증 규칙
   lines.push('## 검증 규칙');
-  lines.push(VALIDATION_RULES[packet.kind]);
+  // 분량 기준은 배속 설정에 따라 달라지므로 발행 시점의 값으로 치환한다
+  const settings = await loadSettings();
+  const budget = charBudget(settings.speechRate);
+  lines.push(
+    VALIDATION_RULES[packet.kind]
+      .replace('{SPEECH_RATE}', String(settings.speechRate))
+      .replace('{CHAR_MIN}', String(budget.min))
+      .replace('{CHAR_MAX}', String(budget.max))
+      .replace('{CHAR_REC}', String(budget.recommended)),
+  );
   lines.push('');
   lines.push('---');
   lines.push('파일을 만들 수 있는 도구라면, 작성이 끝난 뒤 마지막에 `result/.done` 빈 파일을 생성하세요.');
@@ -321,7 +341,7 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
   "tone": { "persona": "화자 캐릭터", "speechLevel": "해요체", "bannedWords": [] },
   "sceneTemplate": { "layout": "레이아웃 규칙", "imageStylePrompt": "이미지 스타일 프롬프트", "subtitleStyle": "자막 스타일", "transition": "전환 규칙" },
   "branding": { "channelName": "채널명", "colorPalette": ["#000000"], "watermarkText": "" },
-  "ttsVoice": "ko-KR-SunHiNeural"
+  "typecastVoiceId": ""
 }
 \`\`\``,
   'scene-images': `scenes.json: [{ "sceneId": "s01", "imagePrompt": "...", "negativePrompt": "..." }] 배열.
@@ -334,7 +354,8 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
 
 const VALIDATION_RULES: Record<PacketKind, string> = {
   'product-extract': '- 첨부 자료에 없는 사실을 지어내지 않는다\n- 효능/성능 주장은 자료 원문 근거가 있는 것만 포함',
-  script: `- 총 낭독 시간 45~58초 (한국어 TTS 기준 분당 약 300자 → 총 250~290자)
+  script: `- **30초 이내로 끝낸다.** {SPEECH_RATE}배속 낭독 기준 한국어 {CHAR_MIN}~{CHAR_MAX}자 (권장 {CHAR_REC}자)
+- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
 - 원본 영상의 문장을 그대로 옮기지 않는다 (구조만 참고)
 - 과장 금지: "무조건", "100%", "기적", "완치" 등 사용 금지
 - 첫 씬은 3초 훅

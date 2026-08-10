@@ -4,6 +4,7 @@ import { RESULT_SCHEMAS } from '@shared/types';
 import type { AiProvider, PacketMode } from '@shared/constants';
 import { loadSettings } from '../store/workspace.js';
 import { readPacket, writePacket, resolvePacketDir } from '../claude/packets.js';
+import { ingestPacketResult } from '../claude/resultWatcher.js';
 import { runProvider } from './providers.js';
 import { parseResultFiles } from './extract.js';
 import { broadcast } from '../sse.js';
@@ -38,8 +39,12 @@ async function writeResultFiles(
     await writePacket(packet);
   }
 
-  // .done은 반드시 마지막 — 워처가 이 파일을 완료 신호로 본다
+  // .done은 반드시 마지막 — 외부 도구(Claude Code)와 동일한 완료 신호를 남긴다
   await fsp.writeFile(path.join(resultDir, '.done'), '', 'utf8');
+
+  // 서버가 직접 쓴 결과는 워처를 기다릴 필요가 없다. 즉시 반영해
+  // 파일 감지 타이밍에 의존하지 않게 한다 (워처가 나중에 같은 패킷을 봐도 무시된다).
+  await ingestPacketResult(packetId);
 }
 
 /** 스키마 위반을 미리 잡아 재프롬프트에 쓸 오류 메시지를 만든다 */

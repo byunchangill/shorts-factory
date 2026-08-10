@@ -1,11 +1,20 @@
 {
   "parallelDownloads": 3,
-  "defaultTtsVoice": "ko-KR-SunHiNeural",
   "burnSubtitles": true,
   "burnDisclosure": true,
   "ytdlpPath": "yt-dlp",
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
-  "edgeTtsPath": "edge-tts",
-  "iopaintPath": "iopaint"
+  "iopaintPath": "iopaint",
+  "exportRoot": "",
+  "exportIncludeSources": false,
+  "exportOnDone": true,
+  "defaultPacketMode": "claude-code",
+  "defaultAiProvider": "anthropic",
+  "aiModels": {
+    "anthropic": "claude-sonnet-4-5",
+    "openai": "gpt-4o-mini",
+    "gemini": "gemini-2.0-flash"
+  },
+  "typecastVoiceId": ""
 }

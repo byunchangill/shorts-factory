@@ -1,6 +1,6 @@
 ---
 name: answer-job
-description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 발행한 요청서 폴더 경로를 받아 request.md의 지시대로 result/ 산출물을 작성한다. "/answer-job workspace/..." 형태로 호출되거나, 요청서 폴더 경로와 함께 요청서 처리를 부탁받으면 사용.
+description: 쇼핑쇼츠 팩토리 요청서(request packet)를 단독으로 빠르게 처리한다. 웹앱이 발행한 요청서 폴더 경로를 받아 request.md의 지시대로 result/ 산출물을 작성한다. "/answer-job workspace/..." 형태로 호출되거나, 요청서 폴더 경로와 함께 요청서 처리를 부탁받으면 사용. 리서치·검수를 거친 고품질 결과가 필요하면 이 스킬 대신 shorts-content-team 스킬을 쓴다.
 ---
 
 # 요청서 처리 (answer-job)
@@ -28,9 +28,10 @@ description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 
 
 ## 대본 작성 요령 (kind: script / revision)
 
-- 총 낭독 시간 45~58초 = 한국어 약 250~290자
+- **30초 이내로 끝낸다.** 1.25배속 낭독 기준 한국어 125~187자 (권장 170자)
+- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중한다
 - 첫 씬은 3초 훅 (질문/반전/가격 충격 중 택1)
-- 나레이션은 TTS(타입캐스트/edge-tts)가 그대로 읽으므로, 읽기 어려운 기호·영문 약어는 한글로 풀어 쓴다
+- 나레이션은 타입캐스트 TTS가 그대로 읽으므로, 읽기 어려운 기호·영문 약어는 한글로 풀어 쓴다
 - menu-a: 각 씬의 `clipRef.clipId`는 소재 현황 표의 실제 클립 ID만 사용, `suggestedSegment`는 클립 길이 안에서 지정
 - menu-b: `clipRef` 대신 `imagePrompt` 사용, 고유 포맷의 `sceneTemplate.imageStylePrompt`를 접두어로 일관 적용
 - 마지막 씬에 CTA 1문장 (쿠팡 링크 유도)

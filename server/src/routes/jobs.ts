@@ -11,10 +11,10 @@ import { progressOf, statesFor } from '../pipeline/stateMachine.js';
 import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
+import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
 import {
-  synthesizeNarration, saveSceneVoiceFile, resolveEngine, KO_VOICES, type SceneTiming,
-} from '../pipeline/tts.js';
-import { listVoices as listTypecastVoices, synthesize as typecastSynthesize } from '../pipeline/voice/typecast.js';
+  listVoices as listTypecastVoices, synthesize as typecastSynthesize, AUDIO_MIME,
+} from '../pipeline/voice/typecast.js';
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir } from '../pipeline/exporter.js';
 import { hasKey } from '../store/secrets.js';
@@ -121,24 +121,35 @@ router.post('/jobs/:jid/download/start', async (req, res) => {
   if (!job) return res.status(404).json({ error: '잡 없음' });
   if (job.state === 'collecting') await jobs.transition(ref, 'downloading', 'server');
 
-  // 비동기 실행 — 진행률은 SSE로 푸시
-  void downloadAll(settings, ref).then(async () => {
-    const j = await jobs.readJob(ref);
-    if (j && j.state === 'downloading') {
-      const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
-      if (allDone && j.sources.length > 0) {
-        await jobs.transition(ref, 'analyzing', 'server');
-        await jobs.transition(ref, 'cleaning', 'server'); // probe/프레임은 다운로드 직후 이미 완료
+  // 비동기 실행 — 진행률은 SSE로 푸시. 실패해도 서버가 죽지 않도록 반드시 catch한다
+  void downloadAll(settings, ref)
+    .then(async () => {
+      const j = await jobs.readJob(ref);
+      if (j && j.state === 'downloading') {
+        const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+        if (allDone && j.sources.length > 0) {
+          // probe/프레임은 다운로드 직후 이미 끝났으므로 정리 단계까지 보낸다
+          await jobs.advanceTo(ref, 'cleaning');
+        }
       }
-    }
-  });
+    })
+    .catch(async (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      await jobs.logJobEvent(ref, { type: 'download.failed', error: msg }).catch(() => {});
+      broadcast('download.failed', { jobId: ref.jobId, error: msg });
+    });
   res.json({ started: true });
 });
 
 router.post('/jobs/:jid/sources/:sid/retry', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const settings = await loadSettings();
-  void retrySource(settings, ref, req.params.sid);
+  void retrySource(settings, ref, req.params.sid).catch((e) => {
+    broadcast('source.error', {
+      jobId: ref.jobId, sourceId: req.params.sid,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  });
   res.json({ started: true });
 });
 
@@ -257,11 +268,33 @@ router.post('/jobs/:jid/clips/:cid/restore', async (req, res) => {
 router.put('/jobs/:jid/clips/:cid/segments', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({ segments: z.array(SegmentSchema) }).parse(req.body);
+  const settings = await loadSettings();
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
   clip.segments = body.segments;
   await jobs.writeClip(ref, clip);
-  res.json(clip);
+
+  // 한 소스가 오래 연속 노출되면 재사용 콘텐츠로 분류될 위험이 커진다.
+  // 저장은 막지 않고 경고만 돌려준다 — 판단은 사용자 몫이다.
+  const limit = settings.maxClipExposureSec;
+  const overLong = clip.segments
+    .filter((s) => s.used && s.out - s.in > limit)
+    .map((s) => ({ id: s.id, seconds: Number((s.out - s.in).toFixed(1)) }));
+
+  res.json({
+    ...clip,
+    warnings: overLong.length
+      ? [{
+          type: 'exposure',
+          limit,
+          segments: overLong,
+          message:
+            `${overLong.length}개 구간이 ${limit}초를 넘습니다. ` +
+            `원본을 길게 연속 노출하면 재사용 콘텐츠로 분류될 위험이 커집니다. ` +
+            `구간을 나누거나 사이에 텍스트 카드를 넣으세요.`,
+        }]
+      : [],
+  });
 });
 
 // ── 대본 ──────────────────────────────────────────────────────────
@@ -281,7 +314,8 @@ router.post('/jobs/:jid/script/approve', async (req, res) => {
     if (!j.script.currentVersion) throw new Error('승인할 대본이 없습니다');
     j.script.approved = true;
   });
-  if (job.state === 'scripting') await jobs.transition(ref, 'script_approved', 'user');
+  // 승인 후엔 다음 실제 작업 단계로 보낸다 (menu-a는 컷 선택, menu-b는 씬 이미지)
+  await jobs.advanceTo(ref, job.menu === 'menu-a' ? 'trimming' : 'scening', 'user');
   await jobs.logJobEvent(ref, { type: 'script.approved', version: job.script.currentVersion });
   res.json(await jobView(ref));
 });
@@ -298,17 +332,10 @@ router.post('/jobs/:jid/rights-confirm', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── 음성 (타입캐스트 API / 파일 첨부 / edge-tts 폴백) ─────────────
+// ── 음성 (타입캐스트 API 또는 씬별 파일 첨부) ─────────────────────
 
-/** edge-tts 폴백 보이스 목록 */
-router.get('/tts/voices', (_req, res) => {
-  res.json(KO_VOICES);
-});
-
-/** 현재 사용될 엔진 + 타입캐스트 캐릭터 목록 */
+/** 타입캐스트 사용 가능 여부 + 캐릭터 목록 */
 router.get('/tts/engine', async (_req, res) => {
-  const settings = await loadSettings();
-  const engine = await resolveEngine(settings);
   const typecastReady = await hasKey('typecast');
   let voices: unknown[] = [];
   let error: string | undefined;
@@ -319,18 +346,24 @@ router.get('/tts/engine', async (_req, res) => {
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  res.json({ engine, typecastReady, typecastVoices: voices, edgeVoices: KO_VOICES, error });
+  res.json({ typecastReady, typecastVoices: voices, error });
 });
 
-/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 mp3로 바로 반환 */
+/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 오디오로 바로 반환 */
 router.post('/tts/preview', async (req, res) => {
   const body = z.object({
     voiceId: z.string().min(1),
     text: z.string().default('안녕하세요, 이 목소리로 나레이션을 만들어 드릴게요.'),
+    emotion: z.string().optional(),
   }).parse(req.body ?? {});
   try {
-    const audio = await typecastSynthesize(body.text, body.voiceId);
-    res.setHeader('Content-Type', 'audio/mpeg');
+    // 미리듣기도 실제 합성과 같은 속도로 들려줘야 판단이 맞는다
+    const settings = await loadSettings();
+    const audio = await typecastSynthesize(body.text, body.voiceId, {
+      emotion: body.emotion,
+      tempo: settings.speechRate,
+    });
+    res.setHeader('Content-Type', AUDIO_MIME);
     res.send(audio);
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
@@ -368,9 +401,8 @@ router.delete('/jobs/:jid/voice/upload/:sceneId', async (req, res) => {
 router.post('/jobs/:jid/tts', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({
-    voice: z.string().optional(), // edge-tts 보이스
     typecastVoiceId: z.string().optional(), // 타입캐스트 캐릭터
-    engine: z.enum(['typecast', 'edge-tts']).optional(),
+    emotion: z.string().optional(), // 감정 프리셋
   }).parse(req.body ?? {});
   const settings = await loadSettings();
   const job = await jobs.readJob(ref);
@@ -381,38 +413,46 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   const script = await jobs.readScript(ref, job.script.currentVersion);
   if (!script) return res.status(400).json({ error: '대본 파일 없음' });
 
-  const engine = body.engine ?? (await resolveEngine(settings));
   const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
-  const edgeVoice = body.voice ?? job.ttsVoice ?? settings.defaultTtsVoice;
+  const typecastEmotion = body.emotion ?? job.typecastEmotion;
 
   // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
   const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
-  if (engine === 'typecast' && !typecastVoiceId && !allUploaded) {
-    return res.status(400).json({ error: '타입캐스트 캐릭터를 선택하거나 씬별 음성 파일을 첨부하세요' });
+  if (!typecastVoiceId && !allUploaded) {
+    return res.status(400).json({
+      error: '타입캐스트 캐릭터를 선택하거나, 음성이 없는 씬에 파일을 첨부하세요',
+    });
+  }
+  if (!allUploaded && !(await hasKey('typecast'))) {
+    return res.status(400).json({
+      error: '타입캐스트 API 키가 없습니다. API 키 메뉴에서 등록하거나 씬별 음성 파일을 첨부하세요',
+    });
   }
 
   const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
 
   res.json({ started: true });
   try {
-    if (job.state === 'trimming' || job.state === 'script_approved' || job.state === 'scening') {
-      await jobs.transition(ref, 'voicing', 'server');
-    }
+    await jobs.advanceTo(ref, 'voicing');
     await jobs.mutateJob(ref, (j) => {
-      j.ttsVoice = edgeVoice;
       j.typecastVoiceId = typecastVoiceId;
-      j.voiceEngine = allUploaded ? 'file' : engine;
+      j.typecastEmotion = typecastEmotion;
+      j.voiceEngine = allUploaded ? 'file' : 'typecast';
     });
     await synthesizeNarration({
       settings,
       script,
       voiceDir,
       jobId: ref.jobId,
-      engine,
-      voiceId: engine === 'typecast' ? typecastVoiceId : edgeVoice,
+      typecastVoiceId,
+      typecastEmotion,
       sceneVoiceFiles: job.sceneVoiceFiles,
     });
-    await jobs.logJobEvent(ref, { type: 'tts.done', engine, scenes: script.scenes.length });
+    await jobs.logJobEvent(ref, {
+      type: 'tts.done',
+      engine: allUploaded ? 'file' : 'typecast',
+      scenes: script.scenes.length,
+    });
     broadcast('tts.done', { jobId: ref.jobId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -442,7 +482,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
 
   res.json({ started: true });
   try {
-    if (job.state === 'voicing') await jobs.transition(ref, 'assembling', 'server');
+    await jobs.advanceTo(ref, 'assembling');
     const clips = await jobs.listClips(ref);
     const version = (job.output.currentVersion ?? 0) + 1;
     const finalPath = await assembleFinal(settings, {
@@ -454,7 +494,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
-    if (j2?.state === 'assembling') await jobs.transition(ref, 'review', 'server');
+    if (j2?.state === 'assembling') await jobs.advanceTo(ref, 'review');
     await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath });
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {

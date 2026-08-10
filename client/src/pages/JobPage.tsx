@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
   Play, Trash2, FolderOpen,
@@ -22,7 +22,7 @@ interface JobDetail {
   state: string; progress: number; pipeline: string[]; downloading: boolean;
   sources: SourceInfo[];
   script: { currentVersion: number; approved: boolean };
-  rightsConfirmed: boolean; ttsVoice?: string;
+  rightsConfirmed: boolean;
   typecastVoiceId?: string;
   sceneVoiceFiles: Record<string, string>;
   exportedAt?: string;
@@ -388,10 +388,16 @@ function TrimPanel({ job }: { job: JobDetail }) {
     queryFn: () => api.get<ClipInfo[]>(`/jobs/${job.id}/clips`),
   });
   const [activeClip, setActiveClip] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: ({ cid, segments }: { cid: string; segments: SegmentDraft[] }) =>
-      api.put(`/jobs/${job.id}/clips/${cid}/segments`, { segments }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+      api.put<{ warnings?: Array<{ message: string }> }>(
+        `/jobs/${job.id}/clips/${cid}/segments`, { segments },
+      ),
+    onSuccess: (r) => {
+      setWarning(r.warnings?.[0]?.message ?? null);
+      void qc.invalidateQueries({ queryKey: ['clips'] });
+    },
   });
   const next = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/transition`, { to: 'voicing' }),
@@ -424,6 +430,15 @@ function TrimPanel({ job }: { job: JobDetail }) {
           ))}
         </div>
       </Card>
+      {warning && (
+        <Card className="border-amber-200 bg-amber-50">
+          <p className="flex items-start gap-2 text-sm text-amber-800">
+            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            {warning}
+          </p>
+        </Card>
+      )}
+
       {current && videoUrl && (
         <Card>
           <SegmentPicker
@@ -473,13 +488,24 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
 
 // ── 음성 ──────────────────────────────────────────────────────────
 
+interface TypecastVoice {
+  id: string;
+  name: string;
+  model: string;
+  emotions: string[];
+}
 interface EngineInfo {
-  engine: 'typecast' | 'edge-tts';
   typecastReady: boolean;
-  typecastVoices: Array<{ id: string; name: string; language: string; gender: string }>;
-  edgeVoices: Array<{ id: string; label: string }>;
+  typecastVoices: TypecastVoice[];
   error?: string;
 }
+
+/** ssfm-v30 감정 프리셋 한글 라벨 */
+const EMOTION_LABELS: Record<string, string> = {
+  normal: '기본', happy: '밝게', sad: '차분하게', angry: '강하게',
+  whisper: '속삭임', toneup: '톤 높게', tonedown: '톤 낮게',
+  tonemid: '톤 중간',
+};
 
 function VoicePanel({ job }: { job: JobDetail }) {
   const qc = useQueryClient();
@@ -493,13 +519,12 @@ function VoicePanel({ job }: { job: JobDetail }) {
     enabled: job.script.currentVersion > 0,
   });
 
-  const [engine, setEngine] = useState<'typecast' | 'edge-tts' | null>(null);
   const [typecastVoiceId, setTypecastVoiceId] = useState(job.typecastVoiceId ?? '');
-  const [edgeVoice, setEdgeVoice] = useState(job.ttsVoice ?? 'ko-KR-SunHiNeural');
+  const [emotion, setEmotion] = useState('');
   const [runningTts, setRunningTts] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  const activeEngine = engine ?? engineInfo.data?.engine ?? 'edge-tts';
+  const selectedVoice = (engineInfo.data?.typecastVoices ?? []).find((v) => v.id === typecastVoiceId);
 
   const upload = useMutation({
     mutationFn: ({ sceneId, file }: { sceneId: string; file: File }) => {
@@ -518,11 +543,11 @@ function VoicePanel({ job }: { job: JobDetail }) {
   const tts = useMutation({
     mutationFn: () => {
       setRunningTts(true);
-      return api.post(`/jobs/${job.id}/tts`, {
-        engine: activeEngine,
-        typecastVoiceId,
-        voice: edgeVoice,
-      });
+      return api.post(`/jobs/${job.id}/tts`, { typecastVoiceId, emotion: emotion || undefined });
+    },
+    onError: (e: Error) => {
+      setRunningTts(false);
+      alert(e.message);
     },
   });
   const next = useMutation({
@@ -537,7 +562,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
       const r = await fetch('/api/tts/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voiceId: typecastVoiceId }),
+        body: JSON.stringify({ voiceId: typecastVoiceId, emotion: emotion || undefined }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({ error: '미리듣기 실패' }));
@@ -562,61 +587,52 @@ function VoicePanel({ job }: { job: JobDetail }) {
       <Card>
         <h3 className="mb-1 flex items-center gap-2 font-semibold"><Mic size={17} /> 나레이션 음성</h3>
         <p className="mb-3 text-sm text-slate-500">
-          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 API로 합성합니다.
+          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 타입캐스트로 합성합니다.
         </p>
 
         {!allUploaded && (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">합성 엔진</span>
-              <select
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                value={activeEngine}
-                onChange={(e) => setEngine(e.target.value as 'typecast' | 'edge-tts')}
-              >
-                <option value="typecast" disabled={!engineInfo.data?.typecastReady}>
-                  타입캐스트{engineInfo.data?.typecastReady ? '' : ' (API 키 필요)'}
-                </option>
-                <option value="edge-tts">edge-tts (무료)</option>
-              </select>
-            </div>
-
-            {activeEngine === 'typecast' && (
+            {engineInfo.data && !engineInfo.data.typecastReady ? (
+              <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+                <p className="font-medium">타입캐스트 API 키가 없습니다</p>
+                <p className="mt-0.5">
+                  아래 씬 목록에서 음성 파일을 직접 첨부하거나,{' '}
+                  <Link to="/keys" className="underline">API 키 메뉴</Link>에서 타입캐스트 키를 등록하세요.
+                </p>
+              </div>
+            ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">캐릭터</span>
                 <select
-                  className="min-w-[240px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  className="min-w-[220px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   value={typecastVoiceId}
-                  onChange={(e) => setTypecastVoiceId(e.target.value)}
+                  onChange={(e) => { setTypecastVoiceId(e.target.value); setEmotion(''); }}
                 >
-                  <option value="">선택하세요</option>
+                  <option value="">선택하세요 ({engineInfo.data?.typecastVoices.length ?? 0}종)</option>
                   {(engineInfo.data?.typecastVoices ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}{v.gender ? ` · ${v.gender}` : ''}{v.language ? ` · ${v.language}` : ''}
-                    </option>
+                    <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
                 </select>
+
+                {selectedVoice && selectedVoice.emotions.length > 0 && (
+                  <select
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    value={emotion}
+                    onChange={(e) => setEmotion(e.target.value)}
+                  >
+                    <option value="">감정 기본</option>
+                    {selectedVoice.emotions.map((em) => (
+                      <option key={em} value={em}>{EMOTION_LABELS[em] ?? em}</option>
+                    ))}
+                  </select>
+                )}
+
                 <Button variant="secondary" onClick={preview} disabled={!typecastVoiceId || previewing}>
                   {previewing ? <Spinner /> : <Play size={14} />} 미리듣기
                 </Button>
                 {engineInfo.data?.error && (
                   <span className="text-xs text-red-600">캐릭터 목록 오류: {engineInfo.data.error}</span>
                 )}
-              </div>
-            )}
-
-            {activeEngine === 'edge-tts' && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">보이스</span>
-                <select
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={edgeVoice}
-                  onChange={(e) => setEdgeVoice(e.target.value)}
-                >
-                  {(engineInfo.data?.edgeVoices ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.label}</option>
-                  ))}
-                </select>
               </div>
             )}
           </div>
@@ -631,7 +647,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button
             onClick={() => tts.mutate()}
-            disabled={tts.isPending || (activeEngine === 'typecast' && !typecastVoiceId && !allUploaded)}
+            disabled={tts.isPending || (!allUploaded && !typecastVoiceId)}
           >
             음성 준비 실행
           </Button>
@@ -671,7 +687,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
                     </>
                   ) : (
                     <>
-                      <Badge>API 합성 예정</Badge>
+                      <Badge>타입캐스트 합성 예정</Badge>
                       <label className="cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1 text-xs hover:bg-slate-50">
                         파일 첨부
                         <input

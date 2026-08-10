@@ -10,7 +10,7 @@ interface FormatData {
   structure: { hook: string; beats: Array<{ name: string; purpose: string; secondsHint: number }>; cta: string };
   tone: { persona: string; speechLevel: string };
   branding: { channelName: string };
-  ttsVoice: string;
+  typecastVoiceId: string;
 }
 
 const WIZARD_QUESTIONS = [

@@ -9,6 +9,7 @@ import { getFormat } from '../store/formats.js';
 import { getProject } from '../store/projects.js';
 import { availableProviders } from '../ai/providers.js';
 import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
+import { runPacketQuality } from '../ai/qualityRunner.js';
 import { broadcast } from '../sse.js';
 
 const router = Router();
@@ -30,7 +31,7 @@ router.get('/packets/:pkid', async (req, res) => {
   try {
     requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   } catch { /* 없으면 빈 값 */ }
-  res.json({ ...packet, requestMd, command: packets.packetCommand(packet) });
+  res.json({ ...packet, requestMd, commands: packets.packetCommands(packet) });
 });
 
 router.get('/packets/:pkid/result', async (req, res) => {
@@ -79,7 +80,7 @@ router.post('/jobs/:jid/packets', async (req, res) => {
       await transition(ref, 'scripting', 'server');
     }
   }
-  res.status(201).json({ ...packet, command: packets.packetCommand(packet) });
+  res.status(201).json({ ...packet, commands: packets.packetCommands(packet) });
 });
 
 /** 포맷 생성 요청서 (잡 없이 발행) */
@@ -96,19 +97,29 @@ router.post('/formats/packets', async (req, res) => {
     formatId: body.formatId,
     wizardAnswers: body.wizardAnswers,
   });
-  res.status(201).json({ ...packet, command: packets.packetCommand(packet) });
+  res.status(201).json({ ...packet, commands: packets.packetCommands(packet) });
 });
 
-/** ② API 자동 실행 — 서버가 LLM을 호출해 산출물을 만든다 (비동기, 결과는 SSE) */
+/**
+ * ② API 자동 실행 — 서버가 LLM을 호출해 산출물을 만든다 (비동기, 결과는 SSE).
+ * mode=fast: 1회 호출 / mode=quality: 리서치 → 대본 → 검수 → 재작성 다단계
+ */
 router.post('/packets/:pkid/run', async (req, res) => {
-  const body = z.object({ provider: z.enum(AI_PROVIDERS) }).parse(req.body);
+  const body = z.object({
+    provider: z.enum(AI_PROVIDERS),
+    mode: z.enum(['fast', 'quality']).default('fast'),
+  }).parse(req.body);
   const packet = await packets.readPacket(req.params.pkid);
   if (!packet) return res.status(404).json({ error: '패킷 없음' });
   if (packet.status !== 'waiting') return res.status(400).json({ error: '대기 상태가 아님' });
 
-  res.json({ started: true });
+  res.json({ started: true, mode: body.mode });
   try {
-    await runPacketWithApi(req.params.pkid, body.provider);
+    if (body.mode === 'quality') {
+      await runPacketQuality(req.params.pkid, body.provider);
+    } else {
+      await runPacketWithApi(req.params.pkid, body.provider);
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     broadcast('packet.failed', { packetId: req.params.pkid, error: msg });

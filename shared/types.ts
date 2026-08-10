@@ -61,7 +61,7 @@ export const FormatSchema = z.object({
     colorPalette: z.array(z.string()).default([]),
     introOutro: z.string().optional(),
   }),
-  ttsVoice: z.string().default('ko-KR-SunHiNeural'),
+  typecastVoiceId: z.string().default(''), // 이 포맷의 기본 나레이션 캐릭터
 });
 export type Format = z.infer<typeof FormatSchema>;
 
@@ -137,6 +137,8 @@ export const SceneLineSchema = z.object({
   imagePrompt: z.string().optional(), // menu-b 씬 이미지 프롬프트
   durationHint: z.number().optional(),
   bgmCue: z.string().optional(),
+  /** 이 씬 앞에 끼울 텍스트 카드 문구 (하이브리드 믹싱) */
+  cardText: z.string().optional(),
 });
 export type SceneLine = z.infer<typeof SceneLineSchema>;
 
@@ -192,9 +194,9 @@ export const JobSchema = z.object({
     currentVersion: z.number().int().default(0),
     approved: z.boolean().default(false),
   }).default({ currentVersion: 0, approved: false }),
-  ttsVoice: z.string().optional(),
-  voiceEngine: z.enum(['typecast', 'edge-tts', 'file']).optional(), // 실제 사용된 엔진
+  voiceEngine: z.enum(['typecast', 'file']).optional(), // 실제 사용된 엔진
   typecastVoiceId: z.string().optional(),
+  typecastEmotion: z.string().optional(), // ssfm-v30 감정 프리셋
   sceneVoiceFiles: z.record(z.string()).default({}), // sceneId → 업로드된 음성 파일명
   exportedAt: z.string().optional(), // 마지막 내보내기 시각
   rightsConfirmed: z.boolean().default(false), // 조립 전 저작권 확인 게이트
@@ -230,13 +232,11 @@ export const GuidelineFileSchema = z.enum(GUIDELINE_FILES);
 
 export const SettingsSchema = z.object({
   parallelDownloads: z.number().int().min(1).max(8).default(3),
-  defaultTtsVoice: z.string().default('ko-KR-SunHiNeural'),
   burnSubtitles: z.boolean().default(true),
   burnDisclosure: z.boolean().default(true), // 쿠팡파트너스 공시 번인
   ytdlpPath: z.string().default('yt-dlp'),
   ffmpegPath: z.string().default('ffmpeg'),
   ffprobePath: z.string().default('ffprobe'),
-  edgeTtsPath: z.string().default('edge-tts'),
   iopaintPath: z.string().default('iopaint'),
   // 내보내기 (제품별 별도 폴더 저장)
   exportRoot: z.string().default(''), // 빈 값 = OS 다운로드 폴더 자동 사용
@@ -250,9 +250,29 @@ export const SettingsSchema = z.object({
     openai: z.string().default('gpt-4o-mini'),
     gemini: z.string().default('gemini-2.0-flash'),
   }).default({ anthropic: 'claude-sonnet-4-5', openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash' }),
-  // TTS: auto = 타입캐스트 키 있으면 타입캐스트, 없으면 edge-tts
-  ttsEngine: z.enum(['auto', 'typecast', 'edge-tts']).default('auto'),
+  // 음성: 타입캐스트 API로 합성하거나 씬별 음성 파일을 첨부한다
   typecastVoiceId: z.string().default(''),
+  /**
+   * 나레이션 속도 배율. 쇼츠는 빠른 낭독이 유지율에 유리해 기본 1.25배.
+   * 합성 음성에만 적용된다 — 첨부 파일은 사용자가 의도한 속도로 본다.
+   * 이 값이 대본 분량 기준을 좌우한다 (300자/분 × 배율).
+   */
+  speechRate: z.number().min(0.5).max(2).default(1.25),
+  // 한글 폰트 (자막 번인·텍스트 카드에 필요). 비우면 시스템에서 자동 탐색
+  fontPath: z.string().default(''),
+  /**
+   * 화면 구성.
+   * fullscreen = 소스를 화면 전체에 채움
+   * framed = 자기 프레임(제목바·하단 정보영역) 안에 소스를 축소 배치 —
+   *          재사용 콘텐츠로 분류될 위험을 낮추고 정보 밀도를 올린다
+   */
+  layout: z.enum(['fullscreen', 'framed']).default('framed'),
+  frameTitle: z.string().default(''), // framed 레이아웃 상단 고정 문구 (채널명 등)
+  // 씬 사이 텍스트 카드 삽입 (하이브리드 믹싱)
+  insertCards: z.boolean().default(true),
+  cardDurationSec: z.number().min(0.5).max(4).default(1.5),
+  /** 한 소스 클립의 연속 노출 상한 (초). 초과 시 컷 선택 화면에서 경고 */
+  maxClipExposureSec: z.number().min(1).max(30).default(3),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

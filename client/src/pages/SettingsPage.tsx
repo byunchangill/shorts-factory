@@ -6,13 +6,11 @@ import { Badge, Button, Card, Input } from '@/components/ui';
 
 interface Settings {
   parallelDownloads: number;
-  defaultTtsVoice: string;
   burnSubtitles: boolean;
   burnDisclosure: boolean;
   ytdlpPath: string;
   ffmpegPath: string;
   ffprobePath: string;
-  edgeTtsPath: string;
   iopaintPath: string;
   exportRoot: string;
   exportIncludeSources: boolean;
@@ -20,8 +18,14 @@ interface Settings {
   defaultPacketMode: 'claude-code' | 'api' | 'manual';
   defaultAiProvider: 'anthropic' | 'openai' | 'gemini';
   aiModels: { anthropic: string; openai: string; gemini: string };
-  ttsEngine: 'auto' | 'typecast' | 'edge-tts';
   typecastVoiceId: string;
+  speechRate: number;
+  fontPath: string;
+  layout: 'fullscreen' | 'framed';
+  frameTitle: string;
+  insertCards: boolean;
+  cardDurationSec: number;
+  maxClipExposureSec: number;
 }
 interface DoctorTool {
   name: string; required: boolean; available: boolean; version?: string; installHint: string;
@@ -164,28 +168,110 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <h3 className="mb-3 font-medium">음성(TTS)</h3>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="w-28 shrink-0 font-medium">엔진</span>
-          <select
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            value={form.ttsEngine}
-            onChange={(e) => set({ ttsEngine: e.target.value as Settings['ttsEngine'] })}
-          >
-            <option value="auto">자동 (타입캐스트 키 있으면 타입캐스트)</option>
-            <option value="typecast">타입캐스트</option>
-            <option value="edge-tts">edge-tts (무료)</option>
-          </select>
+        <h3 className="mb-1 font-medium">화면 구성 · 재사용 콘텐츠 대응</h3>
+        <p className="mb-3 text-sm text-slate-500">
+          외부 영상을 화면 전체에 그대로 채우면 재사용 콘텐츠로 분류될 위험이 큽니다.
+          자기 레이어를 덮고 원본 연속 노출을 끊는 설정입니다.
+        </p>
+        <div className="space-y-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 font-medium">레이아웃</span>
+            <select
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              value={form.layout}
+              onChange={(e) => set({ layout: e.target.value as Settings['layout'] })}
+            >
+              <option value="framed">프레임 (권장) — 자기 프레임 안에 소스 배치</option>
+              <option value="fullscreen">전체화면 — 소스가 화면을 꽉 채움</option>
+            </select>
+          </div>
+          {form.layout === 'framed' && (
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-slate-500">상단 문구</span>
+              <Input
+                value={form.frameTitle}
+                onChange={(e) => set({ frameTitle: e.target.value })}
+                placeholder="채널명 등 (비우면 표시 안 함)"
+              />
+            </div>
+          )}
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.insertCards}
+              onChange={(e) => set({ insertCards: e.target.checked })}
+            />
+            씬 사이에 텍스트 카드 삽입 (원본 연속 노출을 끊고 정보 밀도를 올림)
+          </label>
+          {form.insertCards && (
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-slate-500">카드 길이</span>
+              <Input
+                type="number" step="0.5" min={0.5} max={4}
+                className="w-24"
+                value={form.cardDurationSec}
+                onChange={(e) => set({ cardDurationSec: Number(e.target.value) })}
+              />
+              <span className="text-xs text-slate-400">초</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">연속 노출 상한</span>
+            <Input
+              type="number" min={1} max={30}
+              className="w-24"
+              value={form.maxClipExposureSec}
+              onChange={(e) => set({ maxClipExposureSec: Number(e.target.value) })}
+            />
+            <span className="text-xs text-slate-400">초 — 초과 시 컷 선택에서 경고</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">한글 폰트</span>
+            <Input
+              value={form.fontPath}
+              onChange={(e) => set({ fontPath: e.target.value })}
+              placeholder="비우면 자동 탐색 (자막·카드에 필요)"
+            />
+          </div>
         </div>
+        <p className="mt-3 rounded-md bg-slate-50 p-2 text-xs text-slate-500">
+          이 설정들은 재사용 콘텐츠로 분류될 위험을 낮추지만, <b>소스 사용 권리를 대체하지 않습니다.</b>
+          원저작자 허락이나 라이선스 확인은 별도로 필요합니다.
+        </p>
+      </Card>
+
+      <Card>
+        <h3 className="mb-3 font-medium">음성</h3>
+        <p className="text-sm text-slate-500">
+          나레이션은 <b>타입캐스트 API</b>로 합성하거나, 작업 화면에서 <b>씬별 음성 파일을 첨부</b>합니다.
+          첨부된 씬은 합성하지 않고 그 파일을 그대로 사용합니다.
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="w-28 shrink-0 font-medium">낭독 속도</span>
+          <Input
+            type="number" step="0.05" min={0.5} max={2}
+            className="w-24"
+            value={form.speechRate}
+            onChange={(e) => set({ speechRate: Number(e.target.value) })}
+          />
+          <span className="text-xs text-slate-400">배 (합성 음성에만 적용)</span>
+        </div>
+        <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
+          이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 30초 영상에
+          최대 <b>{Math.round((30 * 300 * (form.speechRate || 1)) / 60)}자</b>
+          (권장 {Math.round((27 * 300 * (form.speechRate || 1)) / 60)}자)까지 쓸 수 있습니다.
+          첨부한 음성 파일은 원본 속도 그대로 사용됩니다.
+        </p>
         <p className="mt-2 text-xs text-slate-500">
-          씬에 음성 파일을 첨부하면 엔진 설정과 무관하게 그 파일이 우선 사용됩니다.
+          타입캐스트 키는 "API 키" 메뉴에서 등록하고, 캐릭터는 작업의 음성 단계에서 미리듣기로 고릅니다.
         </p>
       </Card>
 
       <Card>
         <h3 className="mb-3 font-medium">도구 경로 (PATH에 없을 때만 수정)</h3>
         <div className="space-y-2">
-          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'edgeTtsPath', 'iopaintPath'] as const).map((k) => (
+          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'iopaintPath'] as const).map((k) => (
             <div key={k} className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-sm text-slate-500">{k.replace('Path', '')}</span>
               <Input value={form[k]} onChange={(e) => set({ [k]: e.target.value } as Partial<Settings>)} />
