@@ -120,3 +120,82 @@ export const COUPANG_PARTNERS_DISCLOSURE =
   '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
 
 export const API_PORT = 4310;
+
+// ── API 키 ────────────────────────────────────────────────────────
+
+export const API_KEY_NAMES = ['youtube', 'anthropic', 'openai', 'gemini', 'typecast'] as const;
+export type ApiKeyName = (typeof API_KEY_NAMES)[number];
+
+export const API_KEY_INFO: Record<ApiKeyName, { label: string; desc: string; url: string }> = {
+  youtube: {
+    label: 'YouTube Data API',
+    desc: '유튜브 리서치 (검색·채널 분석·인기 쇼츠). 무료 쿼터 10,000유닛/일',
+    url: 'https://console.cloud.google.com/apis/credentials',
+  },
+  anthropic: {
+    label: 'Anthropic (Claude)',
+    desc: '요청서 API 자동 실행용',
+    url: 'https://console.anthropic.com/settings/keys',
+  },
+  openai: {
+    label: 'OpenAI (GPT)',
+    desc: '요청서 API 자동 실행용',
+    url: 'https://platform.openai.com/api-keys',
+  },
+  gemini: {
+    label: 'Google Gemini',
+    desc: '요청서 API 자동 실행용',
+    url: 'https://aistudio.google.com/apikey',
+  },
+  typecast: {
+    label: 'Typecast (TTS)',
+    desc: '나레이션 음성 합성. 미등록 시 edge-tts 무료 폴백',
+    url: 'https://typecast.ai/',
+  },
+};
+
+// ── AI 프로바이더 (요청서 실행) ───────────────────────────────────
+
+export const AI_PROVIDERS = ['anthropic', 'openai', 'gemini'] as const;
+export type AiProvider = (typeof AI_PROVIDERS)[number];
+
+export const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
+  anthropic: 'Claude (Anthropic)',
+  openai: 'GPT (OpenAI)',
+  gemini: 'Gemini (Google)',
+};
+
+export const PACKET_MODES = ['claude-code', 'api', 'manual'] as const;
+export type PacketMode = (typeof PACKET_MODES)[number];
+
+export const PACKET_MODE_LABELS: Record<PacketMode, string> = {
+  'claude-code': 'Claude Code',
+  api: 'API 자동 실행',
+  manual: '복사 / 붙여넣기',
+};
+
+// ── 내보내기 폴더 구조 (제품별 별도 저장) ─────────────────────────
+
+export const EXPORT_DIRS = {
+  final: '최종영상',
+  video: '영상',
+  sources: '원본영상',
+  audio: '음성',
+  script: '대본',
+  image: '이미지',
+  uploadKit: '업로드킷',
+} as const;
+
+// ── 유튜브 쿼터 ───────────────────────────────────────────────────
+
+/** YouTube Data API v3 무료 일일 쿼터 */
+export const YOUTUBE_DAILY_QUOTA = 10_000;
+
+/** 엔드포인트별 쿼터 비용 */
+export const YOUTUBE_QUOTA_COST = {
+  search: 100,
+  videos: 1,
+  channels: 1,
+  playlistItems: 1,
+  videoCategories: 1,
+} as const;

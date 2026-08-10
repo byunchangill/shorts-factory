@@ -1,6 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { LayoutDashboard, Globe, Package, Palette, Settings } from 'lucide-react';
+import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound } from 'lucide-react';
 import { useServerEvents } from '@/api/sse';
 import Dashboard from '@/pages/Dashboard';
 import MenuPage from '@/pages/MenuPage';
@@ -8,12 +8,16 @@ import ProjectPage from '@/pages/ProjectPage';
 import JobPage from '@/pages/JobPage';
 import FormatsPage from '@/pages/FormatsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import KeysPage from '@/pages/KeysPage';
+import YouTubePage from '@/pages/YouTubePage';
 
 const NAV = [
   { to: '/', label: '대시보드', icon: LayoutDashboard },
   { to: '/menu-a', label: '해외영상 짜집기', icon: Globe },
   { to: '/menu-b', label: '제품정보리뷰', icon: Package },
+  { to: '/youtube', label: '유튜브 리서치', icon: Youtube },
   { to: '/formats', label: '고유 포맷', icon: Palette },
+  { to: '/keys', label: 'API 키', icon: KeyRound },
   { to: '/settings', label: '설정', icon: Settings },
 ];
 
@@ -54,6 +58,8 @@ export default function App() {
           <Route path="/project/:menu/:pid" element={<ProjectPage />} />
           <Route path="/job/:jid" element={<JobPage />} />
           <Route path="/formats" element={<FormatsPage />} />
+          <Route path="/youtube" element={<YouTubePage />} />
+          <Route path="/keys" element={<KeysPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </div>

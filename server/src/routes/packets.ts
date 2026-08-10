@@ -2,13 +2,21 @@ import { Router } from 'express';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
-import { PACKET_KINDS } from '@shared/constants';
+import { PACKET_KINDS, AI_PROVIDERS } from '@shared/constants';
 import * as packets from '../claude/packets.js';
 import { resolveJob, transition, readJob } from '../store/jobs.js';
 import { getFormat } from '../store/formats.js';
 import { getProject } from '../store/projects.js';
+import { availableProviders } from '../ai/providers.js';
+import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
+import { broadcast } from '../sse.js';
 
 const router = Router();
+
+/** UI가 실행 방식(API 자동)의 선택 가능 여부를 판단하는 데 사용 */
+router.get('/ai/providers', async (_req, res) => {
+  res.json(await availableProviders());
+});
 
 router.get('/packets', async (_req, res) => {
   res.json(await packets.listAllPackets());
@@ -89,6 +97,32 @@ router.post('/formats/packets', async (req, res) => {
     wizardAnswers: body.wizardAnswers,
   });
   res.status(201).json({ ...packet, command: packets.packetCommand(packet) });
+});
+
+/** ② API 자동 실행 — 서버가 LLM을 호출해 산출물을 만든다 (비동기, 결과는 SSE) */
+router.post('/packets/:pkid/run', async (req, res) => {
+  const body = z.object({ provider: z.enum(AI_PROVIDERS) }).parse(req.body);
+  const packet = await packets.readPacket(req.params.pkid);
+  if (!packet) return res.status(404).json({ error: '패킷 없음' });
+  if (packet.status !== 'waiting') return res.status(400).json({ error: '대기 상태가 아님' });
+
+  res.json({ started: true });
+  try {
+    await runPacketWithApi(req.params.pkid, body.provider);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    broadcast('packet.failed', { packetId: req.params.pkid, error: msg });
+  }
+});
+
+/** ③ 수동 붙여넣기 — 아무 AI 챗에서 받은 응답을 반영 */
+router.post('/packets/:pkid/paste', async (req, res) => {
+  const body = z.object({
+    raw: z.string().optional(),
+    files: z.record(z.string()).optional(),
+  }).parse(req.body);
+  const result = await applyPastedResult(req.params.pkid, body);
+  res.json(result);
 });
 
 router.post('/packets/:pkid/accept', async (req, res) => {

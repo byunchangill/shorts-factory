@@ -144,8 +144,11 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
   const label = PACKET_KIND_LABELS[packet.kind];
   lines.push(`# 요청서: ${label} (${packet.id})`);
   lines.push('');
-  lines.push(`> 이 폴더의 \`result/\`에 산출물을 작성하세요. 다른 파일은 수정하지 마세요.`);
-  lines.push(`> 완료 후 반드시 \`result/.done\` 빈 파일을 마지막에 생성하세요 (서버가 이를 감지합니다).`);
+  lines.push('> 이 문서는 어떤 AI로도 처리할 수 있는 자기완결 요청서입니다.');
+  lines.push('> - **파일 접근이 가능한 도구**(Claude Code 등): 이 폴더의 `result/`에 산출물을 작성하고,');
+  lines.push('>   마지막에 `result/.done` 빈 파일을 만드세요. 그 외 파일은 수정하지 마세요.');
+  lines.push('> - **웹 챗 등 파일을 만들 수 없는 환경**(GPT·제미나이 웹 등): 산출물 내용을 응답 본문에');
+  lines.push('>   그대로 출력하세요. 사용자가 앱에 붙여넣으면 앱이 파일로 저장합니다.');
   lines.push('');
 
   // ① 목적
@@ -246,7 +249,7 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
 
   // ⑤ 산출물 명세
   lines.push('## 산출물 명세');
-  lines.push(`아래 파일을 이 폴더의 \`result/\`에 작성:`);
+  lines.push('아래 산출물을 만드세요 (파일 접근이 가능하면 `result/`에 저장, 아니면 응답 본문에 출력):');
   for (const spec of packet.resultSpec) {
     lines.push(`- \`result/${spec.file}\``);
   }
@@ -259,7 +262,7 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
   lines.push(VALIDATION_RULES[packet.kind]);
   lines.push('');
   lines.push('---');
-  lines.push('작성이 끝나면 마지막에 `result/.done` 빈 파일을 생성하세요.');
+  lines.push('파일을 만들 수 있는 도구라면, 작성이 끝난 뒤 마지막에 `result/.done` 빈 파일을 생성하세요.');
   return lines.join('\n');
 }
 

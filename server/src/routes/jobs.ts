@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
@@ -10,8 +11,13 @@ import { progressOf, statesFor } from '../pipeline/stateMachine.js';
 import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
-import { synthesizeNarration, KO_VOICES, type SceneTiming } from '../pipeline/tts.js';
+import {
+  synthesizeNarration, saveSceneVoiceFile, resolveEngine, KO_VOICES, type SceneTiming,
+} from '../pipeline/tts.js';
+import { listVoices as listTypecastVoices, synthesize as typecastSynthesize } from '../pipeline/voice/typecast.js';
 import { assembleFinal } from '../pipeline/assemble.js';
+import { exportJob, productDir } from '../pipeline/exporter.js';
+import { hasKey } from '../store/secrets.js';
 import { readJson } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
 import { broadcast } from '../sse.js';
@@ -65,6 +71,18 @@ router.post('/jobs/:jid/transition', async (req, res) => {
   const body = z.object({ to: JobStateSchema }).parse(req.body);
   const job = await jobs.transition(ref, body.to as JobState, 'user');
   res.json(job);
+
+  // 완료 처리 시 산출물을 사용자 폴더로 자동 내보내기
+  if (body.to === 'done') {
+    const settings = await loadSettings();
+    if (settings.exportOnDone) {
+      runExport(ref).catch(async (e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        await jobs.logJobEvent(ref, { type: 'export.failed', error: msg });
+        broadcast('export.failed', { jobId: ref.jobId, error: msg });
+      });
+    }
+  }
 });
 
 router.get('/jobs/:jid/events', async (req, res) => {
@@ -280,15 +298,80 @@ router.post('/jobs/:jid/rights-confirm', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── TTS ───────────────────────────────────────────────────────────
+// ── 음성 (타입캐스트 API / 파일 첨부 / edge-tts 폴백) ─────────────
 
+/** edge-tts 폴백 보이스 목록 */
 router.get('/tts/voices', (_req, res) => {
   res.json(KO_VOICES);
 });
 
+/** 현재 사용될 엔진 + 타입캐스트 캐릭터 목록 */
+router.get('/tts/engine', async (_req, res) => {
+  const settings = await loadSettings();
+  const engine = await resolveEngine(settings);
+  const typecastReady = await hasKey('typecast');
+  let voices: unknown[] = [];
+  let error: string | undefined;
+  if (typecastReady) {
+    try {
+      voices = await listTypecastVoices();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  res.json({ engine, typecastReady, typecastVoices: voices, edgeVoices: KO_VOICES, error });
+});
+
+/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 mp3로 바로 반환 */
+router.post('/tts/preview', async (req, res) => {
+  const body = z.object({
+    voiceId: z.string().min(1),
+    text: z.string().default('안녕하세요, 이 목소리로 나레이션을 만들어 드릴게요.'),
+  }).parse(req.body ?? {});
+  try {
+    const audio = await typecastSynthesize(body.text, body.voiceId);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(audio);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** 씬별 음성 파일 첨부 — 첨부된 씬은 합성을 건너뛴다 */
+const voiceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+router.post('/jobs/:jid/voice/upload', voiceUpload.single('file'), async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const sceneId = z.string().min(1).parse(req.body?.sceneId);
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: '파일이 없습니다' });
+
+  const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
+  const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  const fileName = await saveSceneVoiceFile(voiceDir, sceneId, file.buffer, original);
+  await jobs.mutateJob(ref, (j) => {
+    j.sceneVoiceFiles[sceneId] = fileName;
+    j.voiceEngine = 'file';
+  });
+  await jobs.logJobEvent(ref, { type: 'voice.uploaded', sceneId, fileName });
+  res.json({ sceneId, fileName });
+});
+
+router.delete('/jobs/:jid/voice/upload/:sceneId', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  await jobs.mutateJob(ref, (j) => {
+    delete j.sceneVoiceFiles[req.params.sceneId];
+  });
+  res.json({ ok: true });
+});
+
 router.post('/jobs/:jid/tts', async (req, res) => {
   const ref = refOr404(req.params.jid);
-  const body = z.object({ voice: z.string().optional() }).parse(req.body ?? {});
+  const body = z.object({
+    voice: z.string().optional(), // edge-tts 보이스
+    typecastVoiceId: z.string().optional(), // 타입캐스트 캐릭터
+    engine: z.enum(['typecast', 'edge-tts']).optional(),
+  }).parse(req.body ?? {});
   const settings = await loadSettings();
   const job = await jobs.readJob(ref);
   if (!job) return res.status(404).json({ error: '잡 없음' });
@@ -298,7 +381,16 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   const script = await jobs.readScript(ref, job.script.currentVersion);
   if (!script) return res.status(400).json({ error: '대본 파일 없음' });
 
-  const voice = body.voice ?? job.ttsVoice ?? settings.defaultTtsVoice;
+  const engine = body.engine ?? (await resolveEngine(settings));
+  const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
+  const edgeVoice = body.voice ?? job.ttsVoice ?? settings.defaultTtsVoice;
+
+  // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
+  const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
+  if (engine === 'typecast' && !typecastVoiceId && !allUploaded) {
+    return res.status(400).json({ error: '타입캐스트 캐릭터를 선택하거나 씬별 음성 파일을 첨부하세요' });
+  }
+
   const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
 
   res.json({ started: true });
@@ -306,9 +398,21 @@ router.post('/jobs/:jid/tts', async (req, res) => {
     if (job.state === 'trimming' || job.state === 'script_approved' || job.state === 'scening') {
       await jobs.transition(ref, 'voicing', 'server');
     }
-    await jobs.mutateJob(ref, (j) => { j.ttsVoice = voice; });
-    await synthesizeNarration(settings, script, voiceDir, voice, ref.jobId);
-    await jobs.logJobEvent(ref, { type: 'tts.done', voice, scenes: script.scenes.length });
+    await jobs.mutateJob(ref, (j) => {
+      j.ttsVoice = edgeVoice;
+      j.typecastVoiceId = typecastVoiceId;
+      j.voiceEngine = allUploaded ? 'file' : engine;
+    });
+    await synthesizeNarration({
+      settings,
+      script,
+      voiceDir,
+      jobId: ref.jobId,
+      engine,
+      voiceId: engine === 'typecast' ? typecastVoiceId : edgeVoice,
+      sceneVoiceFiles: job.sceneVoiceFiles,
+    });
+    await jobs.logJobEvent(ref, { type: 'tts.done', engine, scenes: script.scenes.length });
     broadcast('tts.done', { jobId: ref.jobId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -374,5 +478,52 @@ router.get('/jobs/:jid/output', async (req, res) => {
   } catch { /* 없으면 생략 */ }
   res.json(out);
 });
+
+// ── 내보내기 (제품별 별도 폴더) ───────────────────────────────────
+
+/** 내보내기 대상 폴더 경로 미리보기 */
+router.get('/jobs/:jid/export', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  res.json({
+    targetDir: productDir(settings, ref.projectId),
+    exportedAt: job?.exportedAt,
+    includeSources: settings.exportIncludeSources,
+  });
+});
+
+router.post('/jobs/:jid/export', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  try {
+    const result = await runExport(ref);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** 잡 산출물을 사용자 폴더로 복사. 완료 전환 시에도 자동 호출된다 */
+export async function runExport(ref: jobs.JobRef) {
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) throw new Error('잡 없음');
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const script = job.script.currentVersion ? await jobs.readScript(ref, job.script.currentVersion) : null;
+  const timings = await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'));
+  const clips = await jobs.listClips(ref);
+
+  const result = await exportJob({
+    settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+  });
+  await jobs.mutateJob(ref, (j) => { j.exportedAt = new Date().toISOString(); });
+  await jobs.logJobEvent(ref, {
+    type: 'export.done',
+    dir: result.rootDir,
+    files: result.copied.length,
+  });
+  broadcast('export.done', { jobId: ref.jobId, dir: result.rootDir, count: result.copied.length });
+  return result;
+}
 
 export default router;

@@ -16,3 +16,6 @@ Thumbs.db
 
 # 로그
 *.log
+
+# 로컬 Claude Code 설정
+.claude/settings.local.json

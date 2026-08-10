@@ -8,6 +8,8 @@ description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 
 인자로 요청서 폴더 경로를 받는다. 예:
 `/answer-job workspace/menu-a/무선청소기/jobs/20260810-001-1편/requests/p03-script`
 
+요청서는 어떤 AI로도 처리할 수 있는 자기완결 문서다. 이 스킬은 그중 **파일 접근이 가능한 경로**(Claude Code)를 담당한다. 웹앱에서 API 자동 실행이나 복사·붙여넣기로 처리할 수도 있으며, 세 방식 모두 같은 `result/` 규약을 따른다.
+
 ## 처리 순서
 
 1. **요청서 읽기**: `{요청서폴더}/request.md`를 Read로 읽는다. 목적·지침·제품정보·소재현황·산출물 명세·검증 규칙이 모두 들어 있다.
@@ -28,6 +30,7 @@ description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 
 
 - 총 낭독 시간 45~58초 = 한국어 약 250~290자
 - 첫 씬은 3초 훅 (질문/반전/가격 충격 중 택1)
+- 나레이션은 TTS(타입캐스트/edge-tts)가 그대로 읽으므로, 읽기 어려운 기호·영문 약어는 한글로 풀어 쓴다
 - menu-a: 각 씬의 `clipRef.clipId`는 소재 현황 표의 실제 클립 ID만 사용, `suggestedSegment`는 클립 길이 안에서 지정
 - menu-b: `clipRef` 대신 `imagePrompt` 사용, 고유 포맷의 `sceneTemplate.imageStylePrompt`를 접두어로 일관 적용
 - 마지막 씬에 CTA 1문장 (쿠팡 링크 유도)

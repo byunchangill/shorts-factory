@@ -9,7 +9,6 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@shared/*": ["../shared/*"]
     }

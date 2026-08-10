@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check } from 'lucide-react';
+import {
+  Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
+  Play, Trash2, FolderOpen,
+} from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS } from '@shared/constants';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Spinner, Textarea } from '@/components/ui';
@@ -20,6 +23,9 @@ interface JobDetail {
   sources: SourceInfo[];
   script: { currentVersion: number; approved: boolean };
   rightsConfirmed: boolean; ttsVoice?: string;
+  typecastVoiceId?: string;
+  sceneVoiceFiles: Record<string, string>;
+  exportedAt?: string;
   output: { currentVersion?: number; uploadKitReady: boolean };
 }
 interface ClipInfo {
@@ -467,18 +473,56 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
 
 // ── 음성 ──────────────────────────────────────────────────────────
 
+interface EngineInfo {
+  engine: 'typecast' | 'edge-tts';
+  typecastReady: boolean;
+  typecastVoices: Array<{ id: string; name: string; language: string; gender: string }>;
+  edgeVoices: Array<{ id: string; label: string }>;
+  error?: string;
+}
+
 function VoicePanel({ job }: { job: JobDetail }) {
   const qc = useQueryClient();
-  const voices = useQuery({
-    queryKey: ['voices'],
-    queryFn: () => api.get<Array<{ id: string; label: string }>>('/tts/voices'),
+  const engineInfo = useQuery({
+    queryKey: ['tts-engine'],
+    queryFn: () => api.get<EngineInfo>('/tts/engine'),
   });
-  const [voice, setVoice] = useState(job.ttsVoice ?? 'ko-KR-SunHiNeural');
+  const script = useQuery({
+    queryKey: ['script', job.id, job.script.currentVersion],
+    queryFn: () => api.get<ScriptData | null>(`/jobs/${job.id}/script`),
+    enabled: job.script.currentVersion > 0,
+  });
+
+  const [engine, setEngine] = useState<'typecast' | 'edge-tts' | null>(null);
+  const [typecastVoiceId, setTypecastVoiceId] = useState(job.typecastVoiceId ?? '');
+  const [edgeVoice, setEdgeVoice] = useState(job.ttsVoice ?? 'ko-KR-SunHiNeural');
   const [runningTts, setRunningTts] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+
+  const activeEngine = engine ?? engineInfo.data?.engine ?? 'edge-tts';
+
+  const upload = useMutation({
+    mutationFn: ({ sceneId, file }: { sceneId: string; file: File }) => {
+      const fd = new FormData();
+      fd.append('sceneId', sceneId);
+      fd.append('file', file);
+      return api.upload(`/jobs/${job.id}/voice/upload`, fd);
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
+  const removeUpload = useMutation({
+    mutationFn: (sceneId: string) =>
+      fetch(`/api/jobs/${job.id}/voice/upload/${sceneId}`, { method: 'DELETE' }).then((r) => r.json()),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
   const tts = useMutation({
     mutationFn: () => {
       setRunningTts(true);
-      return api.post(`/jobs/${job.id}/tts`, { voice });
+      return api.post(`/jobs/${job.id}/tts`, {
+        engine: activeEngine,
+        typecastVoiceId,
+        voice: edgeVoice,
+      });
     },
   });
   const next = useMutation({
@@ -486,27 +530,169 @@ function VoicePanel({ job }: { job: JobDetail }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
   });
 
+  const preview = async () => {
+    if (!typecastVoiceId) return;
+    setPreviewing(true);
+    try {
+      const r = await fetch('/api/tts/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceId: typecastVoiceId }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: '미리듣기 실패' }));
+        throw new Error(err.error);
+      }
+      const blob = await r.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      await audio.play();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const scenes = script.data?.scenes ?? [];
+  const uploadedCount = scenes.filter((s) => job.sceneVoiceFiles?.[s.sceneId]).length;
+  const allUploaded = scenes.length > 0 && uploadedCount === scenes.length;
+
   return (
-    <Card>
-      <h3 className="mb-3 flex items-center gap-2 font-semibold"><Mic size={17} /> TTS 나레이션</h3>
-      <div className="flex items-center gap-2">
-        <select
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          value={voice}
-          onChange={(e) => setVoice(e.target.value)}
-        >
-          {(voices.data ?? []).map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </select>
-        <Button onClick={() => tts.mutate()} disabled={tts.isPending}>음성 생성</Button>
-        {runningTts && <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 생성 중… 완료되면 알림</span>}
-      </div>
-      <p className="mt-3 text-xs text-slate-500">
-        생성이 끝나면 씬별 mp3와 타이밍이 저장되고, 이 타이밍이 자막·조립의 기준이 됩니다.
-      </p>
-      <div className="mt-4">
-        <Button variant="secondary" onClick={() => next.mutate()}>음성 확인 완료 → 조립 단계로</Button>
-      </div>
-    </Card>
+    <div className="space-y-4">
+      <Card>
+        <h3 className="mb-1 flex items-center gap-2 font-semibold"><Mic size={17} /> 나레이션 음성</h3>
+        <p className="mb-3 text-sm text-slate-500">
+          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 API로 합성합니다.
+        </p>
+
+        {!allUploaded && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">합성 엔진</span>
+              <select
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                value={activeEngine}
+                onChange={(e) => setEngine(e.target.value as 'typecast' | 'edge-tts')}
+              >
+                <option value="typecast" disabled={!engineInfo.data?.typecastReady}>
+                  타입캐스트{engineInfo.data?.typecastReady ? '' : ' (API 키 필요)'}
+                </option>
+                <option value="edge-tts">edge-tts (무료)</option>
+              </select>
+            </div>
+
+            {activeEngine === 'typecast' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">캐릭터</span>
+                <select
+                  className="min-w-[240px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  value={typecastVoiceId}
+                  onChange={(e) => setTypecastVoiceId(e.target.value)}
+                >
+                  <option value="">선택하세요</option>
+                  {(engineInfo.data?.typecastVoices ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}{v.gender ? ` · ${v.gender}` : ''}{v.language ? ` · ${v.language}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <Button variant="secondary" onClick={preview} disabled={!typecastVoiceId || previewing}>
+                  {previewing ? <Spinner /> : <Play size={14} />} 미리듣기
+                </Button>
+                {engineInfo.data?.error && (
+                  <span className="text-xs text-red-600">캐릭터 목록 오류: {engineInfo.data.error}</span>
+                )}
+              </div>
+            )}
+
+            {activeEngine === 'edge-tts' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">보이스</span>
+                <select
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  value={edgeVoice}
+                  onChange={(e) => setEdgeVoice(e.target.value)}
+                >
+                  {(engineInfo.data?.edgeVoices ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+
+        {allUploaded && (
+          <p className="rounded-md bg-green-50 p-2 text-sm text-green-700">
+            모든 씬에 음성 파일이 첨부되어 합성 없이 진행합니다.
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => tts.mutate()}
+            disabled={tts.isPending || (activeEngine === 'typecast' && !typecastVoiceId && !allUploaded)}
+          >
+            음성 준비 실행
+          </Button>
+          <Button variant="secondary" onClick={() => next.mutate()}>음성 확인 완료 → 조립 단계로</Button>
+          {runningTts && (
+            <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 준비 중… 완료되면 알림</span>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="font-semibold">씬별 음성</h3>
+          <span className="text-sm text-slate-500">첨부 {uploadedCount} / {scenes.length}씬</span>
+        </div>
+        {scenes.length === 0 ? (
+          <p className="text-sm text-slate-400">대본이 없습니다.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {scenes.map((s, i) => {
+              const uploaded = job.sceneVoiceFiles?.[s.sceneId];
+              return (
+                <li key={s.sceneId} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 p-2 text-sm">
+                  <span className="w-10 shrink-0 font-mono text-xs text-slate-400">{i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate" title={s.narration}>{s.narration}</span>
+                  {uploaded ? (
+                    <>
+                      <Badge color="green">파일 첨부됨</Badge>
+                      <audio
+                        controls
+                        className="h-8"
+                        src={`/media/${job.menu}/${job.projectId}/jobs/${job.id}/voice/${uploaded}`}
+                      />
+                      <Button variant="ghost" className="px-2 py-1" onClick={() => removeUpload.mutate(s.sceneId)}>
+                        <Trash2 size={14} />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Badge>API 합성 예정</Badge>
+                      <label className="cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1 text-xs hover:bg-slate-50">
+                        파일 첨부
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) upload.mutate({ sceneId: s.sceneId, file });
+                          }}
+                        />
+                      </label>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -534,6 +720,18 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['job'] });
       void qc.invalidateQueries({ queryKey: ['active-jobs'] });
+    },
+  });
+  const exportInfo = useQuery({
+    queryKey: ['export', job.id],
+    queryFn: () => api.get<{ targetDir: string; exportedAt?: string; includeSources: boolean }>(`/jobs/${job.id}/export`),
+  });
+  const runExport = useMutation({
+    mutationFn: () => api.post<{ rootDir: string; copied: string[]; skipped: string[] }>(`/jobs/${job.id}/export`),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['export'] });
+      void qc.invalidateQueries({ queryKey: ['job'] });
+      alert(`${r.copied.length}개 파일을 내보냈습니다.\n${r.rootDir}`);
     },
   });
 
@@ -594,6 +792,35 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
                 <Button onClick={() => done.mutate()}><Check size={15} /> 검수 통과 — 완료 처리</Button>
               )}
             </div>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 font-semibold"><FolderOpen size={17} /> 제품 폴더로 내보내기</h3>
+          <Button variant="secondary" onClick={() => runExport.mutate()} disabled={runExport.isPending}>
+            {runExport.isPending ? <><Spinner /> 내보내는 중…</> : '지금 내보내기'}
+          </Button>
+        </div>
+        <p className="mt-2 text-sm text-slate-500">
+          최종영상·영상·음성·대본·이미지·업로드킷을 용도별 폴더로 정리해 저장합니다.
+          완료 처리하면 자동으로 한 번 더 내보냅니다.
+        </p>
+        {exportInfo.data && (
+          <div className="mt-2 space-y-1 text-sm">
+            <p className="flex flex-wrap items-center gap-1.5">
+              <span className="text-slate-500">저장 위치</span>
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{exportInfo.data.targetDir}</code>
+            </p>
+            {exportInfo.data.exportedAt && (
+              <p className="text-xs text-slate-400">
+                마지막 내보내기: {new Date(exportInfo.data.exportedAt).toLocaleString('ko-KR')}
+              </p>
+            )}
+            {!exportInfo.data.includeSources && (
+              <p className="text-xs text-slate-400">다운로드 원본은 제외됩니다 (설정에서 포함 가능)</p>
+            )}
           </div>
         )}
       </Card>

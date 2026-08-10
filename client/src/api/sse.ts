@@ -29,6 +29,18 @@ export function useServerEvents(): void {
     });
     es.addEventListener('packet', () => invalidate('packets', 'packet'));
     es.addEventListener('packet.received', () => invalidate('packets', 'packet', 'job', 'script'));
+    es.addEventListener('packet.failed', (e) => {
+      alert(`요청서 실행 실패: ${JSON.parse((e as MessageEvent).data).error}`);
+      invalidate('packets');
+    });
+    es.addEventListener('export.done', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      alert(`내보내기 완료 (${data.count}개 파일)\n${data.dir}`);
+      invalidate('job', 'export');
+    });
+    es.addEventListener('export.failed', (e) => {
+      alert(`내보내기 실패: ${JSON.parse((e as MessageEvent).data).error}`);
+    });
     es.addEventListener('format.saved', () => invalidate('formats'));
     es.addEventListener('tts.done', () => invalidate('job'));
     es.addEventListener('tts.failed', (e) => {

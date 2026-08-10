@@ -162,6 +162,9 @@ export const PacketSchema = z.object({
     file: z.string(),
     schema: z.string(), // 'script' | 'product' | 'format' | 'markdown' | 'json'
   })),
+  executionMode: z.enum(['claude-code', 'api', 'manual']).optional(), // 실제 실행된 방식
+  provider: z.enum(['anthropic', 'openai', 'gemini']).optional(), // api 방식일 때
+  attempts: z.number().int().default(0), // api 자동 실행 시도 횟수
   createdAt: z.string(),
   receivedAt: z.string().optional(),
   decidedAt: z.string().optional(),
@@ -190,6 +193,10 @@ export const JobSchema = z.object({
     approved: z.boolean().default(false),
   }).default({ currentVersion: 0, approved: false }),
   ttsVoice: z.string().optional(),
+  voiceEngine: z.enum(['typecast', 'edge-tts', 'file']).optional(), // 실제 사용된 엔진
+  typecastVoiceId: z.string().optional(),
+  sceneVoiceFiles: z.record(z.string()).default({}), // sceneId → 업로드된 음성 파일명
+  exportedAt: z.string().optional(), // 마지막 내보내기 시각
   rightsConfirmed: z.boolean().default(false), // 조립 전 저작권 확인 게이트
   packets: z.array(z.string()).default([]),
   output: z.object({
@@ -231,8 +238,78 @@ export const SettingsSchema = z.object({
   ffprobePath: z.string().default('ffprobe'),
   edgeTtsPath: z.string().default('edge-tts'),
   iopaintPath: z.string().default('iopaint'),
+  // 내보내기 (제품별 별도 폴더 저장)
+  exportRoot: z.string().default(''), // 빈 값 = OS 다운로드 폴더 자동 사용
+  exportIncludeSources: z.boolean().default(false), // 다운로드 원본 포함 (용량 큼)
+  exportOnDone: z.boolean().default(true), // 잡 완료 시 자동 내보내기
+  // 요청서 실행 기본 방식
+  defaultPacketMode: z.enum(['claude-code', 'api', 'manual']).default('claude-code'),
+  defaultAiProvider: z.enum(['anthropic', 'openai', 'gemini']).default('anthropic'),
+  aiModels: z.object({
+    anthropic: z.string().default('claude-sonnet-4-5'),
+    openai: z.string().default('gpt-4o-mini'),
+    gemini: z.string().default('gemini-2.0-flash'),
+  }).default({ anthropic: 'claude-sonnet-4-5', openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash' }),
+  // TTS: auto = 타입캐스트 키 있으면 타입캐스트, 없으면 edge-tts
+  ttsEngine: z.enum(['auto', 'typecast', 'edge-tts']).default('auto'),
+  typecastVoiceId: z.string().default(''),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
+
+// ── API 키 (workspace/secrets.json — 절대 커밋 금지) ──────────────
+
+export const SecretsSchema = z.object({
+  youtube: z.string().default(''),
+  anthropic: z.string().default(''),
+  openai: z.string().default(''),
+  gemini: z.string().default(''),
+  typecast: z.string().default(''),
+  googleOauth: z.object({
+    clientId: z.string().default(''),
+    clientSecret: z.string().default(''),
+    refreshToken: z.string().default(''),
+  }).default({ clientId: '', clientSecret: '', refreshToken: '' }),
+});
+export type Secrets = z.infer<typeof SecretsSchema>;
+
+// ── 유튜브 리서치 ─────────────────────────────────────────────────
+
+export const YouTubeVideoSchema = z.object({
+  videoId: z.string(),
+  title: z.string(),
+  channelId: z.string(),
+  channelTitle: z.string(),
+  publishedAt: z.string(),
+  thumbnail: z.string(),
+  viewCount: z.number().default(0),
+  likeCount: z.number().default(0),
+  commentCount: z.number().default(0),
+  durationSec: z.number().default(0),
+  url: z.string(),
+});
+export type YouTubeVideo = z.infer<typeof YouTubeVideoSchema>;
+
+export const ChannelAnalysisSchema = z.object({
+  channelId: z.string(),
+  title: z.string(),
+  description: z.string().default(''),
+  thumbnail: z.string().default(''),
+  subscriberCount: z.number().default(0),
+  videoCount: z.number().default(0),
+  totalViewCount: z.number().default(0),
+  avgViews: z.number().default(0),
+  uploadsPerWeek: z.number().default(0),
+  shortsRatio: z.number().default(0), // 최근 영상 중 쇼츠(≤3분) 비율
+  recentVideos: z.array(YouTubeVideoSchema).default([]),
+  topVideos: z.array(YouTubeVideoSchema).default([]),
+});
+export type ChannelAnalysis = z.infer<typeof ChannelAnalysisSchema>;
+
+export const QuotaLedgerSchema = z.object({
+  date: z.string(), // YYYY-MM-DD
+  used: z.number().int().default(0),
+});
+export type QuotaLedger = z.infer<typeof QuotaLedgerSchema>;
 
 /** 패킷 결과 파일 검증에 쓰는 스키마 레지스트리 */
 export const RESULT_SCHEMAS: Record<string, z.ZodTypeAny> = {
