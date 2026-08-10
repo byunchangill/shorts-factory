@@ -10,6 +10,7 @@ import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip } fro
 import { paths } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { toWorkspaceRel } from '../store/workspace.js';
+import { nextSeqId } from '../util/ids.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -35,8 +36,10 @@ export async function downloadAll(settings: Settings, ref: JobRef): Promise<void
 
     const job = await readJob(ref);
     if (!job) return;
+    // 첨부 파일 소스는 받을 것이 없으므로 큐에 넣지 않는다
     const pending = job.sources.filter(
-      (s) => s.status === 'queued' || (s.status === 'failed' && s.attempts < MAX_ATTEMPTS),
+      (s) => s.origin !== 'file'
+        && (s.status === 'queued' || (s.status === 'failed' && s.attempts < MAX_ATTEMPTS)),
     );
 
     // 한 건이 터져도 나머지 다운로드와 서버는 계속 살아 있어야 한다
@@ -167,6 +170,66 @@ async function createClipForSource(
     await logJobEvent(ref, { type: 'clip.probe_failed', clipId, error: String(e) });
   }
   await writeClip(ref, clip);
+}
+
+/**
+ * 사용자가 이미 받아둔 영상 파일을 소스로 편입한다.
+ * yt-dlp를 거치지 않을 뿐, 이후 단계(probe → 프레임 추출 → 클립 생성)는 다운로드 소스와 같다.
+ *
+ * @param tmpPath 업로드가 저장된 임시 파일 경로 (sources/ 안에 있어야 rename이 같은 볼륨에서 끝난다)
+ * @returns 배정된 소스 id
+ */
+export async function attachSourceFile(
+  settings: Settings,
+  ref: JobRef,
+  tmpPath: string,
+  originalName: string,
+): Promise<string> {
+  const ext = path.extname(originalName) || path.extname(tmpPath) || '.mp4';
+  let sourceId = '';
+  await mutateJob(ref, (job) => {
+    sourceId = nextSeqId('s', job.sources.map((s) => s.id));
+    job.sources.push({
+      id: sourceId,
+      url: originalName,
+      origin: 'file',
+      status: 'downloaded',
+      attempts: 0,
+      progress: 100,
+    });
+  });
+
+  const filePath = path.join(path.dirname(tmpPath), `${sourceId}${ext}`);
+  await fsp.rename(tmpPath, filePath);
+  await setSource(ref, sourceId, { filePath: toWorkspaceRel(filePath) });
+  await logJobEvent(ref, { type: 'source.attached', sourceId, fileName: originalName });
+
+  await createClipForSource(settings, ref, sourceId, filePath);
+  return sourceId;
+}
+
+/** 소스 1건 제거 — 파일·클립까지 함께 지운다 */
+export async function removeSource(ref: JobRef, sourceId: string): Promise<void> {
+  const job = await readJob(ref);
+  const source = job?.sources.find((s) => s.id === sourceId);
+  if (!source) return;
+
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  // 다운로드 산출물(영상·info.json)과 클립 폴더를 함께 정리한다 — 남기면 용량만 먹는다
+  const sourcesDir = path.join(jobDir, 'sources');
+  for (const f of await fsp.readdir(sourcesDir).catch(() => [] as string[])) {
+    if (f === sourceId || f.startsWith(`${sourceId}.`)) {
+      await fsp.rm(path.join(sourcesDir, f), { force: true }).catch(() => {});
+    }
+  }
+  const clipId = sourceId.replace(/^s/, 'c');
+  await fsp.rm(path.join(jobDir, 'clips', clipId), { recursive: true, force: true }).catch(() => {});
+
+  await mutateJob(ref, (j) => {
+    j.sources = j.sources.filter((s) => s.id !== sourceId);
+  });
+  await logJobEvent(ref, { type: 'source.removed', sourceId, url: source.url });
+  broadcast('source.removed', { jobId: ref.jobId, sourceId });
 }
 
 /** 단일 소스 재시도 */

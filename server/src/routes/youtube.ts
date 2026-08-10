@@ -142,7 +142,7 @@ router.post('/youtube/to-job', async (req, res) => {
     for (const url of body.urls) {
       if (existing.has(url)) continue;
       const id = nextSeqId('s', j.sources.map((s) => s.id));
-      j.sources.push({ id, url, status: 'queued', attempts: 0, progress: 0 });
+      j.sources.push({ id, url, origin: 'url', status: 'queued', attempts: 0, progress: 0 });
       existing.add(url);
     }
   });

@@ -14,7 +14,7 @@ import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
 import { SegmentPicker, type SegmentDraft } from '@/components/SegmentPicker';
 
 interface SourceInfo {
-  id: string; url: string; status: string; attempts: number; progress: number;
+  id: string; url: string; origin: 'url' | 'file'; status: string; attempts: number; progress: number;
   error?: string; uploader?: string; license?: string; licenseNote?: string;
 }
 interface JobDetail {
@@ -119,6 +119,19 @@ function SourcesPanel({ job }: { job: JobDetail }) {
     mutationFn: () => api.post(`/jobs/${job.id}/download/start`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
   });
+  // 이미 받아둔 영상 첨부 — yt-dlp가 못 받는 사이트의 우회로
+  const attach = useMutation({
+    mutationFn: (files: FileList) => {
+      const fd = new FormData();
+      for (const f of Array.from(files)) fd.append('files', f);
+      return api.upload(`/jobs/${job.id}/sources/upload`, fd);
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
+  const remove = useMutation({
+    mutationFn: (sid: string) => api.del(`/jobs/${job.id}/sources/${sid}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
   const retry = (sid: string) => api.post(`/jobs/${job.id}/sources/${sid}/retry`).then(() => qc.invalidateQueries({ queryKey: ['job'] }));
 
   const statusBadge = (s: SourceInfo) => {
@@ -145,16 +158,36 @@ function SourcesPanel({ job }: { job: JobDetail }) {
         onChange={(e) => setUrls(e.target.value)}
         placeholder={'https://www.youtube.com/watch?v=...\nhttps://www.tiktok.com/@user/video/...'}
       />
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button onClick={() => addSources.mutate()} disabled={!urls.trim() || addSources.isPending}>
           URL 추가
         </Button>
-        {job.sources.length > 0 && (
+        {job.sources.some((s) => s.origin === 'url') && (
           <Button variant="secondary" onClick={() => start.mutate()} disabled={job.downloading || start.isPending}>
             {job.downloading ? <>다운로드 진행 중… <Spinner /></> : '다운로드 시작'}
           </Button>
         )}
+        <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          {attach.isPending ? <span className="inline-flex items-center gap-1.5">첨부 중… <Spinner /></span> : '영상 파일 첨부'}
+          <input
+            type="file"
+            accept="video/*"
+            multiple
+            className="hidden"
+            disabled={attach.isPending}
+            onChange={(e) => {
+              if (e.target.files?.length) attach.mutate(e.target.files);
+              e.target.value = ''; // 같은 파일을 다시 고를 수 있게 초기화
+            }}
+          />
+        </label>
       </div>
+      <p className="mt-1.5 text-xs text-slate-400">
+        yt-dlp가 받지 못하는 사이트(쇼핑몰 상세페이지 등)는 직접 받은 영상 파일을 첨부하세요.
+      </p>
+      {(attach.error || remove.error) && (
+        <p className="mt-1.5 text-xs text-red-500">{(attach.error ?? remove.error)?.message}</p>
+      )}
 
       {job.sources.length > 0 && (
         <table className="mt-4 w-full text-sm">
@@ -166,16 +199,28 @@ function SourcesPanel({ job }: { job: JobDetail }) {
           <tbody>
             {job.sources.map((s) => (
               <tr key={s.id} className="border-b border-slate-100">
-                <td className="max-w-[280px] truncate py-2 pr-2" title={s.url}>{s.url}</td>
+                <td className="max-w-[280px] truncate py-2 pr-2" title={s.url}>
+                  {s.origin === 'file' && <Badge color="slate">첨부</Badge>} {s.url}
+                </td>
                 <td className="py-2 pr-2">
                   {statusBadge(s)}
                   {s.error && <p className="mt-0.5 max-w-[200px] truncate text-xs text-red-500" title={s.error}>{s.error}</p>}
                 </td>
                 <td className="py-2 pr-2 text-xs text-slate-500">{s.uploader ?? '—'}</td>
-                <td className="py-2 text-right">
-                  {s.status === 'failed' && (
+                <td className="whitespace-nowrap py-2 text-right">
+                  {s.status === 'failed' && s.origin === 'url' && (
                     <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => void retry(s.id)}>
                       <RefreshCw size={13} /> 재시도
+                    </Button>
+                  )}
+                  {s.status !== 'downloading' && (
+                    <Button
+                      variant="ghost"
+                      className="px-2 py-1 text-xs text-red-500"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(s.id)}
+                    >
+                      <Trash2 size={13} /> 삭제
                     </Button>
                   )}
                 </td>

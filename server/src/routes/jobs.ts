@@ -8,7 +8,9 @@ import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel } from '../store/workspace.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
-import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
+import {
+  downloadAll, retrySource, isDownloading, attachSourceFile, removeSource,
+} from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
@@ -106,7 +108,7 @@ router.put('/jobs/:jid/sources', async (req, res) => {
     for (const url of body.urls) {
       if (existing.has(url)) continue;
       const id = nextSeqId('s', j.sources.map((s) => s.id));
-      j.sources.push({ id, url, status: 'queued', attempts: 0, progress: 0 });
+      j.sources.push({ id, url, origin: 'url', status: 'queued', attempts: 0, progress: 0 });
       existing.add(url);
     }
   });
@@ -141,9 +143,85 @@ router.post('/jobs/:jid/download/start', async (req, res) => {
   res.json({ started: true });
 });
 
+/**
+ * 이미 받아둔 영상 파일 첨부.
+ * yt-dlp가 못 받는 사이트(쇼핑몰 상세페이지 등)는 사용자가 직접 받아 올리면 된다.
+ * 큰 파일이 메모리에 통째로 올라오지 않도록 sources/ 폴더에 바로 쓴다
+ * (같은 폴더 안에서 rename하므로 볼륨을 넘지 않는다).
+ */
+let uploadSeq = 0;
+const sourceUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const ref = jobs.resolveJob(req.params.jid);
+      if (!ref) return cb(new Error(`잡 없음: ${req.params.jid}`), '');
+      const dir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'sources');
+      fsp.mkdir(dir, { recursive: true }).then(() => cb(null, dir), (e) => cb(e as Error, ''));
+    },
+    filename: (_req, file, cb) => cb(null, `upload-${Date.now()}-${uploadSeq++}${path.extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 4 * 1024 * 1024 * 1024 },
+});
+
+router.post('/jobs/:jid/sources/upload', sourceUpload.array('files', 50), async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const files = (req.files ?? []) as Express.Multer.File[];
+  if (!files.length) return res.status(400).json({ error: '파일이 없습니다' });
+  const settings = await loadSettings();
+
+  for (const f of files) {
+    // multer는 파일명을 latin1로 넘긴다 — 한글 파일명이 깨지지 않게 되돌린다
+    const original = Buffer.from(f.originalname, 'latin1').toString('utf8');
+    await attachSourceFile(settings, ref, f.path, original);
+  }
+
+  const job = await jobs.readJob(ref);
+  if (job?.state === 'draft') await jobs.transition(ref, 'collecting', 'server');
+  // 첨부 파일은 받을 것이 없으므로, 남은 URL이 없다면 바로 정리 단계로 보낸다
+  const after = await jobs.readJob(ref);
+  if (after && after.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped')) {
+    await jobs.advanceTo(ref, 'cleaning');
+  }
+  res.json(await jobView(ref));
+});
+
+router.delete('/jobs/:jid/sources/:sid', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const job = await jobs.readJob(ref);
+  const source = job?.sources.find((s) => s.id === req.params.sid);
+  if (!source) return res.status(404).json({ error: '소스 없음' });
+  if (source.status === 'downloading') {
+    return res.status(400).json({ error: '다운로드 중에는 삭제할 수 없습니다' });
+  }
+  // 대본이 이 소재를 참조하고 있으면 지울 수 없다 (조립 때 소재를 찾지 못한다)
+  if (job!.script.currentVersion > 0 && source.status === 'downloaded') {
+    return res.status(400).json({
+      error: '대본이 이미 작성된 소재는 삭제할 수 없습니다. 대본을 먼저 수정하세요',
+    });
+  }
+  await removeSource(ref, req.params.sid);
+
+  // 남은 소스가 전부 끝났다면 다음 단계로 보낸다. 안 그러면 실패한 소스를 지운 사용자가
+  // "영상 다운로드" 화면에 갇힌다 — 받을 것이 없는데 진행 버튼도 없는 상태가 된다
+  const rest = await jobs.readJob(ref);
+  if (
+    rest && (rest.state === 'downloading' || rest.state === 'collecting')
+    && rest.sources.length > 0
+    && rest.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped')
+  ) {
+    await jobs.advanceTo(ref, 'cleaning');
+  }
+  res.json(await jobView(ref));
+});
+
 router.post('/jobs/:jid/sources/:sid/retry', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  const source = job?.sources.find((s) => s.id === req.params.sid);
+  if (source?.origin === 'file') {
+    return res.status(400).json({ error: '첨부 파일은 재시도 대상이 아닙니다. 삭제 후 다시 첨부하세요' });
+  }
   void retrySource(settings, ref, req.params.sid).catch((e) => {
     broadcast('source.error', {
       jobId: ref.jobId, sourceId: req.params.sid,

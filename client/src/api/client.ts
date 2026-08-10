@@ -31,6 +31,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then((r) => handle<T>(r)),
+  del: <T>(url: string) =>
+    fetch(`/api${url}`, { method: 'DELETE' }).then((r) => handle<T>(r)),
   upload: <T>(url: string, formData: FormData) =>
     fetch(`/api${url}`, { method: 'POST', body: formData }).then((r) => handle<T>(r)),
 };

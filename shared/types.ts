@@ -69,7 +69,10 @@ export type Format = z.infer<typeof FormatSchema>;
 
 export const SourceUrlSchema = z.object({
   id: z.string(),
-  url: z.string().url(),
+  /** URL 소스는 주소, 첨부 파일 소스는 원본 파일명 (표시용) */
+  url: z.string(),
+  /** file = 사용자가 직접 받아둔 영상을 첨부한 것 — 다운로드 대상이 아니다 */
+  origin: z.enum(['url', 'file']).default('url'),
   status: z.enum(['queued', 'downloading', 'downloaded', 'failed', 'skipped']),
   attempts: z.number().int().default(0),
   progress: z.number().min(0).max(100).default(0),

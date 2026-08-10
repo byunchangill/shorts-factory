@@ -140,6 +140,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const get = <T>(url: string) => req<T>('GET', url);
 const post = <T>(url: string, body?: unknown) => req<T>('POST', url, body);
 const put = <T>(url: string, body: unknown) => req<T>('PUT', url, body);
+const del = <T>(url: string) => req<T>('DELETE', url);
 
 /** 조건이 참이 될 때까지 폴링. 비동기 파이프라인 단계 대기용 */
 async function waitFor<T>(
@@ -218,7 +219,10 @@ async function makeSilentAudio(outPath: string, seconds: number): Promise<void> 
 
 interface JobView {
   id: string; state: string; progress: number; downloading: boolean;
-  sources: Array<{ id: string; status: string; error?: string; filePath?: string }>;
+  sources: Array<{
+    id: string; url: string; origin: 'url' | 'file';
+    status: string; error?: string; filePath?: string;
+  }>;
   script: { currentVersion: number; approved: boolean };
   sceneVoiceFiles: Record<string, string>;
   output: { currentVersion?: number };
@@ -400,6 +404,61 @@ async function main(): Promise<void> {
     });
     assert(v.sources.every((s) => s.filePath), '다운로드 파일 경로가 기록되지 않음');
     return '2건 다운로드 완료';
+  });
+
+  await step('실패한 소스 삭제', async () => {
+    // 영상이 아닌 주소(쇼핑몰 상세페이지 등)를 넣으면 yt-dlp가 실패한다 — 지울 수 있어야 한다
+    const bad = `http://127.0.0.1:${MEDIA_PORT}/not-a-video.html`;
+    const added = await put<JobView>(`/jobs/${jid}/sources`, { urls: [bad] });
+    const badId = added.sources.find((s) => s.url === bad)!.id;
+    // 앞 다운로드가 아직 돌고 있으면 시작 요청이 무시된다 (이중 실행 방지)
+    await waitFor('다운로드 큐 idle', async () => {
+      const j = await get<JobView>(`/jobs/${jid}`);
+      return j.downloading ? null : true;
+    }, 30_000);
+    await post(`/jobs/${jid}/download/start`);
+    await waitFor('실패 확정', async () => {
+      const j = await get<JobView>(`/jobs/${jid}`);
+      return j.sources.find((s) => s.id === badId)?.status === 'failed' ? true : null;
+    }, 60_000);
+
+    const after = await del<JobView>(`/jobs/${jid}/sources/${badId}`);
+    assert(!after.sources.some((s) => s.id === badId), '삭제 후에도 소스가 남아 있음');
+    assert(after.sources.length === 2, `남은 소스 수가 다름: ${after.sources.length}`);
+    // 남은 소스가 다 받아졌으면 다음 단계로 넘어가야 한다 (안 그러면 화면에 갇힌다)
+    assert(after.state === 'cleaning', `삭제 후 단계가 전진하지 않음: ${after.state}`);
+    return `실패 → 삭제 → 목록에서 제거 · ${after.state}로 전진`;
+  });
+
+  await step('이미 받아둔 영상 파일 첨부', async () => {
+    const fd = new FormData();
+    const buf = await fsp.readFile(path.join(mediaDir, 'clip1.mp4'));
+    fd.append('files', new Blob([buf], { type: 'video/mp4' }), '내가받은영상.mp4');
+    const r = await fetch(`${API}/jobs/${jid}/sources/upload`, { method: 'POST', body: fd });
+    const text = await r.text(); // 본문은 한 번만 읽을 수 있다
+    assert(r.ok, `첨부 실패: ${r.status} ${text}`);
+    const j = JSON.parse(text) as JobView;
+
+    const attached = j.sources.find((s) => s.origin === 'file');
+    assert(!!attached, '첨부 소스가 등록되지 않음');
+    assert(attached!.status === 'downloaded', `첨부 소스 상태가 다름: ${attached!.status}`);
+    assert(attached!.url === '내가받은영상.mp4', `한글 파일명이 깨짐: ${attached!.url}`);
+    assert(!!attached!.filePath, '첨부 파일 경로가 기록되지 않음');
+
+    // 다운로드 소스와 똑같이 probe·프레임·클립이 만들어져야 한다
+    const clipId = attached!.id.replace(/^s/, 'c');
+    const withClip = await waitFor('첨부 클립 생성', async () => {
+      const c = await get<ClipView[]>(`/jobs/${jid}/clips`);
+      const mine = c.find((x) => x.id === clipId);
+      return mine?.probe && mine.frames.length > 0 ? mine : null;
+    }, 60_000);
+    assert(withClip.probe!.width === W, `첨부 클립 해상도 이상: ${withClip.probe!.width}`);
+
+    // 첨부를 취소하면 소스·파일·클립이 함께 사라져야 한다
+    await del<JobView>(`/jobs/${jid}/sources/${attached!.id}`);
+    const clipsAfter = await get<ClipView[]>(`/jobs/${jid}/clips`);
+    assert(clipsAfter.length === 2, `삭제 후 클립 수가 다름: ${clipsAfter.length}`);
+    return `첨부 → 클립 생성(${withClip.frames.length}프레임) → 삭제 시 클립까지 정리`;
   });
 
   const clips = await step2<ClipView[]>('클립 자동 생성 · 분석(ffprobe) · 프레임 추출', async () => {
