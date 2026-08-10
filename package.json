@@ -1,41 +1,25 @@
 {
-  "name": "yt-shorts-factory",
-  "version": "0.1.0",
-  "description": "리서치 기반 YouTube Shorts 자동 제작 파이프라인",
+  "name": "shorts-factory",
+  "private": true,
+  "version": "2.0.0",
+  "description": "쇼핑쇼츠 팩토리 — 해외영상 짜집기 + 제품정보리뷰 로컬 웹앱",
   "type": "module",
-  "main": "dist/index.js",
+  "workspaces": [
+    "server",
+    "client"
+  ],
   "scripts": {
-    "dev": "concurrently -n \"API,UI\" -c \"cyan,magenta\" \"npm run dev:api\" \"npm run dev:ui\"",
-    "dev:api": "tsx watch src/server.ts",
-    "dev:ui": "npm run dev --prefix client",
-    "dev:cli": "tsx src/index.ts",
-    "build": "tsc && npm run build --prefix client",
-    "build:api": "tsc",
-    "build:ui": "npm run build --prefix client",
-    "install:all": "npm install && npm install --prefix client",
-    "start": "tsx src/orchestrator.ts",
-    "status": "tsx src/orchestrator.ts --status",
-    "preflight": "tsx src/orchestrator.ts --dry-run",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "concurrently": "^9.1.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "googleapis": "^134.0.0",
-    "zod": "^3.24.2"
+    "dev": "concurrently -n api,ui -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:api": "npm run dev -w server",
+    "dev:ui": "npm run dev -w client",
+    "build": "npm run build -w server && npm run build -w client",
+    "test": "npm run test -w server",
+    "doctor": "npm run doctor -w server"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.3",
-    "@types/node": "^20.17.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
