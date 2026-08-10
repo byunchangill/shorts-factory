@@ -1,6 +1,6 @@
 ---
 name: answer-job
-description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 발행한 요청서 폴더 경로를 받아 request.md의 지시대로 result/ 산출물을 작성한다. "/answer-job workspace/..." 형태로 호출되거나, 요청서 폴더 경로와 함께 요청서 처리를 부탁받으면 사용.
+description: 쇼핑쇼츠 팩토리 요청서(request packet)를 단독으로 빠르게 처리한다. 웹앱이 발행한 요청서 폴더 경로를 받아 request.md의 지시대로 result/ 산출물을 작성한다. "/answer-job workspace/..." 형태로 호출되거나, 요청서 폴더 경로와 함께 요청서 처리를 부탁받으면 사용. 리서치·검수를 거친 고품질 결과가 필요하면 이 스킬 대신 shorts-content-team 스킬을 쓴다.
 ---
 
 # 요청서 처리 (answer-job)
