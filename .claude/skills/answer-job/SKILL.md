@@ -30,7 +30,7 @@ description: 쇼핑쇼츠 팩토리 요청서(request packet) 처리. 웹앱이 
 
 - 총 낭독 시간 45~58초 = 한국어 약 250~290자
 - 첫 씬은 3초 훅 (질문/반전/가격 충격 중 택1)
-- 나레이션은 TTS(타입캐스트/edge-tts)가 그대로 읽으므로, 읽기 어려운 기호·영문 약어는 한글로 풀어 쓴다
+- 나레이션은 타입캐스트 TTS가 그대로 읽으므로, 읽기 어려운 기호·영문 약어는 한글로 풀어 쓴다
 - menu-a: 각 씬의 `clipRef.clipId`는 소재 현황 표의 실제 클립 ID만 사용, `suggestedSegment`는 클립 길이 안에서 지정
 - menu-b: `clipRef` 대신 `imagePrompt` 사용, 고유 포맷의 `sceneTemplate.imageStylePrompt`를 접두어로 일관 적용
 - 마지막 씬에 CTA 1문장 (쿠팡 링크 유도)

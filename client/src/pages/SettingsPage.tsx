@@ -6,13 +6,11 @@ import { Badge, Button, Card, Input } from '@/components/ui';
 
 interface Settings {
   parallelDownloads: number;
-  defaultTtsVoice: string;
   burnSubtitles: boolean;
   burnDisclosure: boolean;
   ytdlpPath: string;
   ffmpegPath: string;
   ffprobePath: string;
-  edgeTtsPath: string;
   iopaintPath: string;
   exportRoot: string;
   exportIncludeSources: boolean;
@@ -20,7 +18,6 @@ interface Settings {
   defaultPacketMode: 'claude-code' | 'api' | 'manual';
   defaultAiProvider: 'anthropic' | 'openai' | 'gemini';
   aiModels: { anthropic: string; openai: string; gemini: string };
-  ttsEngine: 'auto' | 'typecast' | 'edge-tts';
   typecastVoiceId: string;
 }
 interface DoctorTool {
@@ -164,28 +161,20 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <h3 className="mb-3 font-medium">음성(TTS)</h3>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="w-28 shrink-0 font-medium">엔진</span>
-          <select
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            value={form.ttsEngine}
-            onChange={(e) => set({ ttsEngine: e.target.value as Settings['ttsEngine'] })}
-          >
-            <option value="auto">자동 (타입캐스트 키 있으면 타입캐스트)</option>
-            <option value="typecast">타입캐스트</option>
-            <option value="edge-tts">edge-tts (무료)</option>
-          </select>
-        </div>
+        <h3 className="mb-3 font-medium">음성</h3>
+        <p className="text-sm text-slate-500">
+          나레이션은 <b>타입캐스트 API</b>로 합성하거나, 작업 화면에서 <b>씬별 음성 파일을 첨부</b>합니다.
+          첨부된 씬은 합성하지 않고 그 파일을 그대로 사용합니다.
+        </p>
         <p className="mt-2 text-xs text-slate-500">
-          씬에 음성 파일을 첨부하면 엔진 설정과 무관하게 그 파일이 우선 사용됩니다.
+          타입캐스트 키는 "API 키" 메뉴에서 등록하고, 캐릭터는 작업의 음성 단계에서 미리듣기로 고릅니다.
         </p>
       </Card>
 
       <Card>
         <h3 className="mb-3 font-medium">도구 경로 (PATH에 없을 때만 수정)</h3>
         <div className="space-y-2">
-          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'edgeTtsPath', 'iopaintPath'] as const).map((k) => (
+          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'iopaintPath'] as const).map((k) => (
             <div key={k} className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-sm text-slate-500">{k.replace('Path', '')}</span>
               <Input value={form[k]} onChange={(e) => set({ [k]: e.target.value } as Partial<Settings>)} />

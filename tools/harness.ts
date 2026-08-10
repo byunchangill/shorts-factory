@@ -172,7 +172,7 @@ async function makeSyntheticVideo(outPath: string, seconds: number, seed: number
   ]);
 }
 
-/** 씬 음성 대용 무음 mp3 (edge-tts를 쓸 수 없을 때 파일 첨부 경로 검증용) */
+/** 씬 음성 대용 무음 mp3 (파일 첨부 경로 검증용 — 타입캐스트는 실제 키가 필요하다) */
 async function makeSilentAudio(outPath: string, seconds: number): Promise<void> {
   await runCmd('ffmpeg', [
     '-y', '-loglevel', 'error',
@@ -455,23 +455,21 @@ async function main(): Promise<void> {
     return t ? JSON.parse(t) : null;
   };
 
-  const edgeAvailable = await softStep('edge-tts 가용성 확인', async () => {
-    const probeOut = path.join(tmpBase, 'edge-probe.mp3');
-    await runCmd('edge-tts', ['--voice', 'ko-KR-SunHiNeural', '--text', '테스트', '--write-media', probeOut]);
-    const st = await fsp.stat(probeOut);
-    assert(st.size > 500, '생성된 음성이 비어 있음');
-    return `사용 가능 (${Math.round(st.size / 1024)}KB)`;
+  await step('음성 첨부 없이 실행하면 차단되는지 확인', async () => {
+    const r = await fetch(`${API}/jobs/${jid}/tts`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    assert(r.status === 400, `차단되지 않음 (status ${r.status})`);
+    const body = await r.json();
+    assert(String(body.error).includes('첨부') || String(body.error).includes('캐릭터'),
+      `차단 사유가 다름: ${body.error}`);
+    return '캐릭터·첨부 모두 없으면 400';
   });
 
-  if (edgeAvailable) {
-    await step('음성 합성 (edge-tts)', async () => {
-      await post(`/jobs/${jid}/tts`, { engine: 'edge-tts' });
-      const timings = await waitFor('타이밍 생성', readTiming, 120_000);
-      assert(timings.length === scenes.length, `타이밍 씬 수 불일치: ${timings.length}`);
-      return `${timings.length}씬 합성`;
-    });
-  } else {
-    await step('음성 파일 첨부 경로로 대체', async () => {
+  {
+    // 타입캐스트는 실제 API 키가 필요하므로, 하네스는 파일 첨부 경로를 검증한다.
+    // (키가 있으면 UI의 캐릭터 선택·미리듣기로 확인)
+    await step('씬별 음성 파일 첨부', async () => {
       const tmpAudio = path.join(workspace, '_tmp_audio');
       await fsp.mkdir(tmpAudio, { recursive: true });
       for (const [i, scene] of scenes.entries()) {
@@ -489,7 +487,7 @@ async function main(): Promise<void> {
     });
 
     await step('첨부 파일로 타이밍 생성', async () => {
-      await post(`/jobs/${jid}/tts`, { engine: 'edge-tts' });
+      await post(`/jobs/${jid}/tts`, {});
       const timings = await waitFor('타이밍 생성', readTiming, 60_000);
       assert(Array.isArray(timings) && timings.length === scenes.length,
         `타이밍 씬 수 불일치: ${timings.length}`);

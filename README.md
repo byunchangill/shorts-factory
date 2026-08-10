@@ -18,7 +18,7 @@ Claude, GPT, 제미나이 중 **아무 AI나** 쓸 수 있습니다.
 npm install
 
 # 2. 미디어 도구 (필수)
-pip install yt-dlp edge-tts
+pip install yt-dlp
 # ffmpeg: https://ffmpeg.org/download.html (winget install ffmpeg / brew install ffmpeg)
 
 # 3. AI 인페인팅 (선택 — 2차 워터마크 제거)
@@ -43,7 +43,7 @@ npm run dev
 |---|---|---|
 | YouTube Data API | 유튜브 리서치 (무료 10,000유닛/일) | 리서치 메뉴 사용 불가 |
 | Anthropic / OpenAI / Gemini | 요청서 API 자동 실행 | Claude Code 또는 복사·붙여넣기로 처리 |
-| Typecast | 나레이션 음성 | edge-tts 무료 폴백 |
+| Typecast | 나레이션 음성 합성 | 씬별 음성 파일을 직접 첨부 |
 | 구글 OAuth | 내 채널 비공개 통계 | 공개 데이터만 조회 |
 
 유튜브 설정 절차: `tools/setup-youtube-oauth.md`
@@ -56,7 +56,7 @@ npm run dev
    - (또는 **유튜브 리서치**에서 영상을 찾아 "잡에 추가")
 4. 클립마다 프레임 위에 제거 영역 드래그 → **1차 제거** (필요시 AI 인페인팅)
 5. **대본 요청서 발행** → 세 방식 중 하나로 실행 → 결과 자동 반영 → 승인/반려
-6. 컷 선택 → 음성(파일 첨부 또는 타입캐스트) → 사용 권리 확인 → **조립** → 검수
+6. 컷 선택 → 음성(타입캐스트 캐릭터 선택 또는 씬별 파일 첨부) → 사용 권리 확인 → **조립** → 검수
 7. **완료 처리** → 제품 폴더로 자동 내보내기
 
 ## 산출물 저장 위치
@@ -104,6 +104,6 @@ npm run harness  # 엔드투엔드 하네스 — 실제로 영상 1편을 만들
 
 유튜브에서 남의 영상을 받지 않고, 실제 workspace도 건드리지 않습니다(`SHORTS_WORKSPACE`로 격리).
 산출물을 눈으로 확인하려면 `npm run harness -- --keep`을 쓰면 임시 폴더가 남습니다.
-API 키 없이 돌아가며, edge-tts를 쓸 수 없는 환경에서는 음성 파일 첨부 경로로 자동 전환합니다.
+API 키 없이 돌아갑니다 — 음성은 파일 첨부 경로로 검증하며, 타입캐스트 합성은 키를 등록한 뒤 UI에서 확인하세요.
 
 > 이미 `npm run dev`가 떠 있으면 포트 충돌로 즉시 중단됩니다. 서버를 끄고 실행하세요.

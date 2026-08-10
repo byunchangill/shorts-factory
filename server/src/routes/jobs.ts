@@ -11,9 +11,7 @@ import { progressOf, statesFor } from '../pipeline/stateMachine.js';
 import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
-import {
-  synthesizeNarration, saveSceneVoiceFile, resolveEngine, KO_VOICES, type SceneTiming,
-} from '../pipeline/tts.js';
+import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
 import { listVoices as listTypecastVoices, synthesize as typecastSynthesize } from '../pipeline/voice/typecast.js';
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir } from '../pipeline/exporter.js';
@@ -310,17 +308,10 @@ router.post('/jobs/:jid/rights-confirm', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── 음성 (타입캐스트 API / 파일 첨부 / edge-tts 폴백) ─────────────
+// ── 음성 (타입캐스트 API 또는 씬별 파일 첨부) ─────────────────────
 
-/** edge-tts 폴백 보이스 목록 */
-router.get('/tts/voices', (_req, res) => {
-  res.json(KO_VOICES);
-});
-
-/** 현재 사용될 엔진 + 타입캐스트 캐릭터 목록 */
+/** 타입캐스트 사용 가능 여부 + 캐릭터 목록 */
 router.get('/tts/engine', async (_req, res) => {
-  const settings = await loadSettings();
-  const engine = await resolveEngine(settings);
   const typecastReady = await hasKey('typecast');
   let voices: unknown[] = [];
   let error: string | undefined;
@@ -331,7 +322,7 @@ router.get('/tts/engine', async (_req, res) => {
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  res.json({ engine, typecastReady, typecastVoices: voices, edgeVoices: KO_VOICES, error });
+  res.json({ typecastReady, typecastVoices: voices, error });
 });
 
 /** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 mp3로 바로 반환 */
@@ -380,9 +371,7 @@ router.delete('/jobs/:jid/voice/upload/:sceneId', async (req, res) => {
 router.post('/jobs/:jid/tts', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({
-    voice: z.string().optional(), // edge-tts 보이스
     typecastVoiceId: z.string().optional(), // 타입캐스트 캐릭터
-    engine: z.enum(['typecast', 'edge-tts']).optional(),
   }).parse(req.body ?? {});
   const settings = await loadSettings();
   const job = await jobs.readJob(ref);
@@ -393,14 +382,19 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   const script = await jobs.readScript(ref, job.script.currentVersion);
   if (!script) return res.status(400).json({ error: '대본 파일 없음' });
 
-  const engine = body.engine ?? (await resolveEngine(settings));
   const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
-  const edgeVoice = body.voice ?? job.ttsVoice ?? settings.defaultTtsVoice;
 
   // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
   const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
-  if (engine === 'typecast' && !typecastVoiceId && !allUploaded) {
-    return res.status(400).json({ error: '타입캐스트 캐릭터를 선택하거나 씬별 음성 파일을 첨부하세요' });
+  if (!typecastVoiceId && !allUploaded) {
+    return res.status(400).json({
+      error: '타입캐스트 캐릭터를 선택하거나, 음성이 없는 씬에 파일을 첨부하세요',
+    });
+  }
+  if (!allUploaded && !(await hasKey('typecast'))) {
+    return res.status(400).json({
+      error: '타입캐스트 API 키가 없습니다. API 키 메뉴에서 등록하거나 씬별 음성 파일을 첨부하세요',
+    });
   }
 
   const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
@@ -409,20 +403,22 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   try {
     await jobs.advanceTo(ref, 'voicing');
     await jobs.mutateJob(ref, (j) => {
-      j.ttsVoice = edgeVoice;
       j.typecastVoiceId = typecastVoiceId;
-      j.voiceEngine = allUploaded ? 'file' : engine;
+      j.voiceEngine = allUploaded ? 'file' : 'typecast';
     });
     await synthesizeNarration({
       settings,
       script,
       voiceDir,
       jobId: ref.jobId,
-      engine,
-      voiceId: engine === 'typecast' ? typecastVoiceId : edgeVoice,
+      typecastVoiceId,
       sceneVoiceFiles: job.sceneVoiceFiles,
     });
-    await jobs.logJobEvent(ref, { type: 'tts.done', engine, scenes: script.scenes.length });
+    await jobs.logJobEvent(ref, {
+      type: 'tts.done',
+      engine: allUploaded ? 'file' : 'typecast',
+      scenes: script.scenes.length,
+    });
     broadcast('tts.done', { jobId: ref.jobId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

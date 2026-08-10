@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
   Play, Trash2, FolderOpen,
@@ -22,7 +22,7 @@ interface JobDetail {
   state: string; progress: number; pipeline: string[]; downloading: boolean;
   sources: SourceInfo[];
   script: { currentVersion: number; approved: boolean };
-  rightsConfirmed: boolean; ttsVoice?: string;
+  rightsConfirmed: boolean;
   typecastVoiceId?: string;
   sceneVoiceFiles: Record<string, string>;
   exportedAt?: string;
@@ -474,10 +474,8 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
 // ── 음성 ──────────────────────────────────────────────────────────
 
 interface EngineInfo {
-  engine: 'typecast' | 'edge-tts';
   typecastReady: boolean;
   typecastVoices: Array<{ id: string; name: string; language: string; gender: string }>;
-  edgeVoices: Array<{ id: string; label: string }>;
   error?: string;
 }
 
@@ -493,13 +491,9 @@ function VoicePanel({ job }: { job: JobDetail }) {
     enabled: job.script.currentVersion > 0,
   });
 
-  const [engine, setEngine] = useState<'typecast' | 'edge-tts' | null>(null);
   const [typecastVoiceId, setTypecastVoiceId] = useState(job.typecastVoiceId ?? '');
-  const [edgeVoice, setEdgeVoice] = useState(job.ttsVoice ?? 'ko-KR-SunHiNeural');
   const [runningTts, setRunningTts] = useState(false);
   const [previewing, setPreviewing] = useState(false);
-
-  const activeEngine = engine ?? engineInfo.data?.engine ?? 'edge-tts';
 
   const upload = useMutation({
     mutationFn: ({ sceneId, file }: { sceneId: string; file: File }) => {
@@ -518,11 +512,11 @@ function VoicePanel({ job }: { job: JobDetail }) {
   const tts = useMutation({
     mutationFn: () => {
       setRunningTts(true);
-      return api.post(`/jobs/${job.id}/tts`, {
-        engine: activeEngine,
-        typecastVoiceId,
-        voice: edgeVoice,
-      });
+      return api.post(`/jobs/${job.id}/tts`, { typecastVoiceId });
+    },
+    onError: (e: Error) => {
+      setRunningTts(false);
+      alert(e.message);
     },
   });
   const next = useMutation({
@@ -562,26 +556,20 @@ function VoicePanel({ job }: { job: JobDetail }) {
       <Card>
         <h3 className="mb-1 flex items-center gap-2 font-semibold"><Mic size={17} /> 나레이션 음성</h3>
         <p className="mb-3 text-sm text-slate-500">
-          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 API로 합성합니다.
+          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 타입캐스트로 합성합니다.
         </p>
 
         {!allUploaded && (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">합성 엔진</span>
-              <select
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                value={activeEngine}
-                onChange={(e) => setEngine(e.target.value as 'typecast' | 'edge-tts')}
-              >
-                <option value="typecast" disabled={!engineInfo.data?.typecastReady}>
-                  타입캐스트{engineInfo.data?.typecastReady ? '' : ' (API 키 필요)'}
-                </option>
-                <option value="edge-tts">edge-tts (무료)</option>
-              </select>
-            </div>
-
-            {activeEngine === 'typecast' && (
+            {engineInfo.data && !engineInfo.data.typecastReady ? (
+              <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+                <p className="font-medium">타입캐스트 API 키가 없습니다</p>
+                <p className="mt-0.5">
+                  아래 씬 목록에서 음성 파일을 직접 첨부하거나,{' '}
+                  <Link to="/keys" className="underline">API 키 메뉴</Link>에서 타입캐스트 키를 등록하세요.
+                </p>
+              </div>
+            ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">캐릭터</span>
                 <select
@@ -604,21 +592,6 @@ function VoicePanel({ job }: { job: JobDetail }) {
                 )}
               </div>
             )}
-
-            {activeEngine === 'edge-tts' && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">보이스</span>
-                <select
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={edgeVoice}
-                  onChange={(e) => setEdgeVoice(e.target.value)}
-                >
-                  {(engineInfo.data?.edgeVoices ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
           </div>
         )}
 
@@ -631,7 +604,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button
             onClick={() => tts.mutate()}
-            disabled={tts.isPending || (activeEngine === 'typecast' && !typecastVoiceId && !allUploaded)}
+            disabled={tts.isPending || (!allUploaded && !typecastVoiceId)}
           >
             음성 준비 실행
           </Button>
@@ -671,7 +644,7 @@ function VoicePanel({ job }: { job: JobDetail }) {
                     </>
                   ) : (
                     <>
-                      <Badge>API 합성 예정</Badge>
+                      <Badge>타입캐스트 합성 예정</Badge>
                       <label className="cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1 text-xs hover:bg-slate-50">
                         파일 첨부
                         <input

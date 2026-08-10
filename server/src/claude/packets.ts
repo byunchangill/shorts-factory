@@ -321,7 +321,7 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
   "tone": { "persona": "화자 캐릭터", "speechLevel": "해요체", "bannedWords": [] },
   "sceneTemplate": { "layout": "레이아웃 규칙", "imageStylePrompt": "이미지 스타일 프롬프트", "subtitleStyle": "자막 스타일", "transition": "전환 규칙" },
   "branding": { "channelName": "채널명", "colorPalette": ["#000000"], "watermarkText": "" },
-  "ttsVoice": "ko-KR-SunHiNeural"
+  "typecastVoiceId": ""
 }
 \`\`\``,
   'scene-images': `scenes.json: [{ "sceneId": "s01", "imagePrompt": "...", "negativePrompt": "..." }] 배열.

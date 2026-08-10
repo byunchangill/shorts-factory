@@ -149,7 +149,7 @@ export const API_KEY_INFO: Record<ApiKeyName, { label: string; desc: string; url
   },
   typecast: {
     label: 'Typecast (TTS)',
-    desc: '나레이션 음성 합성. 미등록 시 edge-tts 무료 폴백',
+    desc: '나레이션 음성 합성. 미등록 시 씬별 음성 파일을 직접 첨부해야 합니다',
     url: 'https://typecast.ai/',
   },
 };

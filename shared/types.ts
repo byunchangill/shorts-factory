@@ -61,7 +61,7 @@ export const FormatSchema = z.object({
     colorPalette: z.array(z.string()).default([]),
     introOutro: z.string().optional(),
   }),
-  ttsVoice: z.string().default('ko-KR-SunHiNeural'),
+  typecastVoiceId: z.string().default(''), // 이 포맷의 기본 나레이션 캐릭터
 });
 export type Format = z.infer<typeof FormatSchema>;
 
@@ -192,8 +192,7 @@ export const JobSchema = z.object({
     currentVersion: z.number().int().default(0),
     approved: z.boolean().default(false),
   }).default({ currentVersion: 0, approved: false }),
-  ttsVoice: z.string().optional(),
-  voiceEngine: z.enum(['typecast', 'edge-tts', 'file']).optional(), // 실제 사용된 엔진
+  voiceEngine: z.enum(['typecast', 'file']).optional(), // 실제 사용된 엔진
   typecastVoiceId: z.string().optional(),
   sceneVoiceFiles: z.record(z.string()).default({}), // sceneId → 업로드된 음성 파일명
   exportedAt: z.string().optional(), // 마지막 내보내기 시각
@@ -230,13 +229,11 @@ export const GuidelineFileSchema = z.enum(GUIDELINE_FILES);
 
 export const SettingsSchema = z.object({
   parallelDownloads: z.number().int().min(1).max(8).default(3),
-  defaultTtsVoice: z.string().default('ko-KR-SunHiNeural'),
   burnSubtitles: z.boolean().default(true),
   burnDisclosure: z.boolean().default(true), // 쿠팡파트너스 공시 번인
   ytdlpPath: z.string().default('yt-dlp'),
   ffmpegPath: z.string().default('ffmpeg'),
   ffprobePath: z.string().default('ffprobe'),
-  edgeTtsPath: z.string().default('edge-tts'),
   iopaintPath: z.string().default('iopaint'),
   // 내보내기 (제품별 별도 폴더 저장)
   exportRoot: z.string().default(''), // 빈 값 = OS 다운로드 폴더 자동 사용
@@ -250,8 +247,7 @@ export const SettingsSchema = z.object({
     openai: z.string().default('gpt-4o-mini'),
     gemini: z.string().default('gemini-2.0-flash'),
   }).default({ anthropic: 'claude-sonnet-4-5', openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash' }),
-  // TTS: auto = 타입캐스트 키 있으면 타입캐스트, 없으면 edge-tts
-  ttsEngine: z.enum(['auto', 'typecast', 'edge-tts']).default('auto'),
+  // 음성: 타입캐스트 API로 합성하거나 씬별 음성 파일을 첨부한다
   typecastVoiceId: z.string().default(''),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
