@@ -1,0 +1,529 @@
+import { Router } from 'express';
+import multer from 'multer';
+import path from 'node:path';
+import fsp from 'node:fs/promises';
+import { z } from 'zod';
+import { MENUS, type JobState } from '@shared/constants';
+import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
+import * as jobs from '../store/jobs.js';
+import { loadSettings, paths, toMediaUrl, fromWorkspaceRel } from '../store/workspace.js';
+import { progressOf, statesFor } from '../pipeline/stateMachine.js';
+import { downloadAll, retrySource, isDownloading } from '../pipeline/downloadQueue.js';
+import { runTier1Clean } from '../pipeline/cleaner.js';
+import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
+import {
+  synthesizeNarration, saveSceneVoiceFile, resolveEngine, KO_VOICES, type SceneTiming,
+} from '../pipeline/tts.js';
+import { listVoices as listTypecastVoices, synthesize as typecastSynthesize } from '../pipeline/voice/typecast.js';
+import { assembleFinal } from '../pipeline/assemble.js';
+import { exportJob, productDir } from '../pipeline/exporter.js';
+import { hasKey } from '../store/secrets.js';
+import { readJson } from '../util/fsx.js';
+import { nextSeqId } from '../util/ids.js';
+import { broadcast } from '../sse.js';
+
+const router = Router();
+
+function refOr404(jobId: string): jobs.JobRef {
+  const ref = jobs.resolveJob(jobId);
+  if (!ref) throw Object.assign(new Error(`잡 없음: ${jobId}`), { status: 404 });
+  return ref;
+}
+
+/** 잡 + 파생 정보 (진행률, 단계 목록) */
+async function jobView(ref: jobs.JobRef) {
+  const job = await jobs.readJob(ref);
+  if (!job) return null;
+  return {
+    ...job,
+    progress: progressOf(job.menu, job.state),
+    pipeline: statesFor(job.menu),
+    downloading: isDownloading(job.id),
+  };
+}
+
+router.get('/projects/:menu/:pid/jobs', async (req, res) => {
+  const menu = z.enum(MENUS).parse(req.params.menu);
+  const list = await jobs.listJobs(menu, req.params.pid);
+  res.json(list.map((j) => ({ ...j, progress: progressOf(j.menu, j.state), pipeline: statesFor(j.menu) })));
+});
+
+router.post('/projects/:menu/:pid/jobs', async (req, res) => {
+  const menu = z.enum(MENUS).parse(req.params.menu);
+  const body = z.object({ title: z.string().min(1) }).parse(req.body);
+  const job = await jobs.createJob(menu, req.params.pid, body.title);
+  res.status(201).json(job);
+});
+
+router.get('/jobs/active', async (_req, res) => {
+  const active = await jobs.listActiveJobs();
+  res.json(active.map((j) => ({ ...j, progress: progressOf(j.menu, j.state), pipeline: statesFor(j.menu) })));
+});
+
+router.get('/jobs/:jid', async (req, res) => {
+  const view = await jobView(refOr404(req.params.jid));
+  if (!view) return res.status(404).json({ error: '잡 없음' });
+  res.json(view);
+});
+
+router.post('/jobs/:jid/transition', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ to: JobStateSchema }).parse(req.body);
+  const job = await jobs.transition(ref, body.to as JobState, 'user');
+  res.json(job);
+
+  // 완료 처리 시 산출물을 사용자 폴더로 자동 내보내기
+  if (body.to === 'done') {
+    const settings = await loadSettings();
+    if (settings.exportOnDone) {
+      runExport(ref).catch(async (e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        await jobs.logJobEvent(ref, { type: 'export.failed', error: msg });
+        broadcast('export.failed', { jobId: ref.jobId, error: msg });
+      });
+    }
+  }
+});
+
+router.get('/jobs/:jid/events', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  try {
+    const raw = await fsp.readFile(paths.jobEvents(ref.menu, ref.projectId, ref.jobId), 'utf8');
+    const lines = raw.trim().split('\n').slice(-100).map((l) => JSON.parse(l));
+    res.json(lines);
+  } catch {
+    res.json([]);
+  }
+});
+
+// ── 소스 URL / 다운로드 ───────────────────────────────────────────
+
+router.put('/jobs/:jid/sources', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ urls: z.array(z.string().url()).min(1) }).parse(req.body);
+  const job = await jobs.mutateJob(ref, (j) => {
+    const existing = new Set(j.sources.map((s) => s.url));
+    for (const url of body.urls) {
+      if (existing.has(url)) continue;
+      const id = nextSeqId('s', j.sources.map((s) => s.id));
+      j.sources.push({ id, url, status: 'queued', attempts: 0, progress: 0 });
+      existing.add(url);
+    }
+  });
+  if (job.state === 'draft') await jobs.transition(ref, 'collecting', 'server');
+  res.json(await jobView(ref));
+});
+
+router.post('/jobs/:jid/download/start', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '잡 없음' });
+  if (job.state === 'collecting') await jobs.transition(ref, 'downloading', 'server');
+
+  // 비동기 실행 — 진행률은 SSE로 푸시
+  void downloadAll(settings, ref).then(async () => {
+    const j = await jobs.readJob(ref);
+    if (j && j.state === 'downloading') {
+      const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+      if (allDone && j.sources.length > 0) {
+        await jobs.transition(ref, 'analyzing', 'server');
+        await jobs.transition(ref, 'cleaning', 'server'); // probe/프레임은 다운로드 직후 이미 완료
+      }
+    }
+  });
+  res.json({ started: true });
+});
+
+router.post('/jobs/:jid/sources/:sid/retry', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  void retrySource(settings, ref, req.params.sid);
+  res.json({ started: true });
+});
+
+router.post('/jobs/:jid/sources/:sid/skip', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  await jobs.mutateJob(ref, (j) => {
+    const s = j.sources.find((x) => x.id === req.params.sid);
+    if (s) s.status = 'skipped';
+  });
+  res.json(await jobView(ref));
+});
+
+router.put('/jobs/:jid/sources/:sid/license-note', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ note: z.string() }).parse(req.body);
+  await jobs.mutateJob(ref, (j) => {
+    const s = j.sources.find((x) => x.id === req.params.sid);
+    if (s) s.licenseNote = body.note;
+  });
+  res.json({ ok: true });
+});
+
+// ── 클립 ──────────────────────────────────────────────────────────
+
+router.get('/jobs/:jid/clips', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const clips = await jobs.listClips(ref);
+  res.json(
+    clips.map((c) => ({
+      ...c,
+      frameUrls: c.frames.map((f) => toMediaUrl(fromWorkspaceRel(f))),
+      cleanUrls: c.cleanVersions.map((v) => ({ v: v.v, url: toMediaUrl(v.filePath) })),
+    })),
+  );
+});
+
+router.put('/jobs/:jid/clips/:cid/zones', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ zones: z.array(ZoneSchema) }).parse(req.body);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  clip.zones = body.zones;
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
+});
+
+router.post('/jobs/:jid/clips/:cid/clean', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ tier: z.union([z.literal(1), z.literal(2)]) }).parse(req.body);
+  const settings = await loadSettings();
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+
+  const job = await jobs.readJob(ref);
+  const source = job?.sources.find((s) => s.id === clip.sourceId);
+  if (!source?.filePath) return res.status(400).json({ error: '소스 파일 없음' });
+  const inputPath =
+    clip.currentCleanVersion && body.tier === 2
+      ? clip.cleanVersions.find((v) => v.v === clip.currentCleanVersion)!.filePath
+      : fromWorkspaceRel(source.filePath);
+  const outDir = jobs.clipDir(ref, clip.id);
+
+  res.json({ started: true }); // 즉시 응답, 진행은 SSE
+
+  try {
+    if (body.tier === 1) {
+      const r = await runTier1Clean(settings, clip, inputPath, outDir, (line) =>
+        broadcast('clean.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+      );
+      clip.cleanVersions.push({
+        v: r.version, tier: 1, params: r.params, filePath: r.filePath,
+        createdAt: new Date().toISOString(),
+      });
+      clip.currentCleanVersion = r.version;
+    } else {
+      const provider = await getAvailableInpaintProvider();
+      if (!provider) throw new Error('AI 인페인팅 도구가 설치되어 있지 않습니다 (pip install iopaint)');
+      const zones = clip.zones.filter((z) => z.method === 'inpaint');
+      if (!zones.length) throw new Error('inpaint 방식으로 지정된 존이 없습니다');
+      const version = (clip.cleanVersions.at(-1)?.v ?? 0) + 1;
+      const outPath = path.join(outDir, `clean_v${version}.mp4`);
+      await provider.run({
+        settings, clip, inputVideo: inputPath, zones,
+        workDir: path.join(outDir, 'inpaint_tmp'), outPath,
+        onProgress: (msg) => broadcast('clean.progress', { jobId: ref.jobId, clipId: clip.id, line: msg }),
+      });
+      clip.cleanVersions.push({
+        v: version, tier: 2, params: `inpaint:${provider.name}`, filePath: outPath,
+        createdAt: new Date().toISOString(),
+      });
+      clip.currentCleanVersion = version;
+    }
+    await jobs.writeClip(ref, clip);
+    await jobs.logJobEvent(ref, { type: 'clip.cleaned', clipId: clip.id, version: clip.currentCleanVersion });
+    broadcast('clean.done', { jobId: ref.jobId, clipId: clip.id, version: clip.currentCleanVersion });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await jobs.logJobEvent(ref, { type: 'clip.clean_failed', clipId: clip.id, error: msg });
+    broadcast('clean.failed', { jobId: ref.jobId, clipId: clip.id, error: msg });
+  }
+});
+
+router.post('/jobs/:jid/clips/:cid/restore', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ version: z.number().int() }).parse(req.body);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  if (!clip.cleanVersions.some((v) => v.v === body.version)) {
+    return res.status(400).json({ error: '해당 버전 없음' });
+  }
+  clip.currentCleanVersion = body.version;
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
+});
+
+router.put('/jobs/:jid/clips/:cid/segments', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ segments: z.array(SegmentSchema) }).parse(req.body);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  clip.segments = body.segments;
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
+});
+
+// ── 대본 ──────────────────────────────────────────────────────────
+
+router.get('/jobs/:jid/script', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '잡 없음' });
+  const version = req.query.version ? Number(req.query.version) : job.script.currentVersion;
+  if (!version) return res.json(null);
+  res.json(await jobs.readScript(ref, version));
+});
+
+router.post('/jobs/:jid/script/approve', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const job = await jobs.mutateJob(ref, (j) => {
+    if (!j.script.currentVersion) throw new Error('승인할 대본이 없습니다');
+    j.script.approved = true;
+  });
+  if (job.state === 'scripting') await jobs.transition(ref, 'script_approved', 'user');
+  await jobs.logJobEvent(ref, { type: 'script.approved', version: job.script.currentVersion });
+  res.json(await jobView(ref));
+});
+
+// ── 저작권 확인 게이트 ────────────────────────────────────────────
+
+router.post('/jobs/:jid/rights-confirm', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ confirmed: z.boolean() }).parse(req.body);
+  await jobs.mutateJob(ref, (j) => {
+    j.rightsConfirmed = body.confirmed;
+  });
+  await jobs.logJobEvent(ref, { type: 'rights.confirmed', confirmed: body.confirmed });
+  res.json({ ok: true });
+});
+
+// ── 음성 (타입캐스트 API / 파일 첨부 / edge-tts 폴백) ─────────────
+
+/** edge-tts 폴백 보이스 목록 */
+router.get('/tts/voices', (_req, res) => {
+  res.json(KO_VOICES);
+});
+
+/** 현재 사용될 엔진 + 타입캐스트 캐릭터 목록 */
+router.get('/tts/engine', async (_req, res) => {
+  const settings = await loadSettings();
+  const engine = await resolveEngine(settings);
+  const typecastReady = await hasKey('typecast');
+  let voices: unknown[] = [];
+  let error: string | undefined;
+  if (typecastReady) {
+    try {
+      voices = await listTypecastVoices();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  res.json({ engine, typecastReady, typecastVoices: voices, edgeVoices: KO_VOICES, error });
+});
+
+/** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 mp3로 바로 반환 */
+router.post('/tts/preview', async (req, res) => {
+  const body = z.object({
+    voiceId: z.string().min(1),
+    text: z.string().default('안녕하세요, 이 목소리로 나레이션을 만들어 드릴게요.'),
+  }).parse(req.body ?? {});
+  try {
+    const audio = await typecastSynthesize(body.text, body.voiceId);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(audio);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** 씬별 음성 파일 첨부 — 첨부된 씬은 합성을 건너뛴다 */
+const voiceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+router.post('/jobs/:jid/voice/upload', voiceUpload.single('file'), async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const sceneId = z.string().min(1).parse(req.body?.sceneId);
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: '파일이 없습니다' });
+
+  const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
+  const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  const fileName = await saveSceneVoiceFile(voiceDir, sceneId, file.buffer, original);
+  await jobs.mutateJob(ref, (j) => {
+    j.sceneVoiceFiles[sceneId] = fileName;
+    j.voiceEngine = 'file';
+  });
+  await jobs.logJobEvent(ref, { type: 'voice.uploaded', sceneId, fileName });
+  res.json({ sceneId, fileName });
+});
+
+router.delete('/jobs/:jid/voice/upload/:sceneId', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  await jobs.mutateJob(ref, (j) => {
+    delete j.sceneVoiceFiles[req.params.sceneId];
+  });
+  res.json({ ok: true });
+});
+
+router.post('/jobs/:jid/tts', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({
+    voice: z.string().optional(), // edge-tts 보이스
+    typecastVoiceId: z.string().optional(), // 타입캐스트 캐릭터
+    engine: z.enum(['typecast', 'edge-tts']).optional(),
+  }).parse(req.body ?? {});
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '잡 없음' });
+  if (!job.script.currentVersion || !job.script.approved) {
+    return res.status(400).json({ error: '승인된 대본이 필요합니다' });
+  }
+  const script = await jobs.readScript(ref, job.script.currentVersion);
+  if (!script) return res.status(400).json({ error: '대본 파일 없음' });
+
+  const engine = body.engine ?? (await resolveEngine(settings));
+  const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
+  const edgeVoice = body.voice ?? job.ttsVoice ?? settings.defaultTtsVoice;
+
+  // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
+  const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
+  if (engine === 'typecast' && !typecastVoiceId && !allUploaded) {
+    return res.status(400).json({ error: '타입캐스트 캐릭터를 선택하거나 씬별 음성 파일을 첨부하세요' });
+  }
+
+  const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
+
+  res.json({ started: true });
+  try {
+    if (job.state === 'trimming' || job.state === 'script_approved' || job.state === 'scening') {
+      await jobs.transition(ref, 'voicing', 'server');
+    }
+    await jobs.mutateJob(ref, (j) => {
+      j.ttsVoice = edgeVoice;
+      j.typecastVoiceId = typecastVoiceId;
+      j.voiceEngine = allUploaded ? 'file' : engine;
+    });
+    await synthesizeNarration({
+      settings,
+      script,
+      voiceDir,
+      jobId: ref.jobId,
+      engine,
+      voiceId: engine === 'typecast' ? typecastVoiceId : edgeVoice,
+      sceneVoiceFiles: job.sceneVoiceFiles,
+    });
+    await jobs.logJobEvent(ref, { type: 'tts.done', engine, scenes: script.scenes.length });
+    broadcast('tts.done', { jobId: ref.jobId });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await jobs.logJobEvent(ref, { type: 'tts.failed', error: msg });
+    broadcast('tts.failed', { jobId: ref.jobId, error: msg });
+  }
+});
+
+// ── 조립 ──────────────────────────────────────────────────────────
+
+router.post('/jobs/:jid/assemble', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ burnSubtitles: z.boolean().optional() }).parse(req.body ?? {});
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '잡 없음' });
+  if (!job.rightsConfirmed && job.menu === 'menu-a') {
+    return res.status(400).json({ error: '조립 전에 소스 영상 사용 권리 확인이 필요합니다' });
+  }
+  if (!job.script.currentVersion) return res.status(400).json({ error: '대본 없음' });
+  const script = await jobs.readScript(ref, job.script.currentVersion);
+  if (!script) return res.status(400).json({ error: '대본 파일 없음' });
+
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const timings = await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'));
+  if (!timings) return res.status(400).json({ error: 'TTS 타이밍 없음 — 음성을 먼저 생성하세요' });
+
+  res.json({ started: true });
+  try {
+    if (job.state === 'voicing') await jobs.transition(ref, 'assembling', 'server');
+    const clips = await jobs.listClips(ref);
+    const version = (job.output.currentVersion ?? 0) + 1;
+    const finalPath = await assembleFinal(settings, {
+      script, timings, clips, jobDir,
+      resolveWorkspacePath: fromWorkspaceRel,
+      burnSubtitles: body.burnSubtitles ?? settings.burnSubtitles,
+      burnDisclosure: settings.burnDisclosure,
+      version,
+    });
+    await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
+    const j2 = await jobs.readJob(ref);
+    if (j2?.state === 'assembling') await jobs.transition(ref, 'review', 'server');
+    await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath });
+    broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await jobs.logJobEvent(ref, { type: 'assemble.failed', error: msg });
+    broadcast('assemble.failed', { jobId: ref.jobId, error: msg });
+  }
+});
+
+router.get('/jobs/:jid/output', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '잡 없음' });
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const out: { finalUrl?: string; uploadKit?: string } = {};
+  if (job.output.currentVersion) {
+    out.finalUrl = toMediaUrl(path.join(jobDir, 'output', `final_v${job.output.currentVersion}.mp4`));
+  }
+  try {
+    out.uploadKit = await fsp.readFile(path.join(jobDir, 'output', 'upload-kit.md'), 'utf8');
+  } catch { /* 없으면 생략 */ }
+  res.json(out);
+});
+
+// ── 내보내기 (제품별 별도 폴더) ───────────────────────────────────
+
+/** 내보내기 대상 폴더 경로 미리보기 */
+router.get('/jobs/:jid/export', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  res.json({
+    targetDir: productDir(settings, ref.projectId),
+    exportedAt: job?.exportedAt,
+    includeSources: settings.exportIncludeSources,
+  });
+});
+
+router.post('/jobs/:jid/export', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  try {
+    const result = await runExport(ref);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/** 잡 산출물을 사용자 폴더로 복사. 완료 전환 시에도 자동 호출된다 */
+export async function runExport(ref: jobs.JobRef) {
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) throw new Error('잡 없음');
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const script = job.script.currentVersion ? await jobs.readScript(ref, job.script.currentVersion) : null;
+  const timings = await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'));
+  const clips = await jobs.listClips(ref);
+
+  const result = await exportJob({
+    settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+  });
+  await jobs.mutateJob(ref, (j) => { j.exportedAt = new Date().toISOString(); });
+  await jobs.logJobEvent(ref, {
+    type: 'export.done',
+    dir: result.rootDir,
+    files: result.copied.length,
+  });
+  broadcast('export.done', { jobId: ref.jobId, dir: result.rootDir, count: result.copied.length });
+  return result;
+}
+
+export default router;

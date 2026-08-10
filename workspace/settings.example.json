@@ -1,0 +1,11 @@
+{
+  "parallelDownloads": 3,
+  "defaultTtsVoice": "ko-KR-SunHiNeural",
+  "burnSubtitles": true,
+  "burnDisclosure": true,
+  "ytdlpPath": "yt-dlp",
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "edgeTtsPath": "edge-tts",
+  "iopaintPath": "iopaint"
+}
