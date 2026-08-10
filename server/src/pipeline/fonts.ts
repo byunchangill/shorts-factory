@@ -71,16 +71,25 @@ export function fontFamilyOf(fontPath: string | null): string {
 }
 
 /**
- * ffmpeg 필터 인자에 넣을 경로 이스케이프.
+ * 필터에 넣을 파일 인자 + ffmpeg를 실행할 cwd.
  *
- * 윈도우 경로(`C:\Users\...`)가 필터 문법과 충돌하는 지점이 두 곳이다:
- * - 백슬래시는 이스케이프 문자로 먹히므로 슬래시로 바꾼다 (윈도우 ffmpeg도 슬래시를 받는다)
- * - 콜론은 필터 옵션 구분자다. 필터그래프 문자열은 **두 단계**로 파싱되므로
- *   (그래프 분해 → 옵션 분해) 백슬래시 하나로는 부족하고 `\\:`가 되어야 한다.
- *   실측: `ass=C\:/x.ass`는 "/x.ass를 image size로 파싱 실패"로 죽고 `ass=C\\:/x.ass`는 통과한다.
+ * **필터그래프 안에 절대경로를 넣지 않는다.** 콜론은 필터 옵션 구분자라
+ * 윈도우 드라이브 문자(`C:`)와 정면으로 부딪히는데, 이스케이프를 몇 단계로
+ * 풀어야 하는지가 ffmpeg 빌드마다 다르다 — `C\:/…`도 `C\\:/…`도 어떤 빌드에서는
+ * 통하고 어떤 빌드에서는 "No option name near …"로 죽는다. 실제로 두 형태 모두
+ * 한쪽 환경에서만 통과했다.
+ *
+ * 그래서 이스케이프로 버티지 않고, 파일이 있는 폴더를 cwd로 잡아 **파일명만** 넘긴다.
+ * 콜론도 백슬래시도 없는 문자열이라 어떤 버전에서도 해석이 갈리지 않는다.
+ * 필터 밖의 인자(`-i`, 출력 경로)는 이 문제가 없으므로 절대경로 그대로 쓴다.
  */
-export function escapeFilterPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/:/g, '\\\\:');
+export function filterFileArg(filePath: string): { arg: string; cwd: string } {
+  // 구분자는 / 와 \ 둘 다 인정한다 — 윈도우 경로를 다른 OS에서도 검사할 수 있어야 한다
+  const sep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return {
+    arg: sep < 0 ? filePath : filePath.slice(sep + 1),
+    cwd: path.dirname(filePath),
+  };
 }
 
 /** drawtext의 text= 값 이스케이프 */

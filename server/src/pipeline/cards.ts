@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { Settings } from '@shared/types';
 import { run } from '../util/exec.js';
 import { ensureDir } from '../util/fsx.js';
-import { findKoreanFont, escapeFilterPath, escapeDrawText } from './fonts.js';
+import { findKoreanFont, filterFileArg, escapeDrawText } from './fonts.js';
 
 /**
  * 텍스트 카드 생성 — 하이브리드 믹싱용.
@@ -69,7 +69,9 @@ export async function renderCard(
 
   const style = PALETTE[spec.style ?? 'dark'];
   const dur = spec.durationSec ?? 1.5;
-  const fontArg = escapeFilterPath(font);
+  // 폰트는 파일명만 필터에 넣고, 폰트 폴더를 cwd로 잡는다 (윈도우 드라이브 콜론 회피)
+  const fontRef = filterFileArg(font);
+  const fontArg = fontRef.arg;
 
   const headLines = wrapCardText(spec.headline);
   const headSize = headLines.length >= 3 ? 92 : headLines.length === 2 ? 104 : 120;
@@ -104,7 +106,7 @@ export async function renderCard(
     '-vf', filters.join(','),
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
     outPath,
-  ]);
+  ], { cwd: fontRef.cwd });
   return outPath;
 }
 

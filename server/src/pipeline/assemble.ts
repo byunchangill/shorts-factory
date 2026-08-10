@@ -6,7 +6,7 @@ import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
 import { buildAss, buildSrt, wrapKorean, type SubCue } from './subtitles.js';
-import { findKoreanFont, fontFamilyOf, escapeFilterPath, escapeDrawText } from './fonts.js';
+import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './fonts.js';
 import { renderCard } from './cards.js';
 
 const W = 1080;
@@ -38,6 +38,8 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
 
   // 카드용 폰트 (없으면 카드를 건너뛴다 — 한글이 깨진 카드보다 없는 게 낫다)
   const font = await findKoreanFont(settings.fontPath);
+  // 필터에는 폰트 파일명만 넣고 폰트 폴더에서 실행한다 (필터그래프 경로 이스케이프 회피)
+  const fontRef = font ? filterFileArg(font) : null;
 
   /**
    * 타임라인. 카드가 들어가면 영상만 길어져 오디오·자막이 밀리므로,
@@ -76,11 +78,11 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
         '-y',
         '-ss', String(ss), '-i', visual.path,
         '-t', dur.toFixed(3),
-        '-vf', buildLayoutFilter(settings, font),
+        '-vf', buildLayoutFilter(settings, fontRef?.arg ?? null),
         '-an',
         '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
         segOut,
-      ]);
+      ], { cwd: fontRef?.cwd });
     } else {
       // 이미지 → Ken Burns 줌인
       const frames = Math.ceil(dur * FPS);
@@ -180,10 +182,10 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   await fsp.writeFile(assPath, buildAss(cues, { fontName: fontFamilyOf(font) }), 'utf8');
 
   // 5) 합치기 (+자막 번인)
+  // 자막 파일도 파일명만 필터에 넣고 자막 폴더에서 실행한다 (입출력은 절대경로 그대로)
+  const assRef = filterFileArg(assPath);
   const finalPath = path.join(outDir, `final_v${version}.mp4`);
-  const vf = input.burnSubtitles
-    ? ['-vf', `ass=${escapeFilterPath(assPath)}`]
-    : [];
+  const vf = input.burnSubtitles ? ['-vf', `ass=${assRef.arg}`] : [];
   await run(settings.ffmpegPath, [
     '-y', '-i', videoOnly, '-i', audioOnly,
     ...vf,
@@ -193,7 +195,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     '-movflags', '+faststart',
     '-shortest',
     finalPath,
-  ]);
+  ], { cwd: assRef.cwd });
 
   await fsp.rm(tmpDir, { recursive: true, force: true });
   return finalPath;
@@ -205,8 +207,11 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
  * fullscreen: 소스를 9:16에 꽉 채운다 (남의 영상이 화면 전체를 덮는다)
  * framed: 자기 프레임 안에 소스를 축소 배치한다. 상단 제목바 + 하단 정보영역이
  *         자기 레이어가 되어, 원본이 화면을 독점하지 않는다.
+ *
+ * @param fontArg 필터에 넣을 폰트 인자 — 경로가 아니라 `filterFileArg()`가 준 **파일명**이다.
+ *                (호출부가 폰트 폴더를 cwd로 잡고 실행한다)
  */
-export function buildLayoutFilter(settings: Settings, font: string | null): string {
+export function buildLayoutFilter(settings: Settings, fontArg: string | null): string {
   const base = `fps=${FPS}`;
 
   if (settings.layout === 'fullscreen') {
@@ -236,9 +241,9 @@ export function buildLayoutFilter(settings: Settings, font: string | null): stri
   let graph = parts.join(';');
 
   // 5) 채널명 등 고정 문구 (폰트가 있을 때만)
-  if (font && settings.frameTitle.trim()) {
+  if (fontArg && settings.frameTitle.trim()) {
     graph +=
-      `,drawtext=fontfile='${escapeFilterPath(font)}':text='${escapeDrawText(settings.frameTitle.trim())}':` +
+      `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(settings.frameTitle.trim())}':` +
       `fontcolor=white:fontsize=52:x=(w-text_w)/2:y=${Math.round(H * 0.085)}`;
   }
   return graph;
