@@ -47,11 +47,13 @@ async function probeAll(): Promise<DoctorReport> {
   const s = await loadSettings();
   const checks = [
     {
-      name: 'ffmpeg', bin: s.ffmpegPath, required: true,
+      // ffmpeg 계열은 대시 하나짜리 -version 이다. --version 은 알 수 없는 옵션으로 실패하므로
+      // 설치돼 있어도 "없음"으로 잘못 표시된다.
+      name: 'ffmpeg', bin: s.ffmpegPath, versionArgs: ['-version'], required: true,
       installHint: 'https://ffmpeg.org/download.html 또는 winget install ffmpeg / brew install ffmpeg',
     },
     {
-      name: 'ffprobe', bin: s.ffprobePath, required: true,
+      name: 'ffprobe', bin: s.ffprobePath, versionArgs: ['-version'], required: true,
       installHint: 'ffmpeg에 포함되어 함께 설치됩니다',
     },
     {
@@ -66,7 +68,7 @@ async function probeAll(): Promise<DoctorReport> {
 
   const tools = await Promise.all(
     checks.map(async (c) => {
-      const r = await checkTool(c.bin);
+      const r = await checkTool(c.bin, c.versionArgs ?? ['--version']);
       return {
         name: c.name,
         required: c.required,

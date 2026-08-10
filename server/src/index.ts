@@ -1,3 +1,5 @@
+// 반드시 첫 import — 콘솔을 파일로도 흘려보내야 이후 모든 출력이 기록된다
+import './util/log.js';
 import { API_PORT } from '@shared/constants';
 import { createApp } from './app.js';
 import { bootstrap } from './boot.js';
