@@ -495,6 +495,18 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             </Button>
           </div>
         </div>
+        {issue.error && (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {issue.error.message}
+            {' '}
+            <Link
+              to={`/project/${job.menu}/${encodeURIComponent(job.projectId)}`}
+              className="font-medium underline"
+            >
+              제품자료 탭 열기
+            </Link>
+          </p>
+        )}
       </Card>
 
       {scriptPackets.map((p) => <PacketCard key={p.id} packet={p} />)}

@@ -568,6 +568,18 @@ async function main(): Promise<void> {
   });
 
   // ── 대본 (요청서 왕복: 수동 붙여넣기 = 키 없이 검증 가능) ──
+  await step('제품자료 없이 제품정보 추출 요청 시 차단', async () => {
+    // 자료가 없으면 AI가 할 수 있는 일은 지어내는 것뿐이다 — 발행 자체를 막아야 한다
+    const r = await fetch(`${API}/jobs/${jid}/packets`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'product-extract' }),
+    });
+    assert(r.status === 400, `차단되지 않음 (status ${r.status})`);
+    const body = await r.json();
+    assert(String(body.error).includes('제품자료'), `안내 문구가 다름: ${body.error}`);
+    return '400 + 첨부 위치 안내';
+  });
+
   const packetId = await step2<string>('대본 요청서 발행', async () => {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'script' });
     const d = await get<PacketView>(`/packets/${p.id}`);
