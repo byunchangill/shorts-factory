@@ -3,6 +3,7 @@ import cors from 'cors';
 import { ZodError } from 'zod';
 import { WORKSPACE_ROOT } from './store/workspace.js';
 import { addClient } from './sse.js';
+import { bootState, isReady } from './boot.js';
 import systemRoutes from './routes/system.js';
 import projectRoutes from './routes/projects.js';
 import jobRoutes from './routes/jobs.js';
@@ -17,6 +18,18 @@ export function createApp(): express.Express {
   app.use(express.json({ limit: '10mb' }));
 
   app.get('/api/events', (_req, res) => addClient(res));
+
+  // 부팅 상태는 준비 전에도 항상 답한다 — 화면이 "왜 안 되는지"를 알 수 있어야 한다
+  app.get('/api/system/status', (_req, res) => res.json(bootState()));
+
+  // 인덱스 재구성이 끝나기 전에는 빈 목록 같은 틀린 답 대신 503으로 명확히 알린다
+  app.use('/api', (_req, res, next) => {
+    if (isReady()) return next();
+    res.status(503).json({
+      error: '서버가 아직 준비 중입니다. 잠시 후 다시 시도하세요.',
+      booting: true,
+    });
+  });
 
   app.use('/api', systemRoutes);
   app.use('/api', projectRoutes);

@@ -48,6 +48,12 @@ export default function MenuPage({ menu }: { menu: Menu }) {
     },
   });
 
+  // 이전 실패 메시지가 남은 채로 모달이 다시 열리지 않게 한다
+  const openModal = () => {
+    create.reset();
+    setOpen(true);
+  };
+
   // menu-b 최초 진입: 포맷이 하나도 없으면 포맷 만들기로 유도
   const noFormats = menu === 'menu-b' && formats.data && formats.data.length === 0;
 
@@ -59,7 +65,7 @@ export default function MenuPage({ menu }: { menu: Menu }) {
           {menu === 'menu-b' && (
             <Link to="/formats"><Button variant="secondary">고유 포맷 관리</Button></Link>
           )}
-          <Button onClick={() => setOpen(true)} disabled={!!noFormats}>
+          <Button onClick={openModal} disabled={!!noFormats}>
             <FolderPlus size={16} /> 새 폴더
           </Button>
         </div>
@@ -78,7 +84,7 @@ export default function MenuPage({ menu }: { menu: Menu }) {
       {projects.data?.length === 0 && !noFormats && (
         <EmptyState
           message="작업 폴더가 없습니다. 제품/주제별로 폴더를 만들어 시작하세요."
-          action={<Button onClick={() => setOpen(true)}><FolderPlus size={16} /> 새 폴더</Button>}
+          action={<Button onClick={openModal}><FolderPlus size={16} /> 새 폴더</Button>}
         />
       )}
 
@@ -119,6 +125,11 @@ export default function MenuPage({ menu }: { menu: Menu }) {
                 {(formats.data ?? []).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </div>
+          )}
+          {create.isError && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              폴더를 만들지 못했습니다 — {create.error.message}
+            </p>
           )}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpen(false)}>취소</Button>
