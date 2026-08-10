@@ -4,7 +4,8 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "dev": "node --import tsx --watch --watch-preserve-output src/index.ts",
+    "dev:nowatch": "tsx src/index.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
     "doctor": "tsx src/doctor-cli.ts"

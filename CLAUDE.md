@@ -95,6 +95,10 @@
   준비 전 요청은 503으로 답한다. 포트가 안 열리면 웹 UI 전체가 원인 없는 ECONNREFUSED로 죽는다
 - 외부 도구 실행에는 반드시 시간 상한을 둔다. execa의 `timeout`만으로는 부족하다 —
   자식을 죽여도 손자가 stdout 파이프를 물고 있으면 프로미스가 끝나지 않는다 (`checkTool` 참고)
+- **개발 서버는 `node --import tsx --watch`. `tsx watch`로 되돌리지 않는다** —
+  Windows에서 concurrently 파이프를 거치면 자식 프로세스가 출력도 없이 뜨지 않는다 (실제 발생)
+- 서버 콘솔은 `workspace/logs/server.log`에도 남는다 (`util/log.ts`, `npm run logs`).
+  터미널에 아무것도 안 보일 때 여기가 유일한 단서다
 - 스키마 변경은 `shared/types.ts`에서만 (서버·클라이언트·요청서 검증이 모두 여기 의존)
 - API 키는 `workspace/secrets.json`에만 저장, 응답에는 마스킹된 값만 (`store/secrets.ts`)
 - 유튜브 API는 반드시 `youtube/client.ts`의 `ytFetch` 경유 — 쿼터 확인·차감·캐시가 여기 있다. 무료 한도(10,000유닛/일) 밖의 기능은 구현하지 않는다
