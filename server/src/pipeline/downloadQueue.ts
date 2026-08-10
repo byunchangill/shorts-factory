@@ -6,7 +6,7 @@ import { ClipSchema } from '@shared/types';
 import { run } from '../util/exec.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
-import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip } from '../store/jobs.js';
+import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
 import { paths } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { toWorkspaceRel } from '../store/workspace.js';
@@ -60,6 +60,31 @@ export async function downloadAll(settings: Settings, ref: JobRef): Promise<void
     running.delete(ref.jobId);
     broadcast('download.finished', { jobId: ref.jobId });
   }
+}
+
+/**
+ * 다운로드가 끝난 잡을 다음 단계로 전진시킨다.
+ *
+ * 전진을 다운로드 요청의 일회성 콜백에만 두면, 그 사이 서버가 재시작되거나
+ * 프로세스가 죽었을 때 잡이 `downloading`에 영구히 갇힌다 — 소스는 전부 "완료"인데
+ * 화면은 다음 단계로 넘어가지 않는 상태가 된다. 그래서 언제 몇 번 불러도 안전한
+ * 멱등 함수로 빼두고, 다운로드 직후·부팅 시·다운로드 재시작 시 모두 호출한다.
+ * 소스를 첨부하거나 실패한 소스를 지웠을 때도 같은 판단이 필요하므로 그쪽에서도 부른다.
+ *
+ * `collecting`도 대상이다 — 받을 것 없이 파일만 첨부한 잡은 다운로드를 한 번도 거치지 않는다.
+ *
+ * @returns 실제로 전진시켰으면 true
+ */
+export async function reconcileDownloadState(ref: JobRef): Promise<boolean> {
+  const job = await readJob(ref);
+  if (!job) return false;
+  if (job.state !== 'downloading' && job.state !== 'collecting') return false;
+  if (job.sources.length === 0) return false;
+  const allDone = job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+  if (!allDone) return false;
+  // probe/프레임은 다운로드 직후 이미 끝났으므로 정리 단계까지 보낸다
+  await advanceTo(ref, 'cleaning');
+  return true;
 }
 
 async function setSource(ref: JobRef, sourceId: string, patch: Partial<SourceUrl>): Promise<SourceUrl> {

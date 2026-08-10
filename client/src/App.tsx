@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound } from 'lucide-react';
 import { useServerEvents } from '@/api/sse';
+import ApiHealthBanner from '@/components/ApiHealthBanner';
 import Dashboard from '@/pages/Dashboard';
 import MenuPage from '@/pages/MenuPage';
 import ProjectPage from '@/pages/ProjectPage';
@@ -50,18 +51,21 @@ export default function App() {
           ))}
         </nav>
       </aside>
-      <div className="min-w-0 flex-1 p-6">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/menu-a" element={<MenuPage menu="menu-a" />} />
-          <Route path="/menu-b" element={<MenuPage menu="menu-b" />} />
-          <Route path="/project/:menu/:pid" element={<ProjectPage />} />
-          <Route path="/job/:jid" element={<JobPage />} />
-          <Route path="/formats" element={<FormatsPage />} />
-          <Route path="/youtube" element={<YouTubePage />} />
-          <Route path="/keys" element={<KeysPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+      <div className="min-w-0 flex-1">
+        <ApiHealthBanner />
+        <div className="p-6">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/menu-a" element={<MenuPage menu="menu-a" />} />
+            <Route path="/menu-b" element={<MenuPage menu="menu-b" />} />
+            <Route path="/project/:menu/:pid" element={<ProjectPage />} />
+            <Route path="/job/:jid" element={<JobPage />} />
+            <Route path="/formats" element={<FormatsPage />} />
+            <Route path="/youtube" element={<YouTubePage />} />
+            <Route path="/keys" element={<KeysPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

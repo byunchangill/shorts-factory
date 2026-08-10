@@ -134,6 +134,11 @@ function SourcesPanel({ job }: { job: JobDetail }) {
   });
   const retry = (sid: string) => api.post(`/jobs/${job.id}/sources/${sid}/retry`).then(() => qc.invalidateQueries({ queryKey: ['job'] }));
 
+  // 전부 받았는데 아직 다음 단계로 안 넘어간 상태 (서버 재시작 등으로 전진이 끊긴 경우)
+  const allSourcesReady =
+    job.sources.length > 0 &&
+    job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+
   const statusBadge = (s: SourceInfo) => {
     const map: Record<string, { label: string; color: 'slate' | 'blue' | 'green' | 'red' | 'amber' }> = {
       queued: { label: '대기', color: 'slate' },
@@ -162,9 +167,15 @@ function SourcesPanel({ job }: { job: JobDetail }) {
         <Button onClick={() => addSources.mutate()} disabled={!urls.trim() || addSources.isPending}>
           URL 추가
         </Button>
-        {job.sources.some((s) => s.origin === 'url') && (
-          <Button variant="secondary" onClick={() => start.mutate()} disabled={job.downloading || start.isPending}>
-            {job.downloading ? <>다운로드 진행 중… <Spinner /></> : '다운로드 시작'}
+        {job.sources.length > 0 && (
+          <Button
+            variant={allSourcesReady ? 'primary' : 'secondary'}
+            onClick={() => start.mutate()}
+            disabled={job.downloading || start.isPending}
+          >
+            {job.downloading
+              ? <>다운로드 진행 중… <Spinner /></>
+              : allSourcesReady ? '다음 단계로' : '다운로드 시작'}
           </Button>
         )}
         <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -187,6 +198,12 @@ function SourcesPanel({ job }: { job: JobDetail }) {
       </p>
       {(attach.error || remove.error) && (
         <p className="mt-1.5 text-xs text-red-500">{(attach.error ?? remove.error)?.message}</p>
+      )}
+
+      {allSourcesReady && !job.downloading && (
+        <p className="mt-2 text-sm text-slate-500">
+          소스를 모두 받았습니다. <strong>다음 단계로</strong>를 누르면 자막/워터마크 제거로 넘어갑니다.
+        </p>
       )}
 
       {job.sources.length > 0 && (
