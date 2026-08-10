@@ -193,8 +193,6 @@ async function createClipForSource(
         file: toWorkspaceRel(f.filePath),
         t: f.t,
         recommended: f.recommended,
-        // 추천 프레임은 기본으로 선택해둔다 — 사용자가 손대지 않아도 대본 소재가 비지 않는다
-        selected: f.recommended,
       })),
     });
   } catch (e) {

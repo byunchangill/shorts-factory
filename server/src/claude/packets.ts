@@ -227,11 +227,8 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
       lines.push('|---|---|---|---|---|');
       for (const c of clips) {
         const cleaned = c.currentCleanVersion ? `정리본 v${c.currentCleanVersion}` : '원본';
-        // 사용자가 고른 프레임이 곧 "이 장면으로 대본을 쓰라"는 지시다.
-        // 고른 것이 없으면 추천 프레임, 그것도 없으면 앞에서부터 3장으로 물러선다
-        const picked = c.frames.filter((f) => f.selected);
-        const shown = (picked.length ? picked : c.frames.filter((f) => f.recommended)).slice(0, 6);
-        const frames = (shown.length ? shown : c.frames.slice(0, 3))
+        // 사용자는 안 쓸 프레임을 지워서 장면을 고른다 — 남아 있는 것이 곧 사용할 소재다
+        const frames = c.frames
           .map((f) => `${f.t.toFixed(1)}초 workspace/${f.file}`)
           .join('<br>');
         lines.push(
@@ -240,9 +237,10 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
       }
       lines.push('');
       lines.push(
-        '위 이미지는 **사용자가 쓰겠다고 고른 장면**입니다. Read로 열어 실제 화면을 확인한 뒤 ' +
-        '그 장면들로 대본을 구성하고, 각 씬의 `clipRef`에 해당 클립과 프레임 시각 부근을 ' +
-        '`suggestedSegment`로 지정하세요. 고르지 않은 장면을 대본의 근거로 삼지 마세요.',
+        '위 이미지는 **사용자가 쓰겠다고 남겨둔 장면**입니다 (안 쓸 장면은 이미 지웠습니다). ' +
+        'Read로 열어 실제 화면을 확인한 뒤 그 장면들로 대본을 구성하고, ' +
+        '각 씬의 `clipRef`에 해당 클립과 프레임 시각 부근을 `suggestedSegment`로 지정하세요. ' +
+        '목록에 없는 장면을 대본의 근거로 삼지 마세요.',
       );
       lines.push('');
     }

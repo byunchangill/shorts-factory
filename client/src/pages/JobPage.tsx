@@ -32,7 +32,7 @@ interface JobDetail {
 interface ClipInfo {
   id: string; sourceId: string;
   probe?: { width: number; height: number; fps: number; duration: number };
-  frames: Array<{ file: string; t: number; recommended: boolean; selected: boolean }>;
+  frames: Array<{ file: string; t: number; recommended: boolean }>;
   frameUrls: string[];
   zones: ZoneDraft[];
   cleanVersions: Array<{ v: number; tier: 1 | 2; filePath: string; createdAt: string }>;
@@ -262,7 +262,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   });
   const [activeClip, setActiveClip] = useState<string | null>(null);
   const [activeFrame, setActiveFrame] = useState<string | null>(null);
-  const [showAllFrames, setShowAllFrames] = useState(false);
+  const [marked, setMarked] = useState<Set<string>>(new Set()); // 한 번에 지우려고 찍어둔 프레임
   const [cleaning, setCleaning] = useState<string | null>(null);
   const [reframing, setReframing] = useState<string | null>(null);
 
@@ -271,18 +271,17 @@ function ClipsPanel({ job }: { job: JobDetail }) {
       api.put(`/jobs/${job.id}/clips/${cid}/zones`, { zones }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
   });
-  // 선택한 프레임이 대본 요청서의 소재 이미지가 된다 — 화면 표시용 상태가 아니다
-  const selectFrames = useMutation({
-    mutationFn: ({ cid, selected }: { cid: string; selected: string[] }) =>
-      api.put(`/jobs/${job.id}/clips/${cid}/frames`, { selected }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+  // 프레임을 지우는 것이 곧 "이 장면은 안 쓴다"는 선택이다 — 남은 것이 대본 소재가 된다
+  const deleteFrames = useMutation({
+    mutationFn: ({ cid, files }: { cid: string; files: string[] }) =>
+      api.del(`/jobs/${job.id}/clips/${cid}/frames?${
+        files.map((f) => `file=${encodeURIComponent(f)}`).join('&')}`),
+    onSuccess: () => {
+      setMarked(new Set());
+      void qc.invalidateQueries({ queryKey: ['clips'] });
+    },
   });
-  const deleteFrame = useMutation({
-    mutationFn: ({ cid, file }: { cid: string; file: string }) =>
-      api.del(`/jobs/${job.id}/clips/${cid}/frames?file=${encodeURIComponent(file)}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
-  });
-  // 예전에 만든 클립은 균등 간격 5장뿐 — 장면 전환 기준으로 다시 뽑는다.
+  // 프레임이 5장뿐인 예전 클립, 또는 지운 것을 되살릴 때.
   // 결과는 SSE(clip)로 들어오므로 여기서는 진행 표시만 건다
   const reextract = useMutation({
     mutationFn: (cid: string) => {
@@ -312,17 +311,15 @@ function ClipsPanel({ job }: { job: JobDetail }) {
 
   // 프레임 + 표시용 URL을 한 덩어리로 (서버가 같은 순서로 내려준다)
   const frames = (current?.frames ?? []).map((f, i) => ({ ...f, url: current!.frameUrls[i] }));
-  const recommended = frames.filter((f) => f.recommended);
-  // 추천이 없는 클립(장면 전환이 없거나 사용자가 다 지운 경우)은 전체를 보여준다
-  const visibleFrames = showAllFrames || recommended.length === 0 ? frames : recommended;
-  const shownFrame = visibleFrames.find((f) => f.file === activeFrame) ?? visibleFrames[0];
-  const selectedCount = frames.filter((f) => f.selected).length;
+  const shownFrame = frames.find((f) => f.file === activeFrame) ?? frames[0];
 
-  const toggleFrame = (file: string) => {
-    if (!current) return;
-    const next = frames.filter((f) => (f.file === file ? !f.selected : f.selected)).map((f) => f.file);
-    selectFrames.mutate({ cid: current.id, selected: next });
-  };
+  const toggleMark = (file: string) =>
+    setMarked((prev) => {
+      const next = new Set(prev);
+      if (next.has(file)) next.delete(file);
+      else next.add(file);
+      return next;
+    });
 
   return (
     <div className="space-y-4">
@@ -337,7 +334,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           {list.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setActiveClip(c.id); setActiveFrame(null); setShowAllFrames(false); }}
+              onClick={() => { setActiveClip(c.id); setActiveFrame(null); setMarked(new Set()); }}
               className={`rounded-lg border px-3 py-1.5 text-sm ${current?.id === c.id ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200'}`}
             >
               {c.id}
@@ -350,64 +347,60 @@ function ClipsPanel({ job }: { job: JobDetail }) {
 
       {current && current.probe && shownFrame && (
         <Card>
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-slate-500">
-              쓸 장면을 고르세요 — <span className="font-medium text-slate-700">선택한 장면으로 대본을 씁니다.</span>
-              {' '}선택 {selectedCount}장 / 전체 {frames.length}장
+              전체 {frames.length}장 · <span className="font-medium text-slate-700">남은 장면으로 대본을 씁니다.</span>
+              {' '}안 쓸 장면을 지우세요.
             </p>
             <div className="flex shrink-0 items-center gap-1">
-              {recommended.length > 0 && recommended.length < frames.length && (
-                <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setShowAllFrames((v) => !v)}>
-                  {showAllFrames ? `추천만 보기 (${recommended.length})` : `전체 보기 (${frames.length})`}
+              {marked.size > 0 && (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1 text-xs text-red-600"
+                  disabled={deleteFrames.isPending}
+                  onClick={() => deleteFrames.mutate({ cid: current.id, files: [...marked] })}
+                >
+                  <Trash2 size={12} /> 찍은 {marked.size}장 삭제
                 </Button>
               )}
               <Button
                 variant="ghost"
                 className="px-2 py-1 text-xs"
-                title="원본 영상에서 장면 전환 기준으로 프레임을 다시 뽑습니다 (선택은 초기화됩니다)"
+                title="원본 영상에서 프레임을 전부 다시 뽑습니다 — 프레임이 몇 장 없는 예전 클립이나, 지운 것을 되살릴 때 쓰세요"
                 disabled={reframing === current.id}
                 onClick={() => reextract.mutate(current.id)}
               >
                 {reframing === current.id
-                  ? <span className="inline-flex items-center gap-1">다시 뽑는 중… <Spinner /></span>
-                  : <><RefreshCw size={12} /> 프레임 다시 뽑기</>}
+                  ? <span className="inline-flex items-center gap-1">불러오는 중… <Spinner /></span>
+                  : <><RefreshCw size={12} /> 전체 프레임 불러오기</>}
               </Button>
             </div>
           </div>
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-            {visibleFrames.map((f) => (
+          <div className="mb-3 flex max-h-72 flex-wrap gap-2 overflow-y-auto pb-1">
+            {frames.map((f) => (
               <div
                 key={f.file}
                 className={clsx(
-                  'relative shrink-0 rounded-lg border-2 p-1',
-                  shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
+                  'relative rounded-lg border-2 p-0.5',
+                  marked.has(f.file) ? 'border-red-400 bg-red-50'
+                    : shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
                 )}
               >
-                <button onClick={() => setActiveFrame(f.file)} className="block">
+                <button onClick={() => setActiveFrame(f.file)} className="block" title="이 프레임에 존 그리기">
                   <img
                     src={f.url}
                     alt={`${f.t}초`}
-                    className={clsx('h-24 w-auto rounded', !f.selected && 'opacity-45')}
+                    className={clsx('h-20 w-auto rounded', marked.has(f.file) && 'opacity-40')}
                     draggable={false}
                   />
                 </button>
-                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-600">
-                  {/* 삭제 버튼은 label 밖에 둔다 — 안에 넣으면 클릭이 체크박스까지 토글한다 */}
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={f.selected}
-                      disabled={selectFrames.isPending}
-                      onChange={() => toggleFrame(f.file)}
-                    />
-                    {f.t.toFixed(1)}초
-                    {f.recommended && <span className="text-brand-600">추천</span>}
-                  </label>
+                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600">
+                  <span>{f.t.toFixed(1)}초</span>
+                  {f.recommended && <span className="text-brand-600" title="장면이 바뀌는 지점">▸</span>}
                   <button
-                    className="ml-auto text-slate-400 hover:text-red-500"
-                    title="이 프레임 삭제"
-                    disabled={deleteFrame.isPending}
-                    onClick={() => deleteFrame.mutate({ cid: current.id, file: f.file })}
+                    className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-400 hover:text-red-500')}
+                    title={marked.has(f.file) ? '삭제 취소' : '삭제할 프레임으로 찍기'}
+                    onClick={() => toggleMark(f.file)}
                   >
                     <Trash2 size={12} />
                   </button>
@@ -567,7 +560,7 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
-  const pickedFrames = current?.frames.filter((f) => f.selected).length ?? 0;
+  const keptFrames = current?.frames.length ?? 0;
   const videoUrl = current
     ? current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url ??
       `/media/${job.menu}/${job.projectId}/jobs/${job.id}/sources/${current.sourceId}.mp4`
@@ -603,17 +596,17 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
       {current && videoUrl && (
         <Card>
-          {pickedFrames > 0 && (
+          {keptFrames > 0 && (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Button
                 variant="secondary"
                 onClick={() => fromFrames.mutate(current.id)}
                 disabled={fromFrames.isPending}
               >
-                선택한 장면 {pickedFrames}개로 구간 채우기
+                남은 장면 {keptFrames}개로 구간 채우기
               </Button>
               <span className="text-xs text-slate-500">
-                고른 프레임 앞뒤 1.5초씩 구간을 만듭니다. 만든 뒤 아래에서 다듬을 수 있습니다 (기존 구간은 대체됩니다).
+                남은 프레임 앞뒤 1.5초씩 구간을 만들고 겹치면 합칩니다. 만든 뒤 아래에서 다듬을 수 있습니다 (기존 구간은 대체됩니다).
               </span>
             </div>
           )}

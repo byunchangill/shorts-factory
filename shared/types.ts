@@ -106,15 +106,15 @@ export const SegmentSchema = z.object({
 export type Segment = z.infer<typeof SegmentSchema>;
 
 /**
- * 클립에서 뽑아낸 대표 프레임.
- * 존 편집의 배경이자, 대본을 쓰는 AI가 보는 소재 이미지다 —
- * 어떤 프레임을 고르느냐가 대본 내용을 바꾼다.
+ * 클립에서 뽑아낸 프레임.
+ *
+ * 존 편집의 배경이자, 대본을 쓰는 AI가 보는 소재 이미지다.
+ * **남아 있는 프레임이 곧 사용할 장면이다** — 사용자는 필요 없는 것을 지워서 고른다.
  */
 export const ClipFrameSchema = z.object({
   file: z.string(), // 작업공간 상대경로
   t: z.number().min(0).default(0), // 영상 내 시각(초) — 컷 구간 후보 계산에 쓴다
-  recommended: z.boolean().default(false), // 장면 전환 기준으로 뽑힌 대표 컷
-  selected: z.boolean().default(false), // 사용자가 "이걸로 대본 쓴다"고 고른 것
+  recommended: z.boolean().default(false), // 장면이 바뀌는 지점 (훑을 때 눈에 띄라고 표시만)
 });
 export type ClipFrame = z.infer<typeof ClipFrameSchema>;
 

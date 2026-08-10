@@ -231,7 +231,7 @@ interface JobView {
 interface ClipView {
   id: string; sourceId: string;
   probe?: { width: number; height: number; duration: number };
-  frames: Array<{ file: string; t: number; recommended: boolean; selected: boolean }>;
+  frames: Array<{ file: string; t: number; recommended: boolean }>;
   zones: unknown[];
   segments: Array<{ id: string; in: number; out: number; note: string; used: boolean }>;
   cleanVersions: Array<{ v: number; tier: number; filePath: string }>;
@@ -252,7 +252,7 @@ let serverLog = '';
 let serverDied = '';
 let jobDir = ''; // 잡 폴더 절대경로 — 실패 이벤트 조기 감지에 쓴다
 let timingsTotal = 0; // 나레이션 총 길이 — 카드 삽입 검증 기준
-let selectedFrameTimes: number[] = []; // 사용자가 고른 장면 시각 — 컷 구간 후보 검증에 쓴다
+let keptFrameTimes: number[] = []; // 지우고 남긴 장면 시각 — 요청서·컷 구간 검증에 쓴다
 
 async function main(): Promise<void> {
   console.log(C.bold('\n🏭 쇼핑쇼츠 팩토리 — 엔드투엔드 하네스\n'));
@@ -471,61 +471,67 @@ async function main(): Promise<void> {
     assert(c0.probe!.width === W && c0.probe!.height === H,
       `해상도 불일치: ${c0.probe!.width}x${c0.probe!.height}`);
     assert(c0.probe!.duration > 5, `길이 이상: ${c0.probe!.duration}`);
-    // 추천 프레임(처음 화면)과 전체 프레임(전체 보기)이 구분돼야 한다
-    assert(c0.frames.length > 5, `전체 프레임이 너무 적음: ${c0.frames.length}`);
-    const rec = c0.frames.filter((f) => f.recommended);
-    assert(rec.length > 0 && rec.length < c0.frames.length,
-      `추천 프레임 구분 실패: 추천 ${rec.length} / 전체 ${c0.frames.length}`);
+    // 영상 전 구간을 훑을 수 있어야 한다 — 8초 클립이면 1초 간격으로 8장 안팎
+    assert(c0.frames.length >= Math.floor(c0.probe!.duration) - 1,
+      `프레임이 영상 길이를 못 덮음: ${c0.frames.length}장 / ${c0.probe!.duration}초`);
     assert(c0.frames.every((f) => f.t >= 0 && f.t <= c0.probe!.duration),
       '프레임 시각이 영상 길이를 벗어남');
-    return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장(추천 ${rec.length})`];
+    // 시각이 순서대로 증가해야 화면 순서와 영상 순서가 일치한다
+    assert(c0.frames.every((f, i) => i === 0 || f.t > c0.frames[i - 1].t), '프레임 시각이 순서대로가 아님');
+    return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장(${c0.probe!.duration.toFixed(0)}초)`];
   });
 
-  await step('프레임 다시 뽑기 — 기존 클립 갱신', async () => {
-    // 예전 클립(균등 간격 5장)을 흉내 내기 위해, 프레임을 지운 상태에서 다시 뽑게 한다
+  await step('전체 프레임 불러오기 — 프레임 적은 클립 갱신', async () => {
+    // 프레임이 몇 장 없는 예전 클립을 흉내 내기 위해 먼저 여러 장 지운다
     const cid = clips[1].id;
-    const stale = clips[1].frames[0].file;
-    await del(`/jobs/${jid}/clips/${cid}/frames?file=${encodeURIComponent(stale)}`);
+    const stale = clips[1].frames.slice(0, 2).map((f) => f.file);
+    const thinned = await del<ClipView>(
+      `/jobs/${jid}/clips/${cid}/frames?${stale.map((f) => `file=${encodeURIComponent(f)}`).join('&')}`);
+    assert(thinned.frames.length === clips[1].frames.length - 2,
+      `다중 삭제 반영 안 됨: ${thinned.frames.length}`);
 
     await post(`/jobs/${jid}/clips/${cid}/frames/reextract`);
     const back = await waitFor('프레임 재추출', async () => {
       await abortIfFailed('clip.frames_failed');
       const c = (await get<ClipView[]>(`/jobs/${jid}/clips`)).find((x) => x.id === cid)!;
-      // 지웠던 프레임이 되살아나면 재추출이 끝난 것
-      return c.frames.length > clips[1].frames.length - 1 ? c : null;
+      return c.frames.length > thinned.frames.length ? c : null;
     }, 120_000);
 
-    assert(back.frames.some((f) => f.recommended), '재추출 후 추천 프레임이 없음');
-    assert(back.frames.some((f) => f.selected), '재추출 후 기본 선택이 비어 있음');
+    assert(back.frames.length >= clips[1].frames.length, `되살아난 장수가 부족: ${back.frames.length}`);
     assert(back.frames.every((f) => f.t >= 0), '재추출 프레임에 시각이 없음');
     // 실제 이미지 파일이 디스크에 있어야 존 편집기가 그림을 띄운다
     for (const f of back.frames.slice(0, 3)) {
       const st = await fsp.stat(path.join(workspace, f.file));
       assert(st.size > 500, `프레임 파일이 비었음: ${f.file}`);
     }
-    return `${back.frames.length}장 재생성 (추천 ${back.frames.filter((f) => f.recommended).length})`;
+    return `2장 삭제 → 전체 ${back.frames.length}장 복원`;
   });
 
-  await step('프레임 선별 — 선택 · 삭제 · 요청서 반영', async () => {
+  await step('안 쓸 프레임 삭제 — 남은 것이 대본 소재', async () => {
     const cid = clips[0].id;
     const before = clips[0].frames.length;
 
-    // 안 쓸 프레임 삭제 → 파일까지 사라져야 한다
-    const victim = clips[0].frames.find((f) => !f.recommended)!;
-    const afterDel = await del<ClipView>(
-      `/jobs/${jid}/clips/${cid}/frames?file=${encodeURIComponent(victim.file)}`);
-    assert(afterDel.frames.length === before - 1, `삭제 반영 안 됨: ${afterDel.frames.length}`);
-    assert(!afterDel.frames.some((f) => f.file === victim.file), '삭제한 프레임이 남아 있음');
-    const gone = await fsp.stat(path.join(workspace, victim.file)).then(() => true, () => false);
-    assert(!gone, '프레임 파일이 디스크에 남아 있음');
+    // 앞 2장만 남기고 나머지를 한 번에 지운다 (여러 장 정리를 왕복 없이)
+    const victims = clips[0].frames.slice(2);
+    const after = await del<ClipView>(
+      `/jobs/${jid}/clips/${cid}/frames?${victims.map((f) => `file=${encodeURIComponent(f.file)}`).join('&')}`);
+    assert(after.frames.length === 2, `삭제 반영 안 됨: ${after.frames.length}`);
 
-    // 쓸 프레임만 선택 → 이 선택이 대본 요청서의 소재가 된다
-    const pick = afterDel.frames.slice(0, 2).map((f) => f.file);
-    const afterSel = await put<ClipView>(`/jobs/${jid}/clips/${cid}/frames`, { selected: pick });
-    assert(afterSel.frames.filter((f) => f.selected).length === 2,
-      `선택 반영 안 됨: ${afterSel.frames.filter((f) => f.selected).length}`);
-    selectedFrameTimes = afterSel.frames.filter((f) => f.selected).map((f) => f.t);
-    return `${before}장 → 1장 삭제 · 2장 선택 (${selectedFrameTimes.map((t) => t.toFixed(1)).join('·')}초)`;
+    // 지운 프레임은 디스크에서도 사라져야 한다 (용량과 요청서 소재 둘 다에 영향)
+    for (const v of victims.slice(0, 3)) {
+      const alive = await fsp.stat(path.join(workspace, v.file)).then(() => true, () => false);
+      assert(!alive, `프레임 파일이 디스크에 남아 있음: ${v.file}`);
+    }
+
+    // 전부 지우려 하면 막아야 한다 — 존을 그릴 화면이 없어진다
+    const wipe = await fetch(
+      `${API}/jobs/${jid}/clips/${cid}/frames?${after.frames.map((f) => `file=${encodeURIComponent(f.file)}`).join('&')}`,
+      { method: 'DELETE' },
+    );
+    assert(wipe.status === 400, `전체 삭제가 막히지 않음: ${wipe.status}`);
+
+    keptFrameTimes = after.frames.map((f) => f.t);
+    return `${before}장 → ${after.frames.length}장 남김 (${keptFrameTimes.map((t) => t.toFixed(1)).join('·')}초) · 전체 삭제는 차단`;
   });
 
   // ── 자막/워터마크 제거 ──
@@ -568,13 +574,13 @@ async function main(): Promise<void> {
     assert(d.requestMd.includes('하네스 검증용'), '요청서에 지침이 포함되지 않음');
     assert(d.requestMd.includes(clips[0].id), '요청서에 소재 현황이 포함되지 않음');
     assert(d.requestMd.includes('어떤 AI로도'), '요청서가 AI 중립 문구가 아님');
-    // 사용자가 고른 장면이 그대로 소재로 넘어가야 한다 (안 고른 장면으로 대본이 써지면 안 된다)
-    for (const t of selectedFrameTimes) {
+    // 남긴 장면이 그대로 소재로 넘어가야 한다 (지운 장면으로 대본이 써지면 안 된다)
+    for (const t of keptFrameTimes) {
       assert(d.requestMd.includes(`${t.toFixed(1)}초`),
-        `요청서에 선택 프레임 ${t.toFixed(1)}초가 없음`);
+        `요청서에 남은 프레임 ${t.toFixed(1)}초가 없음`);
     }
-    assert(d.requestMd.includes('사용자가 쓰겠다고 고른 장면'), '요청서에 선택 소재 안내가 없음');
-    return [p.id, `${p.id} · 지침·선택 소재 ${selectedFrameTimes.length}장 포함 확인`];
+    assert(d.requestMd.includes('남겨둔 장면'), '요청서에 소재 안내가 없음');
+    return [p.id, `${p.id} · 지침·남은 소재 ${keptFrameTimes.length}장 포함 확인`];
   });
 
   const scenes = [
@@ -610,18 +616,18 @@ async function main(): Promise<void> {
   });
 
   // ── 컷 선택 ──
-  await step('선택 프레임 → 컷 구간 후보 생성', async () => {
+  await step('남은 프레임 → 컷 구간 후보 생성', async () => {
     const cid = clips[0].id;
     const r = await post<ClipView>(`/jobs/${jid}/clips/${cid}/segments/from-frames`);
     assert(r.segments.length > 0, '구간이 만들어지지 않음');
-    // 고른 시각이 어느 구간엔가 들어 있어야 한다
-    for (const t of selectedFrameTimes) {
+    // 남긴 시각이 어느 구간엔가 들어 있어야 한다
+    for (const t of keptFrameTimes) {
       assert(r.segments.some((s) => t >= s.in && t <= s.out),
-        `선택 시각 ${t}초가 어느 구간에도 포함되지 않음`);
+        `남은 시각 ${t}초가 어느 구간에도 포함되지 않음`);
     }
     assert(r.segments.every((s) => s.in < s.out), '구간이 뒤집힘');
     assert(r.segments.every((s) => s.in >= 0), '구간 시작이 음수');
-    return `${selectedFrameTimes.length}장 → ${r.segments.length}구간`;
+    return `${keptFrameTimes.length}장 → ${r.segments.length}구간`;
   });
 
   await step('컷 구간 저장', async () => {

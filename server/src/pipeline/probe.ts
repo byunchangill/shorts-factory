@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fsp from 'node:fs/promises';
 import type { Settings } from '@shared/types';
 import { run } from '../util/exec.js';
 import { ensureDir } from '../util/fsx.js';
@@ -44,10 +45,10 @@ export interface ExtractedFrame {
   recommended: boolean;
 }
 
-/** 전체 프레임 수 상한 — 이보다 촘촘히 뽑아도 사람이 다 못 본다 */
-const TOTAL_FRAMES = 12;
-/** 처음 화면에 보여줄 추천 프레임 수 */
-const RECOMMENDED_FRAMES = 5;
+/** 기본 추출 간격 — 1초에 한 장이면 장면을 놓치지 않으면서 눈으로 훑을 수 있다 */
+const INTERVAL_SEC = 1;
+/** 장수 상한. 긴 영상은 간격을 넓혀 이 안에 맞춘다 (디스크와 화면 모두 감당 못 한다) */
+const MAX_FRAMES = 120;
 /** 장면 전환 판정 임계값 (0~1). 낮추면 카메라 흔들림까지 잡힌다 */
 const SCENE_THRESHOLD = 0.3;
 
@@ -80,55 +81,45 @@ async function detectSceneTimes(settings: Settings, filePath: string): Promise<n
   }
 }
 
-/** 서로 minGap초 이내로 붙은 시각을 걸러낸다 (같은 장면이 여러 장 나오는 것 방지) */
-function thinOut(times: number[], minGap: number): number[] {
-  const out: number[] = [];
-  for (const t of [...times].sort((a, b) => a - b)) {
-    if (!out.length || t - out[out.length - 1] >= minGap) out.push(t);
-  }
-  return out;
-}
-
 /**
- * 존 편집기·요청서용 프레임 추출.
+ * 클립 전체를 훑을 수 있는 프레임을 뽑는다.
  *
- * 장면 전환 시각을 우선 뽑아 `recommended`로 표시하고(처음 화면에 이것만 보인다),
- * 나머지는 균등 간격으로 채워 "전체 보기"에서 볼 수 있게 한다.
- * 장면 전환이 없는 영상(원컷 촬영)에서는 전부 균등 간격으로 물러선다.
+ * 사용자는 여기서 나온 프레임을 보고 **필요 없는 것을 지워서** 쓸 장면을 남긴다.
+ * 그래서 "대표 몇 장"이 아니라 영상 전 구간을 촘촘히 덮는 것이 목적이다.
+ *
+ * 한 번의 디코딩으로 전부 뽑는다 — 프레임마다 따로 seek하면 장수에 비례해 느려진다.
+ * 장면이 바뀌는 지점은 `recommended`로 표시만 해준다 (훑을 때 눈에 띄라고).
  */
 export async function extractFrames(
   settings: Settings,
   filePath: string,
   outDir: string,
   duration: number,
-  total = TOTAL_FRAMES,
 ): Promise<ExtractedFrame[]> {
   await ensureDir(outDir);
-  const minGap = Math.max(0.4, duration / (total * 2));
+  const interval = Math.max(INTERVAL_SEC, duration / MAX_FRAMES);
 
-  const scenes = thinOut(await detectSceneTimes(settings, filePath), minGap)
-    .filter((t) => t > 0.1 && t < duration - 0.1)
-    .slice(0, RECOMMENDED_FRAMES);
+  await run(settings.ffmpegPath, [
+    '-y', '-i', filePath,
+    '-vf', `fps=1/${interval}`,
+    '-q:v', '3',
+    path.join(outDir, 'frame_%03d.jpg'),
+  ]);
 
-  // 균등 간격 후보로 나머지를 채운다. 장면 전환과 겹치는 것은 thinOut이 걸러낸다
-  const even = Array.from({ length: total }, (_, i) => (duration * (i + 0.5)) / total);
-  const recommended = new Set(scenes);
-  const times = thinOut([...scenes, ...even], minGap).slice(0, total);
+  const files = (await fsp.readdir(outDir))
+    .filter((f) => /^frame_\d+\.jpg$/.test(f))
+    .sort();
 
-  // 장면 전환이 하나도 없으면 균등 간격 중 고르게 골라 추천으로 삼는다
-  if (recommended.size === 0) {
-    const step = Math.max(1, Math.round(times.length / RECOMMENDED_FRAMES));
-    for (let i = 0; i < times.length; i += step) recommended.add(times[i]);
-  }
+  const scenes = await detectSceneTimes(settings, filePath);
+  const nearScene = (t: number) => scenes.some((s) => Math.abs(s - t) <= interval / 2);
 
-  const frames: ExtractedFrame[] = [];
-  for (const [i, t] of times.entries()) {
-    const out = path.join(outDir, `frame_${String(i + 1).padStart(2, '0')}.jpg`);
-    await run(settings.ffmpegPath, [
-      '-y', '-ss', t.toFixed(2), '-i', filePath,
-      '-frames:v', '1', '-q:v', '3', out,
-    ]);
-    frames.push({ filePath: out, t: Number(t.toFixed(2)), recommended: recommended.has(t) });
-  }
-  return frames;
+  // fps 필터는 간격의 배수 시점에서 프레임을 내보낸다
+  return files.map((f, i) => {
+    const t = i * interval;
+    return {
+      filePath: path.join(outDir, f),
+      t: Number(t.toFixed(2)),
+      recommended: nearScene(t),
+    };
+  });
 }

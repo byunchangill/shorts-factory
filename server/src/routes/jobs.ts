@@ -254,40 +254,41 @@ router.get('/jobs/:jid/clips', async (req, res) => {
   );
 });
 
-// ── 프레임 (대본 소재 선별) ───────────────────────────────────────
+// ── 프레임 (남은 것이 곧 사용할 장면) ─────────────────────────────
 
-/** 선택 저장 — 선택한 프레임이 요청서의 소재 이미지가 되고, 컷 구간 후보의 기준이 된다 */
-router.put('/jobs/:jid/clips/:cid/frames', async (req, res) => {
-  const ref = refOr404(req.params.jid);
-  const body = z.object({ selected: z.array(z.string()) }).parse(req.body);
-  const clip = await jobs.readClip(ref, req.params.cid);
-  if (!clip) return res.status(404).json({ error: '클립 없음' });
-  const picked = new Set(body.selected);
-  for (const f of clip.frames) f.selected = picked.has(f.file);
-  await jobs.writeClip(ref, clip);
-  res.json(clip);
-});
-
+/**
+ * 필요 없는 프레임 삭제.
+ * 남아 있는 프레임이 요청서의 소재 이미지가 되고 컷 구간 후보의 기준이 되므로,
+ * 지우는 행위가 곧 "이 장면은 안 쓴다"는 선택이다.
+ * 여러 장을 한 번에 지울 수 있다 — 한 장씩 왕복하면 수십 장을 정리하기 힘들다.
+ */
 router.delete('/jobs/:jid/clips/:cid/frames', async (req, res) => {
   const ref = refOr404(req.params.jid);
-  const file = z.string().min(1).parse(req.query.file);
+  const raw = req.query.file;
+  const files = z.array(z.string().min(1)).min(1)
+    .parse(Array.isArray(raw) ? raw : [raw].filter(Boolean));
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
-  const target = clip.frames.find((f) => f.file === file);
-  if (!target) return res.status(404).json({ error: '프레임 없음' });
-  if (clip.frames.length <= 1) {
-    return res.status(400).json({ error: '마지막 프레임은 지울 수 없습니다 — 존을 그릴 화면이 없어집니다' });
+
+  const targets = clip.frames.filter((f) => files.includes(f.file));
+  if (!targets.length) return res.status(404).json({ error: '프레임 없음' });
+  if (clip.frames.length - targets.length < 1) {
+    return res.status(400).json({ error: '프레임을 전부 지울 수는 없습니다 — 존을 그릴 화면이 없어집니다' });
   }
-  clip.frames = clip.frames.filter((f) => f.file !== file);
+
+  clip.frames = clip.frames.filter((f) => !files.includes(f.file));
   await jobs.writeClip(ref, clip);
-  await fsp.rm(fromWorkspaceRel(target.file), { force: true }).catch(() => {});
+  for (const t of targets) {
+    await fsp.rm(fromWorkspaceRel(t.file), { force: true }).catch(() => {});
+  }
   res.json(clip);
 });
 
 /**
- * 프레임 다시 뽑기.
- * 예전에 만든 클립은 균등 간격 5장뿐이라 장면 전환 기준 추천이 없다.
- * 존 좌표는 원본 픽셀 기준이므로 정리본이 아니라 **원본 소스**에서 다시 뽑는다.
+ * 전체 프레임 불러오기.
+ * 예전에 만든 클립은 프레임이 5장뿐이라 훑어보고 고를 것이 없다.
+ * 지운 프레임을 되살릴 때도 쓴다 (지운 것은 파일까지 지워지므로 다시 뽑는 수밖에 없다).
+ * 존 좌표는 원본 픽셀 기준이므로 정리본이 아니라 **원본 소스**에서 뽑는다.
  */
 router.post('/jobs/:jid/clips/:cid/frames/reextract', async (req, res) => {
   const ref = refOr404(req.params.jid);
@@ -315,7 +316,6 @@ router.post('/jobs/:jid/clips/:cid/frames/reextract', async (req, res) => {
       file: toWorkspaceRel(f.filePath),
       t: f.t,
       recommended: f.recommended,
-      selected: f.recommended,
     }));
     await jobs.writeClip(ref, latest);
     await jobs.logJobEvent(ref, { type: 'clip.frames_reextracted', clipId: clip.id, count: frames.length });
@@ -328,7 +328,7 @@ router.post('/jobs/:jid/clips/:cid/frames/reextract', async (req, res) => {
 });
 
 /**
- * 선택한 프레임 주변을 컷 구간으로 만든다.
+ * 남은 프레임 주변을 컷 구간으로 만든다.
  * 프레임은 한 시점이므로 앞뒤로 폭을 준다. 겹치면 하나로 합친다.
  */
 router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
@@ -337,8 +337,8 @@ router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
   const duration = clip.probe?.duration ?? 0;
-  const picked = clip.frames.filter((f) => f.selected);
-  if (!picked.length) return res.status(400).json({ error: '선택된 프레임이 없습니다' });
+  const picked = clip.frames;
+  if (!picked.length) return res.status(400).json({ error: '남은 프레임이 없습니다' });
 
   const ranges: Array<{ in: number; out: number }> = [];
   for (const f of [...picked].sort((a, b) => a.t - b.t)) {
@@ -352,7 +352,7 @@ router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
     id: `g${i + 1}`,
     in: Number(r.in.toFixed(2)),
     out: Number(r.out.toFixed(2)),
-    note: '선택 프레임 기준',
+    note: '남은 프레임 기준',
     used: true,
   }));
   await jobs.writeClip(ref, clip);
