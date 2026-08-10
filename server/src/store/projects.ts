@@ -152,9 +152,23 @@ export async function readAllGuidelines(menu: Menu, projectId: string): Promise<
 
 // ── 제품 자료 ─────────────────────────────────────────────────────
 
+/**
+ * 첨부된 제품 자료 목록.
+ * 압축을 풀거나 폴더째 올리면 하위 폴더가 생기므로 재귀로 훑는다 —
+ * 여기서 빠지면 요청서에 경로가 실리지 않아 AI가 자료를 못 본다.
+ */
 export async function listProductFiles(menu: Menu, projectId: string): Promise<string[]> {
-  const files = await listFiles(paths.product(menu, projectId));
-  return files.filter((f) => f !== 'product.json');
+  const root = paths.product(menu, projectId);
+  const out: string[] = [];
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    for (const e of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isDirectory()) await walk(path.join(dir, e.name), rel);
+      else if (rel !== 'product.json') out.push(rel);
+    }
+  };
+  await walk(root, '');
+  return out.sort();
 }
 
 export async function readProduct(menu: Menu, projectId: string): Promise<Product> {

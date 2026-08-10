@@ -6,8 +6,10 @@ import { MENUS, GUIDELINE_FILES, type Menu, type GuidelineFile } from '@shared/c
 import { ProductSchema } from '@shared/types';
 import * as projects from '../store/projects.js';
 import { listJobs } from '../store/jobs.js';
+import fsp from 'node:fs/promises';
 import { paths, toMediaUrl } from '../store/workspace.js';
 import { slugify } from '../util/fsx.js';
+import { extractZip, safeEntryPath } from '../util/zip.js';
 
 const router = Router();
 
@@ -83,28 +85,81 @@ router.put('/projects/:menu/:pid/guidelines/:file', async (req, res) => {
 
 // ── 제품 자료 (쿠팡 상세페이지 파일 첨부) ─────────────────────────
 
+/** multer는 파일명을 latin1로 넘긴다 — 한글 파일명이 깨지지 않게 되돌린다 */
+function originalName(file: Express.Multer.File): string {
+  return Buffer.from(file.originalname, 'latin1').toString('utf8');
+}
+
+/**
+ * 폴더째 올리면 파일명에 상대경로가 들어온다 (`캡처/사양표.png`).
+ * 그 구조를 그대로 살려서 저장한다 — 파일이 수십 개일 때 폴더가 곧 분류다.
+ */
+function relativeDir(file: Express.Multer.File): string {
+  const rel = safeEntryPath(originalName(file));
+  if (!rel) return '';
+  const dir = path.posix.dirname(rel);
+  if (dir === '.' || dir === '/') return '';
+  return dir.split('/').map((s) => slugify(s)).join(path.sep);
+}
+
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (req, _file, cb) => {
+    destination: (req, file, cb) => {
       try {
         const menu = parseMenu(req.params.menu);
-        cb(null, paths.product(menu, req.params.pid));
+        const dir = path.join(paths.product(menu, req.params.pid), relativeDir(file));
+        fsp.mkdir(dir, { recursive: true }).then(() => cb(null, dir), (e) => cb(e as Error, ''));
       } catch (e) {
         cb(e as Error, '');
       }
     },
     filename: (_req, file, cb) => {
-      const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
-      const ext = path.extname(original);
-      cb(null, `${slugify(path.basename(original, ext))}${ext}`);
+      const base = path.posix.basename(originalName(file).replace(/\\/g, '/'));
+      const ext = path.extname(base);
+      cb(null, `${slugify(path.basename(base, ext))}${ext}`);
     },
   }),
-  limits: { fileSize: 50 * 1024 * 1024, files: 50 },
+  // 상세페이지 캡처를 폴더째 올리는 경우가 있어 장수를 넉넉히 잡는다
+  limits: { fileSize: 100 * 1024 * 1024, files: 300 },
 });
 
 router.post('/projects/:menu/:pid/product/files', upload.array('files'), async (req, res) => {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-  res.json({ uploaded: files.map((f) => f.filename) });
+  const uploaded: string[] = [];
+  const errors: string[] = [];
+
+  for (const f of files) {
+    // 압축 파일을 그대로 두면 AI가 열지 못한다 (붙여넣기·API 방식에는 해제 수단이 없다).
+    // 풀어서 같은 이름의 폴더에 넣고 압축 파일 자체는 지운다
+    if (/\.zip$/i.test(f.filename)) {
+      const root = path.dirname(f.path);
+      const fallback = path.basename(f.filename, path.extname(f.filename));
+      try {
+        const written = await extractZip(await fsp.readFile(f.path), root, fallback);
+        if (!written.length) throw new Error('압축 안에 쓸 만한 파일이 없습니다');
+        uploaded.push(...written);
+        await fsp.rm(f.path, { force: true });
+      } catch (e) {
+        // 못 푼 압축은 지우지 않고 남긴다 — 사용자가 다시 올리지 않아도 되게
+        errors.push(`${f.filename}: ${e instanceof Error ? e.message : String(e)}`);
+        uploaded.push(f.filename);
+      }
+      continue;
+    }
+    uploaded.push(f.filename);
+  }
+  res.json({ uploaded, errors });
+});
+
+/** 잘못 올린 자료 정리 — 폴더째 올리면 필요 없는 파일이 섞여 온다 */
+router.delete('/projects/:menu/:pid/product/files', async (req, res) => {
+  const menu = parseMenu(req.params.menu);
+  const rel = safeEntryPath(z.string().min(1).parse(req.query.file));
+  if (!rel) return res.status(400).json({ error: '잘못된 경로' });
+  if (rel === 'product.json') return res.status(400).json({ error: 'product.json은 여기서 지울 수 없습니다' });
+  const target = path.join(paths.product(menu, req.params.pid), rel);
+  await fsp.rm(target, { recursive: true, force: true });
+  res.json({ ok: true });
 });
 
 router.get('/projects/:menu/:pid/product', async (req, res) => {

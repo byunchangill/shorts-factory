@@ -178,6 +178,12 @@ function runCmd(bin: string, args: string[]): Promise<void> {
 
 // ── 합성 소재 생성 ────────────────────────────────────────────────
 
+/** 제품자료 압축 첨부 검증용 — 파이썬 zipfile로 만든 진짜 zip (상세페이지/가격.txt, 사양표.txt) */
+const PRODUCT_ZIP = Buffer.from(
+  'UEsDBBQAAAgIANO9Cl3b59KDDwAAALQAAAAaAAAA7IOB7IS47Y6Y7J207KeAL+qwgOqyqS50eHQzttSxNDB4M3uC8dBhAABQSwMEFAAACAAA070KXf1Q3SILAAAACwAAAB0AAADsg4HshLjtjpjsnbTsp4Av7IKs7JaR7ZGcLnR4dFcyNXhENDB4SDgwUEsDBBQAAAAAANO9Cl05nPsGBAAAAAQAAAAPAAAAX19NQUNPU1gvLl9qdW5ranVua1BLAwQUAAAIAADTvQpdAAAAAAAAAAAAAAAACgAAAOu5iO2PtOuNlC9QSwECFAMUAAAICADTvQpd2+fSgw8AAAC0AAAAGgAAAAAAAAAAAAAAgAEAAAAA7IOB7IS47Y6Y7J207KeAL+qwgOqyqS50eHRQSwECFAMUAAAIAADTvQpd/VDdIgsAAAALAAAAHQAAAAAAAAAAAAAAgAFHAAAA7IOB7IS47Y6Y7J207KeAL+yCrOyWke2RnC50eHRQSwECFAMUAAAAAADTvQpdOZz7BgQAAAAEAAAADwAAAAAAAAAAAAAAgAGNAAAAX19NQUNPU1gvLl9qdW5rUEsBAhQDFAAACAAA070KXQAAAAAAAAAAAAAAAAoAAAAAAAAAAAAQAP1BvgAAAOu5iO2PtOuNlC9QSwUGAAAAAAQABAAIAQAA5gAAAAAA',
+  'base64',
+);
+
 const W = 640;
 const H = 360;
 const WM = { x: 470, y: 12, w: 150, h: 44 }; // 우상단 가짜 워터마크
@@ -578,6 +584,33 @@ async function main(): Promise<void> {
     const body = await r.json();
     assert(String(body.error).includes('제품자료'), `안내 문구가 다름: ${body.error}`);
     return '400 + 첨부 위치 안내';
+  });
+
+  await step('제품자료 압축파일 첨부 → 자동 해제 → 요청서 발행', async () => {
+    // 파이썬 zipfile로 만든 진짜 zip (한글 경로 + deflate/stored 혼합)
+    const fd = new FormData();
+    fd.append('files', new Blob([PRODUCT_ZIP], { type: 'application/zip' }), '상세페이지.zip');
+    const up = await fetch(
+      `${API}/projects/menu-a/${encodeURIComponent(productName)}/product/files`,
+      { method: 'POST', body: fd },
+    );
+    const upBody = await up.text();
+    assert(up.ok, `업로드 실패: ${up.status} ${upBody}`);
+    const { errors } = JSON.parse(upBody) as { uploaded: string[]; errors: string[] };
+    assert(errors.length === 0, `압축 해제 오류: ${errors.join(', ')}`);
+
+    // 하위 폴더까지 훑어야 요청서에 경로가 실린다
+    const listed = await get<{ files: Array<{ name: string }> }>(
+      `/projects/menu-a/${encodeURIComponent(productName)}/product`);
+    const names = listed.files.map((f) => f.name);
+    assert(names.includes('상세페이지/가격.txt'), `해제된 파일이 목록에 없음: ${names.join(', ')}`);
+    assert(!names.some((n) => n.endsWith('.zip')), '압축 파일이 그대로 남아 있음');
+
+    // 자료가 생겼으니 이제 발행돼야 하고, 요청서에 그 경로가 실려야 한다
+    const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'product-extract' });
+    const d = await get<PacketView>(`/packets/${p.id}`);
+    assert(d.requestMd.includes('상세페이지/가격.txt'), '요청서에 첨부 경로가 없음');
+    return `zip → ${names.length}개 파일 · ${p.id} 발행`;
   });
 
   const packetId = await step2<string>('대본 요청서 발행', async () => {

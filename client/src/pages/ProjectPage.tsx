@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Plus, Upload, Save } from 'lucide-react';
+import { Plus, Upload, Save, FolderOpen, Trash2 } from 'lucide-react';
 import {
   GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS,
   type GuidelineFile, type Menu,
@@ -146,20 +146,67 @@ function GuidelinesTab({ menu, pid }: { menu: Menu; pid: string }) {
   );
 }
 
+/**
+ * 드래그로 떨어뜨린 항목에서 파일을 모은다.
+ * 폴더를 끌어다 놓으면 항목 자체는 파일이 아니라 디렉터리 엔트리라, 안을 훑어야 한다.
+ */
+async function collectDropped(items: DataTransferItemList): Promise<Array<{ file: File; path: string }>> {
+  const out: Array<{ file: File; path: string }> = [];
+
+  const walk = async (entry: FileSystemEntry, prefix: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) =>
+        (entry as FileSystemFileEntry).file(resolve, reject));
+      out.push({ file, path: prefix ? `${prefix}/${file.name}` : file.name });
+      return;
+    }
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    // readEntries는 한 번에 일부만 준다 — 빈 배열이 올 때까지 반복해야 전부 읽힌다
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+        reader.readEntries(resolve, reject));
+      if (!batch.length) break;
+      for (const child of batch) await walk(child, prefix ? `${prefix}/${entry.name}` : entry.name);
+    }
+  };
+
+  const entries = Array.from(items)
+    .map((i) => i.webkitGetAsEntry?.())
+    .filter((e): e is FileSystemEntry => !!e);
+  for (const e of entries) await walk(e, '');
+  return out;
+}
+
 function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
   const qc = useQueryClient();
+  const [dragging, setDragging] = useState(false);
   const data = useQuery({
     queryKey: ['product', menu, pid],
     queryFn: () => api.get<ProductData>(`/projects/${menu}/${pid}/product`),
   });
   const upload = useMutation({
-    mutationFn: (files: FileList) => {
+    // 파일 선택·폴더 선택·드래그 모두 같은 경로로 보낸다.
+    // 세 번째 인자의 파일명에 상대경로를 넣으면 서버가 폴더 구조를 살려 저장한다
+    mutationFn: (files: Array<{ file: File; path: string }>) => {
       const fd = new FormData();
-      for (const f of Array.from(files)) fd.append('files', f);
-      return api.upload(`/projects/${menu}/${pid}/product/files`, fd);
+      for (const { file, path } of files) fd.append('files', file, path);
+      return api.upload<{ uploaded: string[]; errors: string[] }>(
+        `/projects/${menu}/${pid}/product/files`, fd);
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['product'] }),
   });
+  const removeFile = useMutation({
+    mutationFn: (name: string) =>
+      api.del(`/projects/${menu}/${pid}/product/files?file=${encodeURIComponent(name)}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['product'] }),
+  });
+
+  /** input[type=file]에서 온 목록 — 폴더 선택이면 webkitRelativePath에 경로가 담긴다 */
+  const fromInput = (list: FileList) =>
+    Array.from(list).map((file) => ({
+      file,
+      path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+    }));
 
   const product = data.data?.product;
 
@@ -168,31 +215,86 @@ function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
       <Card>
         <h3 className="mb-2 font-medium">쿠팡 상세페이지 첨부</h3>
         <p className="mb-3 text-sm text-slate-500">
-          상세페이지 캡처 이미지와 텍스트 파일을 올리면, "제품정보 추출" 요청서로 Claude가 product.json을 만듭니다.
-          (제품정보 추출 요청서는 각 작업 화면에서 발행)
+          상세페이지 캡처·텍스트를 올리면 "제품정보 추출" 요청서로 AI가 product.json을 만듭니다.
+          <br />
+          <span className="text-slate-400">
+            압축파일(zip)은 자동으로 풀고, 폴더는 구조를 그대로 살려 저장합니다. 끌어다 놓아도 됩니다.
+          </span>
         </p>
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 py-8 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600">
-          <Upload size={18} />
-          클릭해서 파일 선택 (이미지/텍스트, 여러 개 가능)
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => e.target.files?.length && upload.mutate(e.target.files)}
-          />
-        </label>
-        {upload.isPending && <p className="mt-2 text-sm text-slate-500">업로드 중…</p>}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            void collectDropped(e.dataTransfer.items).then((files) => {
+              if (files.length) upload.mutate(files);
+            });
+          }}
+          className={clsx(
+            'rounded-lg border-2 border-dashed py-6 text-center text-sm',
+            dragging ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-300 text-slate-500',
+          )}
+        >
+          <p className="mb-3">여기로 파일·폴더·압축파일을 끌어다 놓으세요</p>
+          <div className="flex justify-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <Upload size={15} /> 파일 선택
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) upload.mutate(fromInput(e.target.files));
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <FolderOpen size={15} /> 폴더 선택
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                // 리액트 타입에 없는 비표준 속성 — 폴더 선택을 여는 유일한 방법이다
+                {...{ webkitdirectory: '', directory: '' }}
+                onChange={(e) => {
+                  if (e.target.files?.length) upload.mutate(fromInput(e.target.files));
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+        </div>
+        {upload.isPending && <p className="mt-2 text-sm text-slate-500">올리는 중…</p>}
+        {upload.error && <p className="mt-2 text-sm text-red-600">{upload.error.message}</p>}
+        {(upload.data?.errors ?? []).length > 0 && (
+          <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {upload.data!.errors.map((e) => <p key={e}>압축을 풀지 못했습니다 — {e}</p>)}
+          </div>
+        )}
         {(data.data?.files ?? []).length > 0 && (
-          <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {data.data!.files.map((f) => (
-              <li key={f.name} className="rounded-lg border border-slate-200 p-1.5 text-xs">
-                {/\.(png|jpe?g|webp|gif)$/i.test(f.name) ? (
-                  <img src={f.url} alt={f.name} className="mb-1 h-24 w-full rounded object-cover" />
-                ) : null}
-                <p className="truncate text-slate-600">{f.name}</p>
-              </li>
-            ))}
-          </ul>
+          <>
+            <p className="mt-3 text-xs text-slate-400">첨부 {data.data!.files.length}개</p>
+            <ul className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {data.data!.files.map((f) => (
+                <li key={f.name} className="group relative rounded-lg border border-slate-200 p-1.5 text-xs">
+                  {/\.(png|jpe?g|webp|gif|bmp)$/i.test(f.name) ? (
+                    <img src={f.url} alt={f.name} className="mb-1 h-24 w-full rounded object-cover" />
+                  ) : null}
+                  <p className="truncate text-slate-600" title={f.name}>{f.name}</p>
+                  <button
+                    className="absolute right-1 top-1 rounded bg-white/90 p-1 text-slate-400 opacity-0 hover:text-red-500 group-hover:opacity-100"
+                    title="이 자료 삭제"
+                    disabled={removeFile.isPending}
+                    onClick={() => removeFile.mutate(f.name)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </Card>
 
