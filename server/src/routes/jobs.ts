@@ -268,11 +268,33 @@ router.post('/jobs/:jid/clips/:cid/restore', async (req, res) => {
 router.put('/jobs/:jid/clips/:cid/segments', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({ segments: z.array(SegmentSchema) }).parse(req.body);
+  const settings = await loadSettings();
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
   clip.segments = body.segments;
   await jobs.writeClip(ref, clip);
-  res.json(clip);
+
+  // 한 소스가 오래 연속 노출되면 재사용 콘텐츠로 분류될 위험이 커진다.
+  // 저장은 막지 않고 경고만 돌려준다 — 판단은 사용자 몫이다.
+  const limit = settings.maxClipExposureSec;
+  const overLong = clip.segments
+    .filter((s) => s.used && s.out - s.in > limit)
+    .map((s) => ({ id: s.id, seconds: Number((s.out - s.in).toFixed(1)) }));
+
+  res.json({
+    ...clip,
+    warnings: overLong.length
+      ? [{
+          type: 'exposure',
+          limit,
+          segments: overLong,
+          message:
+            `${overLong.length}개 구간이 ${limit}초를 넘습니다. ` +
+            `원본을 길게 연속 노출하면 재사용 콘텐츠로 분류될 위험이 커집니다. ` +
+            `구간을 나누거나 사이에 텍스트 카드를 넣으세요.`,
+        }]
+      : [],
+  });
 });
 
 // ── 대본 ──────────────────────────────────────────────────────────

@@ -214,6 +214,7 @@ let workspace = '';
 let exportRoot = '';
 let serverLog = '';
 let serverDied = '';
+let timingsTotal = 0; // 나레이션 총 길이 — 카드 삽입 검증 기준
 
 async function main(): Promise<void> {
   console.log(C.bold('\n🏭 쇼핑쇼츠 팩토리 — 엔드투엔드 하네스\n'));
@@ -288,12 +289,17 @@ async function main(): Promise<void> {
     return 'http://127.0.0.1:4310';
   });
 
-  await step('설정 — 내보내기 경로 지정', async () => {
+  await step('설정 — 내보내기 경로 · 프레임 레이아웃 · 카드 삽입', async () => {
     const s = await get<Record<string, unknown>>('/settings');
-    await put('/settings', { ...s, exportRoot, exportOnDone: true, burnSubtitles: true });
-    const after = await get<{ exportRoot: string }>('/settings');
+    await put('/settings', {
+      ...s, exportRoot, exportOnDone: true, burnSubtitles: true,
+      layout: 'framed', insertCards: true, cardDurationSec: 1.5, frameTitle: '하네스채널',
+    });
+    const after = await get<{ exportRoot: string; layout: string; insertCards: boolean }>('/settings');
     assert(after.exportRoot === exportRoot, '내보내기 경로가 저장되지 않음');
-    return exportRoot;
+    assert(after.layout === 'framed', '레이아웃 설정이 저장되지 않음');
+    assert(after.insertCards, '카드 삽입 설정이 저장되지 않음');
+    return `${exportRoot} · framed · 카드 ON`;
   });
 
   // ── 프로젝트 / 지침 / 잡 ──
@@ -446,6 +452,23 @@ async function main(): Promise<void> {
     return '클립당 1구간';
   });
 
+  await step('연속 노출 경고 — 상한 초과 구간 감지', async () => {
+    const clip = clips[0];
+    const r = await put<{ warnings: Array<{ type: string; message: string; segments: unknown[] }> }>(
+      `/jobs/${jid}/clips/${clip.id}/segments`,
+      { segments: [{ id: 'long', in: 0, out: 7, note: '너무 긴 구간', used: true }] },
+    );
+    assert(r.warnings?.length === 1, '경고가 나오지 않음');
+    assert(r.warnings[0].type === 'exposure', `경고 종류가 다름: ${r.warnings[0].type}`);
+    // 원래 구간으로 되돌린다
+    const seg = scenes[0].clipRef.suggestedSegment;
+    const back = await put<{ warnings: unknown[] }>(`/jobs/${jid}/clips/${clip.id}/segments`, {
+      segments: [{ id: 'g1', in: seg.in, out: seg.out, note: '씬 1', used: true }],
+    });
+    assert(back.warnings.length === 0, '정상 구간인데 경고가 남음');
+    return '7초 구간 → 경고, 3초 이내 → 정상';
+  });
+
   // ── 음성 ──
   // 실패할 합성을 먼저 걸어두면 백그라운드 작업이 남아 뒤 단계와 얽히므로,
   // CLI로 가용성을 먼저 확인한 뒤 경로를 고른다.
@@ -493,8 +516,8 @@ async function main(): Promise<void> {
         `타이밍 씬 수 불일치: ${timings.length}`);
       assert(timings.every((t: { source: string }) => t.source === 'file'),
         '첨부 파일이 우선 사용되지 않음');
-      const total = timings.reduce((s: number, t: { duration: number }) => s + t.duration, 0);
-      return `${timings.length}씬 · 총 ${total.toFixed(1)}초 · 전부 file 소스`;
+      timingsTotal = timings.reduce((s: number, t: { duration: number }) => s + t.duration, 0);
+      return `${timings.length}씬 · 총 ${timingsTotal.toFixed(1)}초 · 전부 file 소스`;
     });
   }
 
@@ -532,7 +555,18 @@ async function main(): Promise<void> {
     const srt = await fsp.readFile(
       path.join(workspace, 'menu-a', productName, 'jobs', jid, 'subtitles', 'final.srt'), 'utf8');
     assert(srt.includes('쿠팡 파트너스'), '공시문구가 자막에 없음');
-    return `${v.width}x${v.height} · ${Number(probe.format.duration).toFixed(1)}초 · ${Math.round(stat.size / 1024)}KB`;
+
+    // 카드가 들어가면 나레이션 총합보다 길어야 한다. 그런데도 오디오가 잘리면 싱크가 깨진 것이다.
+    const narrationTotal = timingsTotal;
+    const videoDur = Number(probe.format.duration);
+    assert(videoDur > narrationTotal + 0.5,
+      `카드가 삽입되지 않았거나 길이가 이상함 (영상 ${videoDur.toFixed(1)}초 ≤ 나레이션 ${narrationTotal.toFixed(1)}초)`);
+    const audioDur = await streamDuration(finalPath, 'a');
+    assert(Math.abs(audioDur - videoDur) < 1.0,
+      `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(1)}초, 오디오 ${audioDur.toFixed(1)}초)`);
+
+    const cardCount = Math.round((videoDur - narrationTotal) / 1.5);
+    return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
   });
 
   // ── 완료 + 내보내기 ──
@@ -611,6 +645,15 @@ async function probeJson(file: string): Promise<{
     p.on('close', (code) => code === 0 ? resolve(JSON.parse(out)) : reject(new Error(`ffprobe 종료 ${code}`)));
     p.on('error', reject);
   });
+}
+
+/** 특정 스트림(v/a)의 길이 — 오디오·영상 싱크 검증용 */
+async function streamDuration(file: string, kind: 'v' | 'a'): Promise<number> {
+  const probe = await probeJson(file);
+  const s = probe.streams.find((x) => x.codec_type === (kind === 'v' ? 'video' : 'audio'));
+  if (!s) return 0;
+  // 스트림에 duration이 없으면 컨테이너 길이로 대체
+  return Number((s as { duration?: string }).duration ?? probe.format.duration);
 }
 
 async function countFiles(dir: string): Promise<number> {

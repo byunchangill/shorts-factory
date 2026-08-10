@@ -388,10 +388,16 @@ function TrimPanel({ job }: { job: JobDetail }) {
     queryFn: () => api.get<ClipInfo[]>(`/jobs/${job.id}/clips`),
   });
   const [activeClip, setActiveClip] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: ({ cid, segments }: { cid: string; segments: SegmentDraft[] }) =>
-      api.put(`/jobs/${job.id}/clips/${cid}/segments`, { segments }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+      api.put<{ warnings?: Array<{ message: string }> }>(
+        `/jobs/${job.id}/clips/${cid}/segments`, { segments },
+      ),
+    onSuccess: (r) => {
+      setWarning(r.warnings?.[0]?.message ?? null);
+      void qc.invalidateQueries({ queryKey: ['clips'] });
+    },
   });
   const next = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/transition`, { to: 'voicing' }),
@@ -424,6 +430,15 @@ function TrimPanel({ job }: { job: JobDetail }) {
           ))}
         </div>
       </Card>
+      {warning && (
+        <Card className="border-amber-200 bg-amber-50">
+          <p className="flex items-start gap-2 text-sm text-amber-800">
+            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            {warning}
+          </p>
+        </Card>
+      )}
+
       {current && videoUrl && (
         <Card>
           <SegmentPicker

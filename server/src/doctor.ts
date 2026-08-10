@@ -1,6 +1,8 @@
+import path from 'node:path';
 import { checkTool } from './util/exec.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
+import { findKoreanFont } from './pipeline/fonts.js';
 
 export interface DoctorReport {
   tools: Array<{
@@ -54,6 +56,18 @@ export async function runDoctor(): Promise<DoctorReport> {
     available: await hasKey('typecast'),
     version: undefined,
     installHint: 'API 키 메뉴에서 등록 — 미등록 시 씬별 음성 파일을 직접 첨부해야 합니다',
+  });
+
+  // 한글 폰트가 없으면 자막과 텍스트 카드의 한글이 네모로 깨진다
+  const font = await findKoreanFont(s.fontPath);
+  tools.push({
+    name: '한글 폰트',
+    required: true,
+    available: !!font,
+    version: font ? path.basename(font) : undefined,
+    installHint:
+      'Windows·macOS는 기본 탑재. Linux는 `apt install fonts-nanum` 또는 ' +
+      '설정에서 폰트 파일 경로를 직접 지정하세요 (없으면 자막·카드의 한글이 깨집니다)',
   });
 
   return { tools, ok: tools.filter((t) => t.required).every((t) => t.available) };
