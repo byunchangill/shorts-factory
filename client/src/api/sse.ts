@@ -27,6 +27,11 @@ export function useServerEvents(): void {
     });
     es.addEventListener('clip', () => invalidate('clips'));
     es.addEventListener('clean.done', () => invalidate('clips'));
+    es.addEventListener('frames.failed', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      alert(`프레임 추출 실패 (${data.clipId}): ${data.error}`);
+      invalidate('clips');
+    });
     es.addEventListener('clean.failed', (e) => {
       const data = JSON.parse((e as MessageEvent).data);
       alert(`정리 실패 (${data.clipId}): ${data.error}`);

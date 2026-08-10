@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -264,6 +264,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   const [activeFrame, setActiveFrame] = useState<string | null>(null);
   const [showAllFrames, setShowAllFrames] = useState(false);
   const [cleaning, setCleaning] = useState<string | null>(null);
+  const [reframing, setReframing] = useState<string | null>(null);
 
   const saveZones = useMutation({
     mutationFn: ({ cid, zones }: { cid: string; zones: ZoneDraft[] }) =>
@@ -281,6 +282,14 @@ function ClipsPanel({ job }: { job: JobDetail }) {
       api.del(`/jobs/${job.id}/clips/${cid}/frames?file=${encodeURIComponent(file)}`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
   });
+  // 예전에 만든 클립은 균등 간격 5장뿐 — 장면 전환 기준으로 다시 뽑는다.
+  // 결과는 SSE(clip)로 들어오므로 여기서는 진행 표시만 건다
+  const reextract = useMutation({
+    mutationFn: (cid: string) => {
+      setReframing(cid);
+      return api.post(`/jobs/${job.id}/clips/${cid}/frames/reextract`);
+    },
+  });
   const clean = useMutation({
     mutationFn: ({ cid, tier }: { cid: string; tier: 1 | 2 }) => {
       setCleaning(cid);
@@ -294,6 +303,9 @@ function ClipsPanel({ job }: { job: JobDetail }) {
       void qc.invalidateQueries({ queryKey: ['packets'] });
     },
   });
+
+  // 재추출 결과는 SSE로 들어온다 — 클립 데이터가 갱신되면 진행 표시를 내린다
+  useEffect(() => { setReframing(null); }, [clips.dataUpdatedAt]);
 
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
@@ -343,11 +355,24 @@ function ClipsPanel({ job }: { job: JobDetail }) {
               쓸 장면을 고르세요 — <span className="font-medium text-slate-700">선택한 장면으로 대본을 씁니다.</span>
               {' '}선택 {selectedCount}장 / 전체 {frames.length}장
             </p>
-            {recommended.length > 0 && recommended.length < frames.length && (
-              <Button variant="ghost" className="shrink-0 px-2 py-1 text-xs" onClick={() => setShowAllFrames((v) => !v)}>
-                {showAllFrames ? `추천만 보기 (${recommended.length})` : `전체 보기 (${frames.length})`}
+            <div className="flex shrink-0 items-center gap-1">
+              {recommended.length > 0 && recommended.length < frames.length && (
+                <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setShowAllFrames((v) => !v)}>
+                  {showAllFrames ? `추천만 보기 (${recommended.length})` : `전체 보기 (${frames.length})`}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                title="원본 영상에서 장면 전환 기준으로 프레임을 다시 뽑습니다 (선택은 초기화됩니다)"
+                disabled={reframing === current.id}
+                onClick={() => reextract.mutate(current.id)}
+              >
+                {reframing === current.id
+                  ? <span className="inline-flex items-center gap-1">다시 뽑는 중… <Spinner /></span>
+                  : <><RefreshCw size={12} /> 프레임 다시 뽑기</>}
               </Button>
-            )}
+            </div>
           </div>
           <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
             {visibleFrames.map((f) => (

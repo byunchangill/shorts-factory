@@ -6,7 +6,8 @@ import { z } from 'zod';
 import { MENUS, type JobState } from '@shared/constants';
 import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
-import { loadSettings, paths, toMediaUrl, fromWorkspaceRel } from '../store/workspace.js';
+import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
+import { probeVideo, extractFrames } from '../pipeline/probe.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
 import {
   downloadAll, retrySource, isDownloading, attachSourceFile, removeSource, reconcileDownloadState,
@@ -281,6 +282,49 @@ router.delete('/jobs/:jid/clips/:cid/frames', async (req, res) => {
   await jobs.writeClip(ref, clip);
   await fsp.rm(fromWorkspaceRel(target.file), { force: true }).catch(() => {});
   res.json(clip);
+});
+
+/**
+ * 프레임 다시 뽑기.
+ * 예전에 만든 클립은 균등 간격 5장뿐이라 장면 전환 기준 추천이 없다.
+ * 존 좌표는 원본 픽셀 기준이므로 정리본이 아니라 **원본 소스**에서 다시 뽑는다.
+ */
+router.post('/jobs/:jid/clips/:cid/frames/reextract', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  const job = await jobs.readJob(ref);
+  const source = job?.sources.find((s) => s.id === clip.sourceId);
+  if (!source?.filePath) return res.status(400).json({ error: '소스 파일 없음' });
+  const input = fromWorkspaceRel(source.filePath);
+
+  res.json({ started: true }); // 장면 감지가 전체 디코딩이라 오래 걸린다 — 진행은 SSE로
+
+  void (async () => {
+    const probe = clip.probe ?? (await probeVideo(settings, input));
+    const framesDir = path.join(jobs.clipDir(ref, clip.id), 'frames');
+    // 장수가 줄어들 수도 있으므로 통째로 지우고 새로 뽑는다
+    await fsp.rm(framesDir, { recursive: true, force: true });
+    const frames = await extractFrames(settings, input, framesDir, probe.duration);
+
+    // 그 사이 사용자가 존을 편집했을 수 있다 — 다시 읽어 프레임만 갈아끼운다
+    const latest = (await jobs.readClip(ref, clip.id)) ?? clip;
+    latest.probe = probe;
+    latest.frames = frames.map((f) => ({
+      file: toWorkspaceRel(f.filePath),
+      t: f.t,
+      recommended: f.recommended,
+      selected: f.recommended,
+    }));
+    await jobs.writeClip(ref, latest);
+    await jobs.logJobEvent(ref, { type: 'clip.frames_reextracted', clipId: clip.id, count: frames.length });
+    broadcast('clip', { jobId: ref.jobId, clipId: clip.id });
+  })().catch(async (e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    await jobs.logJobEvent(ref, { type: 'clip.frames_failed', clipId: clip.id, error: msg }).catch(() => {});
+    broadcast('frames.failed', { jobId: ref.jobId, clipId: clip.id, error: msg });
+  });
 });
 
 /**

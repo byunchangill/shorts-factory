@@ -481,6 +481,31 @@ async function main(): Promise<void> {
     return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장(추천 ${rec.length})`];
   });
 
+  await step('프레임 다시 뽑기 — 기존 클립 갱신', async () => {
+    // 예전 클립(균등 간격 5장)을 흉내 내기 위해, 프레임을 지운 상태에서 다시 뽑게 한다
+    const cid = clips[1].id;
+    const stale = clips[1].frames[0].file;
+    await del(`/jobs/${jid}/clips/${cid}/frames?file=${encodeURIComponent(stale)}`);
+
+    await post(`/jobs/${jid}/clips/${cid}/frames/reextract`);
+    const back = await waitFor('프레임 재추출', async () => {
+      await abortIfFailed('clip.frames_failed');
+      const c = (await get<ClipView[]>(`/jobs/${jid}/clips`)).find((x) => x.id === cid)!;
+      // 지웠던 프레임이 되살아나면 재추출이 끝난 것
+      return c.frames.length > clips[1].frames.length - 1 ? c : null;
+    }, 120_000);
+
+    assert(back.frames.some((f) => f.recommended), '재추출 후 추천 프레임이 없음');
+    assert(back.frames.some((f) => f.selected), '재추출 후 기본 선택이 비어 있음');
+    assert(back.frames.every((f) => f.t >= 0), '재추출 프레임에 시각이 없음');
+    // 실제 이미지 파일이 디스크에 있어야 존 편집기가 그림을 띄운다
+    for (const f of back.frames.slice(0, 3)) {
+      const st = await fsp.stat(path.join(workspace, f.file));
+      assert(st.size > 500, `프레임 파일이 비었음: ${f.file}`);
+    }
+    return `${back.frames.length}장 재생성 (추천 ${back.frames.filter((f) => f.recommended).length})`;
+  });
+
   await step('프레임 선별 — 선택 · 삭제 · 요청서 반영', async () => {
     const cid = clips[0].id;
     const before = clips[0].frames.length;
