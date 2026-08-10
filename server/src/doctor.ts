@@ -19,26 +19,28 @@ export async function runDoctor(): Promise<DoctorReport> {
   const s = await loadSettings();
   const checks = [
     {
-      name: 'ffmpeg', bin: s.ffmpegPath, required: true,
+      // ffmpeg 계열은 -version (하이픈 1개). --version은 exit code 8로 실패해
+      // 설치돼 있어도 미설치로 오판된다
+      name: 'ffmpeg', bin: s.ffmpegPath, required: true, versionArgs: ['-version'],
       installHint: 'https://ffmpeg.org/download.html 또는 winget install ffmpeg / brew install ffmpeg',
     },
     {
-      name: 'ffprobe', bin: s.ffprobePath, required: true,
+      name: 'ffprobe', bin: s.ffprobePath, required: true, versionArgs: ['-version'],
       installHint: 'ffmpeg에 포함되어 함께 설치됩니다',
     },
     {
-      name: 'yt-dlp', bin: s.ytdlpPath, required: true,
+      name: 'yt-dlp', bin: s.ytdlpPath, required: true, versionArgs: ['--version'],
       installHint: 'pip install yt-dlp 또는 winget install yt-dlp (자주 깨지므로 주기적으로 yt-dlp -U)',
     },
     {
-      name: 'iopaint', bin: s.iopaintPath, required: false,
+      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: ['--version'],
       installHint: 'pip install iopaint (2차 AI 인페인팅용 — 선택. tools/install-inpaint.md 참조)',
     },
   ];
 
   const tools = await Promise.all(
     checks.map(async (c) => {
-      const r = await checkTool(c.bin);
+      const r = await checkTool(c.bin, c.versionArgs);
       return {
         name: c.name,
         required: c.required,

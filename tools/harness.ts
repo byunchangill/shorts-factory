@@ -289,6 +289,20 @@ async function main(): Promise<void> {
     return 'http://127.0.0.1:4310';
   });
 
+  await step('doctor — 필수 도구를 실제로 인식하는지', async () => {
+    // 도구가 설치돼 있어도 버전 확인 인자가 틀리면 미설치로 오판된다
+    // (ffmpeg는 -version, yt-dlp는 --version). 실제로 발생했던 버그다.
+    const report = await get<{
+      ok: boolean;
+      tools: Array<{ name: string; required: boolean; available: boolean; version?: string }>;
+    }>('/system/doctor');
+    const missing = report.tools.filter((t) => t.required && !t.available).map((t) => t.name);
+    assert(missing.length === 0, `필수 도구 미인식: ${missing.join(', ')}`);
+    assert(report.ok, 'doctor가 ok=false를 반환');
+    const named = report.tools.filter((t) => t.required && t.version).length;
+    return `필수 ${report.tools.filter((t) => t.required).length}종 인식 (버전 확인 ${named}종)`;
+  });
+
   await step('설정 — 내보내기 경로 · 프레임 레이아웃 · 카드 삽입', async () => {
     const s = await get<Record<string, unknown>>('/settings');
     await put('/settings', {
