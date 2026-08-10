@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import { clsx } from 'clsx';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
   Play, Trash2, FolderOpen,
@@ -31,7 +32,8 @@ interface JobDetail {
 interface ClipInfo {
   id: string; sourceId: string;
   probe?: { width: number; height: number; fps: number; duration: number };
-  frames: string[]; frameUrls: string[];
+  frames: Array<{ file: string; t: number; recommended: boolean; selected: boolean }>;
+  frameUrls: string[];
   zones: ZoneDraft[];
   cleanVersions: Array<{ v: number; tier: 1 | 2; filePath: string; createdAt: string }>;
   cleanUrls: Array<{ v: number; url: string }>;
@@ -259,12 +261,24 @@ function ClipsPanel({ job }: { job: JobDetail }) {
     queryFn: () => api.get<ClipInfo[]>(`/jobs/${job.id}/clips`),
   });
   const [activeClip, setActiveClip] = useState<string | null>(null);
-  const [frameIdx, setFrameIdx] = useState(0);
+  const [activeFrame, setActiveFrame] = useState<string | null>(null);
+  const [showAllFrames, setShowAllFrames] = useState(false);
   const [cleaning, setCleaning] = useState<string | null>(null);
 
   const saveZones = useMutation({
     mutationFn: ({ cid, zones }: { cid: string; zones: ZoneDraft[] }) =>
       api.put(`/jobs/${job.id}/clips/${cid}/zones`, { zones }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+  });
+  // 선택한 프레임이 대본 요청서의 소재 이미지가 된다 — 화면 표시용 상태가 아니다
+  const selectFrames = useMutation({
+    mutationFn: ({ cid, selected }: { cid: string; selected: string[] }) =>
+      api.put(`/jobs/${job.id}/clips/${cid}/frames`, { selected }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+  });
+  const deleteFrame = useMutation({
+    mutationFn: ({ cid, file }: { cid: string; file: string }) =>
+      api.del(`/jobs/${job.id}/clips/${cid}/frames?file=${encodeURIComponent(file)}`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
   });
   const clean = useMutation({
@@ -284,6 +298,20 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
 
+  // 프레임 + 표시용 URL을 한 덩어리로 (서버가 같은 순서로 내려준다)
+  const frames = (current?.frames ?? []).map((f, i) => ({ ...f, url: current!.frameUrls[i] }));
+  const recommended = frames.filter((f) => f.recommended);
+  // 추천이 없는 클립(장면 전환이 없거나 사용자가 다 지운 경우)은 전체를 보여준다
+  const visibleFrames = showAllFrames || recommended.length === 0 ? frames : recommended;
+  const shownFrame = visibleFrames.find((f) => f.file === activeFrame) ?? visibleFrames[0];
+  const selectedCount = frames.filter((f) => f.selected).length;
+
+  const toggleFrame = (file: string) => {
+    if (!current) return;
+    const next = frames.filter((f) => (f.file === file ? !f.selected : f.selected)).map((f) => f.file);
+    selectFrames.mutate({ cid: current.id, selected: next });
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -297,7 +325,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           {list.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setActiveClip(c.id); setFrameIdx(0); }}
+              onClick={() => { setActiveClip(c.id); setActiveFrame(null); setShowAllFrames(false); }}
               className={`rounded-lg border px-3 py-1.5 text-sm ${current?.id === c.id ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200'}`}
             >
               {c.id}
@@ -308,21 +336,62 @@ function ClipsPanel({ job }: { job: JobDetail }) {
         </div>
       </Card>
 
-      {current && current.probe && (
+      {current && current.probe && shownFrame && (
         <Card>
-          <div className="mb-2 flex items-center gap-2">
-            {current.frameUrls.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setFrameIdx(i)}
-                className={`rounded px-2 py-1 text-xs ${frameIdx === i ? 'bg-brand-100 text-brand-700' : 'bg-slate-100 text-slate-500'}`}
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-sm text-slate-500">
+              쓸 장면을 고르세요 — <span className="font-medium text-slate-700">선택한 장면으로 대본을 씁니다.</span>
+              {' '}선택 {selectedCount}장 / 전체 {frames.length}장
+            </p>
+            {recommended.length > 0 && recommended.length < frames.length && (
+              <Button variant="ghost" className="shrink-0 px-2 py-1 text-xs" onClick={() => setShowAllFrames((v) => !v)}>
+                {showAllFrames ? `추천만 보기 (${recommended.length})` : `전체 보기 (${frames.length})`}
+              </Button>
+            )}
+          </div>
+          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+            {visibleFrames.map((f) => (
+              <div
+                key={f.file}
+                className={clsx(
+                  'relative shrink-0 rounded-lg border-2 p-1',
+                  shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
+                )}
               >
-                프레임 {i + 1}
-              </button>
+                <button onClick={() => setActiveFrame(f.file)} className="block">
+                  <img
+                    src={f.url}
+                    alt={`${f.t}초`}
+                    className={clsx('h-24 w-auto rounded', !f.selected && 'opacity-45')}
+                    draggable={false}
+                  />
+                </button>
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-600">
+                  {/* 삭제 버튼은 label 밖에 둔다 — 안에 넣으면 클릭이 체크박스까지 토글한다 */}
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={f.selected}
+                      disabled={selectFrames.isPending}
+                      onChange={() => toggleFrame(f.file)}
+                    />
+                    {f.t.toFixed(1)}초
+                    {f.recommended && <span className="text-brand-600">추천</span>}
+                  </label>
+                  <button
+                    className="ml-auto text-slate-400 hover:text-red-500"
+                    title="이 프레임 삭제"
+                    disabled={deleteFrame.isPending}
+                    onClick={() => deleteFrame.mutate({ cid: current.id, file: f.file })}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
           <ZoneEditor
-            frameUrl={current.frameUrls[frameIdx]}
+            frameUrl={shownFrame.url}
             videoWidth={current.probe.width}
             videoHeight={current.probe.height}
             zones={current.zones}
@@ -461,6 +530,11 @@ function TrimPanel({ job }: { job: JobDetail }) {
       void qc.invalidateQueries({ queryKey: ['clips'] });
     },
   });
+  // 자막/워터마크 단계에서 고른 프레임 시각 주변을 구간으로 만들어준다
+  const fromFrames = useMutation({
+    mutationFn: (cid: string) => api.post(`/jobs/${job.id}/clips/${cid}/segments/from-frames`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+  });
   const next = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/transition`, { to: 'voicing' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
@@ -468,6 +542,7 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
+  const pickedFrames = current?.frames.filter((f) => f.selected).length ?? 0;
   const videoUrl = current
     ? current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url ??
       `/media/${job.menu}/${job.projectId}/jobs/${job.id}/sources/${current.sourceId}.mp4`
@@ -503,6 +578,20 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
       {current && videoUrl && (
         <Card>
+          {pickedFrames > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => fromFrames.mutate(current.id)}
+                disabled={fromFrames.isPending}
+              >
+                선택한 장면 {pickedFrames}개로 구간 채우기
+              </Button>
+              <span className="text-xs text-slate-500">
+                고른 프레임 앞뒤 1.5초씩 구간을 만듭니다. 만든 뒤 아래에서 다듬을 수 있습니다 (기존 구간은 대체됩니다).
+              </span>
+            </div>
+          )}
           <SegmentPicker
             videoUrl={videoUrl}
             segments={current.segments}

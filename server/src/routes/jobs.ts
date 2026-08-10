@@ -247,10 +247,72 @@ router.get('/jobs/:jid/clips', async (req, res) => {
   res.json(
     clips.map((c) => ({
       ...c,
-      frameUrls: c.frames.map((f) => toMediaUrl(fromWorkspaceRel(f))),
+      frameUrls: c.frames.map((f) => toMediaUrl(fromWorkspaceRel(f.file))),
       cleanUrls: c.cleanVersions.map((v) => ({ v: v.v, url: toMediaUrl(v.filePath) })),
     })),
   );
+});
+
+// ── 프레임 (대본 소재 선별) ───────────────────────────────────────
+
+/** 선택 저장 — 선택한 프레임이 요청서의 소재 이미지가 되고, 컷 구간 후보의 기준이 된다 */
+router.put('/jobs/:jid/clips/:cid/frames', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ selected: z.array(z.string()) }).parse(req.body);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  const picked = new Set(body.selected);
+  for (const f of clip.frames) f.selected = picked.has(f.file);
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
+});
+
+router.delete('/jobs/:jid/clips/:cid/frames', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const file = z.string().min(1).parse(req.query.file);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  const target = clip.frames.find((f) => f.file === file);
+  if (!target) return res.status(404).json({ error: '프레임 없음' });
+  if (clip.frames.length <= 1) {
+    return res.status(400).json({ error: '마지막 프레임은 지울 수 없습니다 — 존을 그릴 화면이 없어집니다' });
+  }
+  clip.frames = clip.frames.filter((f) => f.file !== file);
+  await jobs.writeClip(ref, clip);
+  await fsp.rm(fromWorkspaceRel(target.file), { force: true }).catch(() => {});
+  res.json(clip);
+});
+
+/**
+ * 선택한 프레임 주변을 컷 구간으로 만든다.
+ * 프레임은 한 시점이므로 앞뒤로 폭을 준다. 겹치면 하나로 합친다.
+ */
+router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ padSec: z.number().min(0.5).max(10).default(1.5) }).parse(req.body ?? {});
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  const duration = clip.probe?.duration ?? 0;
+  const picked = clip.frames.filter((f) => f.selected);
+  if (!picked.length) return res.status(400).json({ error: '선택된 프레임이 없습니다' });
+
+  const ranges: Array<{ in: number; out: number }> = [];
+  for (const f of [...picked].sort((a, b) => a.t - b.t)) {
+    const start = Math.max(0, f.t - body.padSec);
+    const end = duration ? Math.min(duration, f.t + body.padSec) : f.t + body.padSec;
+    const last = ranges[ranges.length - 1];
+    if (last && start <= last.out) last.out = Math.max(last.out, end);
+    else ranges.push({ in: start, out: end });
+  }
+  clip.segments = ranges.map((r, i) => ({
+    id: `g${i + 1}`,
+    in: Number(r.in.toFixed(2)),
+    out: Number(r.out.toFixed(2)),
+    note: '선택 프레임 기준',
+    used: true,
+  }));
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
 });
 
 router.put('/jobs/:jid/clips/:cid/zones', async (req, res) => {

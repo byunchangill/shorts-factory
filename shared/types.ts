@@ -105,6 +105,25 @@ export const SegmentSchema = z.object({
 });
 export type Segment = z.infer<typeof SegmentSchema>;
 
+/**
+ * 클립에서 뽑아낸 대표 프레임.
+ * 존 편집의 배경이자, 대본을 쓰는 AI가 보는 소재 이미지다 —
+ * 어떤 프레임을 고르느냐가 대본 내용을 바꾼다.
+ */
+export const ClipFrameSchema = z.object({
+  file: z.string(), // 작업공간 상대경로
+  t: z.number().min(0).default(0), // 영상 내 시각(초) — 컷 구간 후보 계산에 쓴다
+  recommended: z.boolean().default(false), // 장면 전환 기준으로 뽑힌 대표 컷
+  selected: z.boolean().default(false), // 사용자가 "이걸로 대본 쓴다"고 고른 것
+});
+export type ClipFrame = z.infer<typeof ClipFrameSchema>;
+
+/** 예전 clip.json은 frames가 경로 문자열 배열이었다 — 읽을 때 객체로 승격한다 */
+const legacyFrames = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map((f) => (typeof f === 'string' ? { file: f, t: 0, recommended: true } : f))
+    : v;
+
 export const ClipSchema = z.object({
   id: z.string(),
   sourceId: z.string(),
@@ -112,7 +131,7 @@ export const ClipSchema = z.object({
     width: z.number(), height: z.number(),
     fps: z.number(), duration: z.number(),
   }).optional(),
-  frames: z.array(z.string()).default([]), // 프레임 이미지 상대경로
+  frames: z.preprocess(legacyFrames, z.array(ClipFrameSchema)).default([]),
   zones: z.array(ZoneSchema).default([]),
   cleanVersions: z.array(z.object({
     v: z.number().int(),

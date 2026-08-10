@@ -184,12 +184,18 @@ async function createClipForSource(
   let clip: Clip = ClipSchema.parse({ id: clipId, sourceId });
   try {
     const probe = await probeVideo(settings, filePath);
-    const frames = await extractFrames(settings, filePath, framesDir, probe.duration, 5);
+    const frames = await extractFrames(settings, filePath, framesDir, probe.duration);
     clip = ClipSchema.parse({
       id: clipId,
       sourceId,
       probe,
-      frames: frames.map(toWorkspaceRel),
+      frames: frames.map((f) => ({
+        file: toWorkspaceRel(f.filePath),
+        t: f.t,
+        recommended: f.recommended,
+        // 추천 프레임은 기본으로 선택해둔다 — 사용자가 손대지 않아도 대본 소재가 비지 않는다
+        selected: f.recommended,
+      })),
     });
   } catch (e) {
     await logJobEvent(ref, { type: 'clip.probe_failed', clipId, error: String(e) });
