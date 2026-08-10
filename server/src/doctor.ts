@@ -15,7 +15,35 @@ export interface DoctorReport {
   ok: boolean; // 필수 도구 모두 사용 가능 여부
 }
 
-export async function runDoctor(): Promise<DoctorReport> {
+/**
+ * 도구 점검은 외부 프로세스를 4개 띄우므로 요청마다 돌리면 느리다.
+ * 캐시해두고 화면에서 명시적으로 새로고침할 때만 다시 돈다.
+ */
+let cached: DoctorReport | null = null;
+let inFlight: Promise<DoctorReport> | null = null;
+
+export function cachedDoctor(): DoctorReport | null {
+  return cached;
+}
+
+export function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
+  if (!opts.force && cached) return Promise.resolve(cached);
+  // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
+  inFlight ??= probeAll().then(
+    (r) => {
+      cached = r;
+      inFlight = null;
+      return r;
+    },
+    (e) => {
+      inFlight = null;
+      throw e;
+    },
+  );
+  return inFlight;
+}
+
+async function probeAll(): Promise<DoctorReport> {
   const s = await loadSettings();
   const checks = [
     {
