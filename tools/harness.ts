@@ -238,7 +238,7 @@ interface ClipView {
   currentCleanVersion?: number;
 }
 interface PacketView {
-  id: string; status: string; executionMode?: string; validationErrors: string[];
+  id: string; kind: string; status: string; executionMode?: string; validationErrors: string[];
   requestMd: string; resultSpec: Array<{ file: string; schema: string }>;
 }
 
@@ -580,7 +580,16 @@ async function main(): Promise<void> {
         `요청서에 남은 프레임 ${t.toFixed(1)}초가 없음`);
     }
     assert(d.requestMd.includes('남겨둔 장면'), '요청서에 소재 안내가 없음');
-    return [p.id, `${p.id} · 지침·남은 소재 ${keptFrameTimes.length}장 포함 확인`];
+
+    // 다시 발행하면 대기 중이던 것은 치워져야 한다 (안 그러면 화면이 대기 카드로 도배된다)
+    const again = await post<{ id: string; discarded: number }>(`/jobs/${jid}/packets`, { kind: 'script' });
+    assert(again.discarded === 1, `이전 대기 요청서가 정리되지 않음: ${again.discarded}`);
+    const waiting = (await get<PacketView[]>('/packets'))
+      .filter((x) => x.status === 'waiting' && x.kind === 'script');
+    // 치운 번호는 다시 쓰이므로 id가 아니라 "대기 중 몇 건인가"로 확인한다
+    assert(waiting.length === 1, `대기 중 대본 요청서가 ${waiting.length}건 (1건이어야 함)`);
+
+    return [again.id, `${again.id} · 지침·남은 소재 ${keptFrameTimes.length}장 · 재발행 시 이전 대기건 정리`];
   });
 
   const scenes = [

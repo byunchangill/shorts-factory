@@ -123,6 +123,36 @@ export async function createPacket(opts: CreatePacketOptions): Promise<Packet> {
   return packet;
 }
 
+/**
+ * 요청서 폐기 — 폴더째 지운다.
+ * 결과를 받은 요청서는 대본이 어디서 왔는지의 기록이므로 호출부에서 막는다.
+ */
+export async function deletePacket(packetId: string): Promise<void> {
+  const dir = resolvePacketDir(packetId);
+  if (!dir) return;
+  await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  packetIndex.delete(packetId);
+  broadcast('packet', { packetId, status: 'deleted' });
+}
+
+/**
+ * 같은 잡·같은 종류로 아직 대기 중인 요청서를 치운다.
+ *
+ * "다시 발행"이 새 요청서를 계속 쌓는 바람에 화면이 대기 카드로 도배됐다.
+ * 대기 중인 것은 아직 아무도 처리하지 않은 상태라 버려도 잃을 것이 없고,
+ * 남겨두면 어느 것을 실행해야 하는지 알 수 없다.
+ *
+ * @returns 치운 개수
+ */
+export async function discardPendingPackets(jobId: string, kind: PacketKind): Promise<number> {
+  const all = await listAllPackets();
+  const stale = all.filter(
+    (p) => p.jobId === jobId && p.kind === kind && (p.status === 'waiting' || p.status === 'draft'),
+  );
+  for (const p of stale) await deletePacket(p.id);
+  return stale.length;
+}
+
 const RESULT_SPECS: Record<PacketKind, Array<{ file: string; schema: string }>> = {
   'product-extract': [{ file: 'product.json', schema: 'product' }],
   script: [{ file: 'script.json', schema: 'script' }],

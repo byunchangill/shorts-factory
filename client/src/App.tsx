@@ -27,7 +27,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white">
+      {/* 스크롤을 내려도 메뉴는 제자리에 — 잡 화면은 세로로 길어서 매번 위로 올라가야 했다 */}
+      <aside className="sticky top-0 h-screen w-56 shrink-0 overflow-y-auto border-r border-slate-200 bg-white">
         <div className="px-5 py-5">
           <h1 className="text-lg font-bold">🏭 쇼핑쇼츠 팩토리</h1>
           <p className="mt-0.5 text-xs text-slate-400">리서치 → 제작 → 패키징</p>

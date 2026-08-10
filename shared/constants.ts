@@ -102,6 +102,18 @@ export const PACKET_KIND_LABELS: Record<PacketKind, string> = {
   revision: '수정 요청',
 };
 
+/** 요청서 종류별 한 줄 설명 — 화면에서 "이게 뭔지" 바로 알 수 있어야 한다 */
+export const PACKET_KIND_DESCRIPTIONS: Record<PacketKind, string> = {
+  'product-extract':
+    '프로젝트에 첨부한 쿠팡 상세페이지(이미지·문서)에서 제품명·가격·핵심 사양을 뽑아 정리합니다. ' +
+    '대본이 제품 정보를 지어내지 않게 하는 재료입니다 — 첨부 자료가 없으면 필요 없습니다.',
+  script: '제품 정보·프로젝트 지침·확보한 장면을 재료로 씬별 대본을 씁니다.',
+  'format-create': '채널 고유 포맷(구성·톤·길이 규칙)을 설계합니다.',
+  'scene-images': '대본의 각 씬에 쓸 이미지를 만들거나 고릅니다 (제품정보리뷰 전용).',
+  'upload-kit': '완성된 영상의 제목 후보·설명·해시태그·썸네일 문구를 만듭니다.',
+  revision: '반려 사유를 반영해 대본을 다시 씁니다.',
+};
+
 export const PACKET_STATUSES = ['draft', 'waiting', 'received', 'accepted', 'rejected'] as const;
 export type PacketStatus = (typeof PACKET_STATUSES)[number];
 

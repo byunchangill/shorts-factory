@@ -65,6 +65,12 @@ router.post('/jobs/:jid/packets', async (req, res) => {
     formatId = project?.formatId;
   }
 
+  // 같은 종류로 대기 중인 요청서는 치운다 — 다시 발행할 때마다 쌓이면
+  // 어느 것을 실행해야 하는지 알 수 없다 (재발행 = 최신 소재로 갱신한다는 뜻).
+  // 치운 번호는 다시 쓰인다. 결과가 온 요청서는 남으므로 그 번호는 풀리지 않고,
+  // revision의 previousPacketId가 엉뚱한 요청서를 가리킬 일도 없다
+  const discarded = await packets.discardPendingPackets(ref.jobId, body.kind);
+
   const packet = await packets.createPacket({
     kind: body.kind,
     jobRef: ref,
@@ -80,7 +86,18 @@ router.post('/jobs/:jid/packets', async (req, res) => {
       await transition(ref, 'scripting', 'server');
     }
   }
-  res.status(201).json({ ...packet, commands: packets.packetCommands(packet) });
+  res.status(201).json({ ...packet, commands: packets.packetCommands(packet), discarded });
+});
+
+/** 요청서 취소 — 대기 중인 것만. 결과가 온 요청서는 대본의 출처 기록이라 남긴다 */
+router.delete('/packets/:pkid', async (req, res) => {
+  const packet = await packets.readPacket(req.params.pkid);
+  if (!packet) return res.status(404).json({ error: '패킷 없음' });
+  if (packet.status !== 'waiting' && packet.status !== 'draft') {
+    return res.status(400).json({ error: '결과가 도착한 요청서는 취소할 수 없습니다' });
+  }
+  await packets.deletePacket(req.params.pkid);
+  res.json({ ok: true });
 });
 
 /** 포맷 생성 요청서 (잡 없이 발행) */

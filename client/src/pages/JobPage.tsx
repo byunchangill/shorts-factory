@@ -6,7 +6,7 @@ import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
   Play, Trash2, FolderOpen,
 } from 'lucide-react';
-import { MENU_LABELS, STATE_LABELS } from '@shared/constants';
+import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Spinner, Textarea } from '@/components/ui';
 import { ProgressRail } from '@/components/pipeline';
@@ -474,10 +474,20 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
   return (
     <div className="space-y-4">
       <Card>
-        <div className="flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-semibold"><FileText size={17} /> 대본</h3>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => issue.mutate('product-extract')} disabled={issue.isPending}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 font-semibold"><FileText size={17} /> 대본</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              다시 발행하면 대기 중인 같은 종류 요청서는 정리되고 최신 소재로 새로 만들어집니다.
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="secondary"
+              title={PACKET_KIND_DESCRIPTIONS['product-extract']}
+              onClick={() => issue.mutate('product-extract')}
+              disabled={issue.isPending}
+            >
               제품정보 추출 요청서
             </Button>
             <Button onClick={() => issue.mutate('script')} disabled={issue.isPending}>
