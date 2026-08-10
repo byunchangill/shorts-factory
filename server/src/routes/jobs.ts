@@ -121,24 +121,35 @@ router.post('/jobs/:jid/download/start', async (req, res) => {
   if (!job) return res.status(404).json({ error: '잡 없음' });
   if (job.state === 'collecting') await jobs.transition(ref, 'downloading', 'server');
 
-  // 비동기 실행 — 진행률은 SSE로 푸시
-  void downloadAll(settings, ref).then(async () => {
-    const j = await jobs.readJob(ref);
-    if (j && j.state === 'downloading') {
-      const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
-      if (allDone && j.sources.length > 0) {
-        await jobs.transition(ref, 'analyzing', 'server');
-        await jobs.transition(ref, 'cleaning', 'server'); // probe/프레임은 다운로드 직후 이미 완료
+  // 비동기 실행 — 진행률은 SSE로 푸시. 실패해도 서버가 죽지 않도록 반드시 catch한다
+  void downloadAll(settings, ref)
+    .then(async () => {
+      const j = await jobs.readJob(ref);
+      if (j && j.state === 'downloading') {
+        const allDone = j.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+        if (allDone && j.sources.length > 0) {
+          // probe/프레임은 다운로드 직후 이미 끝났으므로 정리 단계까지 보낸다
+          await jobs.advanceTo(ref, 'cleaning');
+        }
       }
-    }
-  });
+    })
+    .catch(async (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      await jobs.logJobEvent(ref, { type: 'download.failed', error: msg }).catch(() => {});
+      broadcast('download.failed', { jobId: ref.jobId, error: msg });
+    });
   res.json({ started: true });
 });
 
 router.post('/jobs/:jid/sources/:sid/retry', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const settings = await loadSettings();
-  void retrySource(settings, ref, req.params.sid);
+  void retrySource(settings, ref, req.params.sid).catch((e) => {
+    broadcast('source.error', {
+      jobId: ref.jobId, sourceId: req.params.sid,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  });
   res.json({ started: true });
 });
 
@@ -281,7 +292,8 @@ router.post('/jobs/:jid/script/approve', async (req, res) => {
     if (!j.script.currentVersion) throw new Error('승인할 대본이 없습니다');
     j.script.approved = true;
   });
-  if (job.state === 'scripting') await jobs.transition(ref, 'script_approved', 'user');
+  // 승인 후엔 다음 실제 작업 단계로 보낸다 (menu-a는 컷 선택, menu-b는 씬 이미지)
+  await jobs.advanceTo(ref, job.menu === 'menu-a' ? 'trimming' : 'scening', 'user');
   await jobs.logJobEvent(ref, { type: 'script.approved', version: job.script.currentVersion });
   res.json(await jobView(ref));
 });
@@ -395,9 +407,7 @@ router.post('/jobs/:jid/tts', async (req, res) => {
 
   res.json({ started: true });
   try {
-    if (job.state === 'trimming' || job.state === 'script_approved' || job.state === 'scening') {
-      await jobs.transition(ref, 'voicing', 'server');
-    }
+    await jobs.advanceTo(ref, 'voicing');
     await jobs.mutateJob(ref, (j) => {
       j.ttsVoice = edgeVoice;
       j.typecastVoiceId = typecastVoiceId;
@@ -442,7 +452,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
 
   res.json({ started: true });
   try {
-    if (job.state === 'voicing') await jobs.transition(ref, 'assembling', 'server');
+    await jobs.advanceTo(ref, 'assembling');
     const clips = await jobs.listClips(ref);
     const version = (job.output.currentVersion ?? 0) + 1;
     const finalPath = await assembleFinal(settings, {
@@ -454,7 +464,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
-    if (j2?.state === 'assembling') await jobs.transition(ref, 'review', 'server');
+    if (j2?.state === 'assembling') await jobs.advanceTo(ref, 'review');
     await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath });
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {

@@ -6,7 +6,7 @@ import { ClipSchema } from '@shared/types';
 import { run } from '../util/exec.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
-import { type JobRef, mutateJob, logJobEvent, writeClip, readClip } from '../store/jobs.js';
+import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip } from '../store/jobs.js';
 import { paths } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { toWorkspaceRel } from '../store/workspace.js';
@@ -33,15 +33,23 @@ export async function downloadAll(settings: Settings, ref: JobRef): Promise<void
     const sourcesDir = path.join(jobDir, 'sources');
     await ensureDir(sourcesDir);
 
-    const job = await mutateJob(ref, () => {});
+    const job = await readJob(ref);
+    if (!job) return;
     const pending = job.sources.filter(
       (s) => s.status === 'queued' || (s.status === 'failed' && s.attempts < MAX_ATTEMPTS),
     );
 
+    // 한 건이 터져도 나머지 다운로드와 서버는 계속 살아 있어야 한다
     await Promise.all(
       pending.map((source) =>
         limit(async () => {
-          await downloadOne(settings, ref, source.id, sourcesDir);
+          try {
+            await downloadOne(settings, ref, source.id, sourcesDir);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            await logJobEvent(ref, { type: 'source.error', sourceId: source.id, error: msg });
+            broadcast('source.error', { jobId: ref.jobId, sourceId: source.id, error: msg });
+          }
         }),
       ),
     );
@@ -69,8 +77,8 @@ async function downloadOne(
   sourceId: string,
   sourcesDir: string,
 ): Promise<void> {
-  const job = await mutateJob(ref, () => {});
-  const source = job.sources.find((s) => s.id === sourceId);
+  const job = await readJob(ref);
+  const source = job?.sources.find((s) => s.id === sourceId);
   if (!source) return;
 
   await setSource(ref, sourceId, {

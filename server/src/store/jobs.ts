@@ -2,8 +2,8 @@ import path from 'node:path';
 import { JobSchema, type Job, ClipSchema, type Clip, ScriptSchema, type Script } from '@shared/types';
 import type { JobState, Menu } from '@shared/constants';
 import { paths } from './workspace.js';
-import { appendEvent, ensureDir, listDirs, readJson, writeJsonAtomic, slugify } from '../util/fsx.js';
-import { canTransition, progressOf } from '../pipeline/stateMachine.js';
+import { appendEvent, ensureDir, listDirs, readJson, writeJsonAtomic, slugify, withFileLock } from '../util/fsx.js';
+import { canTransition, progressOf, statesFor } from '../pipeline/stateMachine.js';
 import { nextJobId } from '../util/ids.js';
 import { broadcast } from '../sse.js';
 
@@ -103,26 +103,65 @@ export async function transition(
   to: JobState,
   by: 'server' | 'user' | 'claude' = 'user',
 ): Promise<Job> {
-  const job = await readJob(ref);
-  if (!job) throw new Error(`잡 없음: ${ref.jobId}`);
-  if (job.state === to) return job;
-  if (!canTransition(job.menu, job.state, to)) {
-    throw new Error(`전이 불가: ${job.state} → ${to}`);
-  }
-  job.stateHistory.push({ state: to, at: new Date().toISOString(), by });
-  job.state = to;
-  await writeJob(ref, job);
+  const jsonPath = paths.jobJson(ref.menu, ref.projectId, ref.jobId);
+  const job = await withFileLock(jsonPath, async () => {
+    const current = await readJob(ref);
+    if (!current) throw new Error(`잡 없음: ${ref.jobId}`);
+    if (current.state === to) return null; // 이미 그 상태 — 조용히 통과
+    if (!canTransition(current.menu, current.state, to)) {
+      throw new Error(`전이 불가: ${current.state} → ${to}`);
+    }
+    current.stateHistory.push({ state: to, at: new Date().toISOString(), by });
+    current.state = to;
+    await writeJob(ref, current);
+    return current;
+  });
+  if (!job) return (await readJob(ref))!;
   await logJobEvent(ref, { type: 'state.transition', to, by });
   return job;
 }
 
-/** 잡 상태를 조건 없이 기록 (다운로드 완료 등 서버 내부 진행) */
-export async function mutateJob(ref: JobRef, fn: (job: Job) => void | Promise<void>): Promise<Job> {
+/**
+ * 목표 단계까지 파이프라인을 한 칸씩 전진시킨다.
+ * 전이표가 인접 단계로만 이동을 허용하므로, 중간 단계를 건너뛰는 호출
+ * (예: script_approved → voicing)이 막히는 것을 방지한다.
+ * 이미 목표를 지났거나 같은 단계면 아무것도 하지 않는다.
+ */
+export async function advanceTo(
+  ref: JobRef,
+  target: JobState,
+  by: 'server' | 'user' | 'claude' = 'server',
+): Promise<Job> {
   const job = await readJob(ref);
   if (!job) throw new Error(`잡 없음: ${ref.jobId}`);
-  await fn(job);
-  await writeJob(ref, job);
-  return job;
+  const pipeline = statesFor(job.menu);
+  const targetIdx = pipeline.indexOf(target);
+  const currentIdx = pipeline.indexOf(job.state);
+  // 파이프라인 밖(failed/paused)이거나 목표가 없으면 그냥 한 번 시도
+  if (targetIdx < 0 || currentIdx < 0) return transition(ref, target, by);
+  if (currentIdx >= targetIdx) return job;
+
+  let latest = job;
+  for (let i = currentIdx + 1; i <= targetIdx; i++) {
+    latest = await transition(ref, pipeline[i], by);
+  }
+  return latest;
+}
+
+/**
+ * 잡 상태를 조건 없이 기록 (다운로드 완료 등 서버 내부 진행).
+ * 읽기-수정-쓰기 전체를 파일 락으로 감싸 동시 호출 시 갱신이 유실되지 않게 한다
+ * (예: 동시에 끝난 다운로드 2건이 서로의 소스 상태를 덮어쓰는 문제).
+ */
+export async function mutateJob(ref: JobRef, fn: (job: Job) => void | Promise<void>): Promise<Job> {
+  const jsonPath = paths.jobJson(ref.menu, ref.projectId, ref.jobId);
+  return withFileLock(jsonPath, async () => {
+    const job = await readJob(ref);
+    if (!job) throw new Error(`잡 없음: ${ref.jobId}`);
+    await fn(job);
+    await writeJob(ref, job);
+    return job;
+  });
 }
 
 // ── 클립 ──────────────────────────────────────────────────────────

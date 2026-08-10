@@ -9,7 +9,11 @@
 - `shared/` — zod 스키마 단일 소스 (`types.ts`), 상태/라벨 상수 (`constants.ts`)
 - `workspace/` — 모든 사용자 데이터 + API 키 (gitignore). 서버와 Claude Code가 공유
 
-실행: `npm run dev` (API+UI) / 점검: `npm run doctor` / 테스트: `npm test`
+실행: `npm run dev` (API+UI) / 점검: `npm run doctor` / 단위 테스트: `npm test` / E2E: `npm run harness`
+
+`npm run harness`(`tools/harness.ts`)는 합성 영상으로 파이프라인 전 구간을 실제로 돌려 영상 1편을 만든다.
+파이프라인·상태 전이·요청서 왕복을 건드렸다면 이걸 통과해야 한다. 격리 작업공간(`SHORTS_WORKSPACE`)을 쓰므로
+실제 데이터에 영향이 없고, API 키 없이 동작한다.
 
 ## 두 메뉴 + 리서치
 
@@ -55,7 +59,11 @@
 
 ## 코드 규칙
 
-- 상태 파일 쓰기는 반드시 `writeJsonAtomic` 경유, 잡 상태 변경은 `transition()`(전이표 검증) 경유
+- 상태 파일 쓰기는 반드시 `writeJsonAtomic` 경유. 읽기-수정-쓰기는 `mutateJob()`을 쓴다 — 파일 락으로
+  직렬화되어 동시 갱신이 유실되지 않는다 (`withFileLock`)
+- 잡 상태 변경은 `transition()`(인접 단계만 허용) 또는 `advanceTo()`(목표까지 한 칸씩 전진) 경유.
+  단계를 건너뛰는 `transition()` 호출은 실패한다
+- 백그라운드 작업(`void fn()`)에는 반드시 `.catch()`를 단다 — 없으면 로컬 서버가 통째로 죽는다
 - 서브프로세스는 `util/exec.ts`의 `run()` 사용 — 인자 배열 방식만, 셸 문자열 조립 금지
 - 스키마 변경은 `shared/types.ts`에서만 (서버·클라이언트·요청서 검증이 모두 여기 의존)
 - API 키는 `workspace/secrets.json`에만 저장, 응답에는 마스킹된 값만 (`store/secrets.ts`)
