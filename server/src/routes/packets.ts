@@ -30,7 +30,7 @@ router.get('/packets/:pkid', async (req, res) => {
   try {
     requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   } catch { /* 없으면 빈 값 */ }
-  res.json({ ...packet, requestMd, command: packets.packetCommand(packet) });
+  res.json({ ...packet, requestMd, commands: packets.packetCommands(packet) });
 });
 
 router.get('/packets/:pkid/result', async (req, res) => {
@@ -79,7 +79,7 @@ router.post('/jobs/:jid/packets', async (req, res) => {
       await transition(ref, 'scripting', 'server');
     }
   }
-  res.status(201).json({ ...packet, command: packets.packetCommand(packet) });
+  res.status(201).json({ ...packet, commands: packets.packetCommands(packet) });
 });
 
 /** 포맷 생성 요청서 (잡 없이 발행) */
@@ -96,7 +96,7 @@ router.post('/formats/packets', async (req, res) => {
     formatId: body.formatId,
     wizardAnswers: body.wizardAnswers,
   });
-  res.status(201).json({ ...packet, command: packets.packetCommand(packet) });
+  res.status(201).json({ ...packet, commands: packets.packetCommands(packet) });
 });
 
 /** ② API 자동 실행 — 서버가 LLM을 호출해 산출물을 만든다 (비동기, 결과는 SSE) */

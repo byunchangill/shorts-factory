@@ -132,9 +132,20 @@ const RESULT_SPECS: Record<PacketKind, Array<{ file: string; schema: string }>> 
   revision: [{ file: 'script.json', schema: 'script' }],
 };
 
-/** Claude Code에서 실행할 명령 문자열 (UI 복사 버튼용) */
-export function packetCommand(packet: Packet): string {
-  return `claude "/answer-job workspace/${packet.dir.replace(/^\/?/, '')}"`;
+export interface PacketCommands {
+  /** 단독 처리 — 빠르고 저렴 */
+  fast: string;
+  /** 에이전트 팀 처리 — 리서치·검수를 거쳐 품질이 높지만 느리고 토큰을 많이 쓴다 */
+  quality: string;
+}
+
+/** Claude Code에서 실행할 명령 (UI 복사 버튼용) */
+export function packetCommands(packet: Packet): PacketCommands {
+  const dir = `workspace/${packet.dir.replace(/^\/?/, '')}`;
+  return {
+    fast: `claude "/answer-job ${dir}"`,
+    quality: `claude "/shorts-content-team ${dir}"`,
+  };
 }
 
 // ── request.md 빌더 ───────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal } from 'lucide-react';
+import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal, Zap, Users } from 'lucide-react';
 import {
   PACKET_KIND_LABELS, AI_PROVIDERS, AI_PROVIDER_LABELS,
   type PacketKind, type AiProvider,
@@ -22,7 +22,7 @@ export interface PacketInfo {
 }
 
 interface PacketDetail extends PacketInfo {
-  command: string;
+  commands: { fast: string; quality: string };
   requestMd: string;
   resultSpec: Array<{ file: string; schema: string }>;
 }
@@ -142,16 +142,54 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
           </div>
 
           {tab === 'claude-code' && (
-            <div className="space-y-1.5">
-              <p className="text-xs text-slate-500">이 리포의 Claude Code 터미널에서 실행하세요. 결과는 자동 감지됩니다.</p>
-              <div className="flex items-center gap-1.5">
-                <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
-                  {detail.data.command}
-                </code>
-                <Button variant="secondary" className="px-2 py-1.5" onClick={() => copy(detail.data!.command, 'cmd')}>
-                  {copied === 'cmd' ? <Check size={14} /> : <Copy size={14} />}
-                </Button>
+            <div className="space-y-2.5">
+              <p className="text-xs text-slate-500">
+                이 리포의 Claude Code 터미널에서 실행하세요. 결과는 자동 감지됩니다.
+              </p>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Zap size={13} className="text-slate-400" />
+                  <span className="text-xs font-medium">빠르게 — 혼자 처리</span>
+                  <span className="text-xs text-slate-400">토큰 적게, 수십 초</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
+                    {detail.data.commands.fast}
+                  </code>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-1.5"
+                    onClick={() => copy(detail.data!.commands.fast, 'fast')}
+                  >
+                    {copied === 'fast' ? <Check size={14} /> : <Copy size={14} />}
+                  </Button>
+                </div>
               </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Users size={13} className="text-violet-500" />
+                  <span className="text-xs font-medium">고품질 — 팀 처리</span>
+                  <span className="text-xs text-slate-400">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-violet-300">
+                    {detail.data.commands.quality}
+                  </code>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-1.5"
+                    onClick={() => copy(detail.data!.commands.quality, 'quality')}
+                  >
+                    {copied === 'quality' ? <Check size={14} /> : <Copy size={14} />}
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-400">
+                반복 양산은 빠르게, 채널 대표 영상이나 새 포맷 첫 편은 고품질을 권합니다.
+              </p>
             </div>
           )}
 
