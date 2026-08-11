@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { TrendingUp, Play, Bookmark, BookmarkX, ExternalLink, Search, Flame, Radio, Plus, X } from 'lucide-react';
+import {
+  TrendingUp, Play, Bookmark, BookmarkX, ExternalLink, Search, Flame, Radio, Plus, X,
+  Image as ImageIcon, Globe,
+} from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Input, Spinner } from '@/components/ui';
+import { Badge, Button, Card, EmptyState, Input, Modal, Spinner } from '@/components/ui';
 
 interface YtVideo {
   videoId: string; title: string; channelId: string; channelTitle: string;
@@ -67,6 +70,7 @@ export default function ViralPage() {
   const [sort, setSort] = useState<Sort>('outlier');
   const [playing, setPlaying] = useState<string | null>(null);
   const [result, setResult] = useState<DiscoverResult | null>(null);
+  const [sourcing, setSourcing] = useState<ViralItem | null>(null);
 
   const [mode, setMode] = useState<Mode>('channels');
   const [channelInput, setChannelInput] = useState('');
@@ -283,6 +287,7 @@ export default function ViralPage() {
             saved={saved.has(it.video.videoId)}
             onSave={() => save.mutate(it)}
             onUnsave={() => unsave.mutate(it.video.videoId)}
+            onSource={() => setSourcing(it)}
           />
         ))}
       </div>
@@ -300,12 +305,156 @@ export default function ViralPage() {
                 saved
                 onSave={() => {}}
                 onUnsave={() => unsave.mutate(it.video.videoId)}
+                onSource={() => setSourcing(it)}
               />
             ))}
           </div>
         </>
       )}
+
+      {sourcing && <SourcingModal item={sourcing} onClose={() => setSourcing(null)} />}
     </div>
+  );
+}
+
+interface Suggestion { text: string; lang: 'zh' | 'en'; links: Record<string, string> }
+interface KeywordResult {
+  productKo: string; productZh: string; note: string;
+  suggestions: Suggestion[];
+}
+
+const PLATFORM_LABELS: Record<string, string> = {
+  douyin: '도우인', xiaohongshu: '샤오홍슈', tiktok: '틱톡', alibaba1688: '1688',
+};
+
+/**
+ * 중국 소스 찾기.
+ *
+ * 도우인·샤오홍슈·1688에는 공개 검색 API가 없어 앱이 대신 검색해줄 수 없다.
+ * 대신 (1) 제품이 뭔지 알아내고 (2) 중국어 검색어를 만들어 (3) 각 플랫폼 검색
+ * 페이지로 바로 보낸다. 거기서 찾은 URL을 잡에 붙여넣으면 yt-dlp가 받아온다.
+ */
+function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void }) {
+  const [manual, setManual] = useState('');
+  const [result, setResult] = useState<KeywordResult | null>(null);
+
+  const lens = useQuery({
+    queryKey: ['lens', item.video.videoId],
+    queryFn: () => api.get<{ image: string; lens: string }>(`/sourcing/lens/${item.video.videoId}`),
+  });
+  const suggest = useMutation({
+    mutationFn: () =>
+      api.post<KeywordResult>('/sourcing/keywords', {
+        title: item.video.title,
+        channelTitle: item.video.channelTitle,
+      }),
+    onSuccess: setResult,
+  });
+  const manualLinks = useMutation({
+    mutationFn: (keyword: string) =>
+      api.get<{ keyword: string; links: Record<string, string> }>(
+        `/sourcing/links?keyword=${encodeURIComponent(keyword)}`),
+    onSuccess: (r) =>
+      setResult({
+        productKo: '', productZh: '', note: '',
+        suggestions: [{ text: r.keyword, lang: 'zh', links: r.links }],
+      }),
+  });
+
+  return (
+    <Modal open onClose={onClose} title="중국 소스 찾기">
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500">
+          도우인·샤오홍슈·1688은 검색 API를 공개하지 않습니다. 대신 <b>중국어 검색어</b>를 만들어
+          각 플랫폼 검색 화면으로 바로 보냅니다. 거기서 찾은 영상 주소를 작업의 소스로 붙여넣으면
+          그대로 다운로드됩니다.
+        </p>
+
+        <div className="rounded-lg border border-slate-200 p-3">
+          <p className="mb-2 text-sm font-medium">1. 이 제품이 뭔지 확인</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {lens.data && (
+              <a
+                href={lens.data.lens}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+              >
+                <ImageIcon size={15} /> 썸네일로 이미지 검색 (구글 렌즈)
+              </a>
+            )}
+            <a
+              href={item.video.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              <ExternalLink size={15} /> 영상 보기
+            </a>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 p-3">
+          <p className="mb-2 text-sm font-medium">2. 중국어 검색어 만들기</p>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => suggest.mutate()} disabled={suggest.isPending}>
+              {suggest.isPending ? <>만드는 중… <Spinner /></> : 'AI로 검색어 만들기'}
+            </Button>
+            <span className="text-xs text-slate-400">제목: {item.video.title}</span>
+          </div>
+          {suggest.error && <p className="mb-2 text-sm text-red-600">{suggest.error.message}</p>}
+          <div className="flex gap-2">
+            <Input
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && manual.trim()) manualLinks.mutate(manual); }}
+              placeholder="직접 입력해도 됩니다 (예: 厨房夹缝置物架)"
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0 whitespace-nowrap"
+              onClick={() => manualLinks.mutate(manual)}
+              disabled={!manual.trim()}
+            >
+              링크 만들기
+            </Button>
+          </div>
+        </div>
+
+        {result && (
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="mb-1 text-sm font-medium">3. 플랫폼에서 찾기</p>
+            {(result.productKo || result.productZh) && (
+              <p className="mb-2 text-sm text-slate-600">
+                {result.productKo} {result.productZh && <span className="text-slate-400">/ {result.productZh}</span>}
+              </p>
+            )}
+            {result.note && <p className="mb-2 text-xs text-amber-700">{result.note}</p>}
+            <div className="space-y-2">
+              {result.suggestions.map((s) => (
+                <div key={s.text} className="flex flex-wrap items-center gap-1.5">
+                  <span className="min-w-[8rem] text-sm font-medium">{s.text}</span>
+                  {Object.entries(s.links).map(([platform, url]) => (
+                    <a
+                      key={platform}
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-brand-400 hover:text-brand-600"
+                    >
+                      {PLATFORM_LABELS[platform] ?? platform}
+                    </a>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-400">
+              찾은 영상 주소는 작업 화면의 "소스 영상 URL"에 붙여넣으세요 — 도우인·샤오홍슈·틱톡 모두 다운로드됩니다.
+            </p>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -334,10 +483,10 @@ function bySort(sort: Sort) {
 }
 
 function VideoCard({
-  item, playing, onPlay, saved, onSave, onUnsave,
+  item, playing, onPlay, saved, onSave, onUnsave, onSource,
 }: {
   item: ViralItem; playing: boolean; onPlay: () => void;
-  saved: boolean; onSave: () => void; onUnsave: () => void;
+  saved: boolean; onSave: () => void; onUnsave: () => void; onSource: () => void;
 }) {
   const v = item.video;
   // 배수가 클수록 "채널 힘이 아니라 소재가 터졌다"는 뜻 — 색으로 바로 보이게
@@ -389,6 +538,9 @@ function VideoCard({
               <Bookmark size={13} /> 보관
             </Button>
           )}
+          <Button variant="ghost" className="px-2 py-1 text-xs" onClick={onSource} title="도우인·샤오홍슈·1688·틱톡에서 이 제품 찾기">
+            <Globe size={13} /> 중국 소스
+          </Button>
           <a
             href={v.url}
             target="_blank"
