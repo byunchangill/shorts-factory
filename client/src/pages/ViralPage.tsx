@@ -421,9 +421,11 @@ function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void
           </div>
         </div>
 
+        <PlatformSearch keyword={result?.suggestions[0]?.text ?? manual} />
+
         {result && (
           <div className="rounded-lg border border-slate-200 p-3">
-            <p className="mb-1 text-sm font-medium">3. 플랫폼에서 찾기</p>
+            <p className="mb-1 text-sm font-medium">4. 검색 페이지 직접 열기</p>
             {(result.productKo || result.productZh) && (
               <p className="mb-2 text-sm text-slate-600">
                 {result.productKo} {result.productZh && <span className="text-slate-400">/ {result.productZh}</span>}
@@ -455,6 +457,147 @@ function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void
         )}
       </div>
     </Modal>
+  );
+}
+
+interface SessionInfo {
+  platform: string; label: string; loggedIn: boolean; guestSearch: boolean;
+}
+interface SearchHit {
+  platform: string; url: string; videoId: string; title: string; thumbnail: string; author: string;
+}
+interface PlatformSearchResult {
+  platform: string; status: 'ok' | 'login_required' | 'blocked' | 'empty';
+  hits: SearchHit[]; message: string; screenshot?: string;
+}
+
+/**
+ * 플랫폼에서 직접 검색.
+ *
+ * 브라우저 세션으로 실제 검색 결과를 긁어온다. 결과 0건일 때 원인을 구분해 보여주는 것이
+ * 중요하다 — 세션이 끊긴 걸 "그런 영상이 없음"으로 오해하면 엉뚱한 판단으로 이어진다.
+ */
+function PlatformSearch({ keyword }: { keyword: string }) {
+  const qc = useQueryClient();
+  const [results, setResults] = useState<PlatformSearchResult[] | null>(null);
+
+  const sessions = useQuery({
+    queryKey: ['sourcing-sessions'],
+    queryFn: () => api.get<{ browserInstalled: boolean; sessions: SessionInfo[] }>('/sourcing/sessions'),
+  });
+  const login = useMutation({
+    mutationFn: (platform: string) =>
+      api.post<{ loggedIn: boolean; message: string }>(`/sourcing/sessions/${platform}/login`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['sourcing-sessions'] }),
+  });
+  const logout = useMutation({
+    mutationFn: (platform: string) => api.del(`/sourcing/sessions/${platform}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['sourcing-sessions'] }),
+  });
+  const search = useMutation({
+    mutationFn: () =>
+      api.post<{ results: PlatformSearchResult[] }>('/sourcing/search', {
+        keyword,
+        platforms: ['douyin', 'xiaohongshu', 'tiktok'],
+      }),
+    onSuccess: (r) => setResults(r.results),
+  });
+
+  const allUrls = (results ?? []).flatMap((r) => r.hits.map((h) => h.url));
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <p className="mb-2 text-sm font-medium">3. 플랫폼에서 직접 찾기</p>
+
+      {sessions.data && !sessions.data.browserInstalled && (
+        <p className="mb-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+          브라우저가 설치되지 않았습니다. 터미널에서 <code>npx playwright install chromium</code>을 한 번 실행하세요.
+        </p>
+      )}
+
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        {(sessions.data?.sessions ?? []).filter((s) => s.platform !== 'alibaba1688').map((s) => (
+          <span
+            key={s.platform}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs',
+              s.loggedIn ? 'border-green-300 bg-green-50 text-green-800' : 'border-slate-200 text-slate-500',
+            )}
+          >
+            {s.label} {s.loggedIn ? '연결됨' : s.guestSearch ? '비로그인' : '로그인 필요'}
+            {s.loggedIn ? (
+              <button className="text-slate-400 hover:text-red-500" onClick={() => logout.mutate(s.platform)}>
+                <X size={11} />
+              </button>
+            ) : (
+              <button
+                className="font-medium text-brand-600 hover:underline"
+                disabled={login.isPending}
+                onClick={() => login.mutate(s.platform)}
+              >
+                로그인
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+      {login.isPending && (
+        <p className="mb-2 text-xs text-slate-500">
+          창이 열렸습니다. QR 스캔이나 문자 인증으로 로그인하세요 — 완료되면 자동으로 닫힙니다.
+        </p>
+      )}
+      {login.data && <p className="mb-2 text-xs text-slate-600">{login.data.message}</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => search.mutate()} disabled={!keyword.trim() || search.isPending}>
+          {search.isPending ? <>찾는 중… <Spinner /></> : <><Search size={15} /> 세 곳에서 검색</>}
+        </Button>
+        <span className="text-xs text-slate-400">
+          {keyword ? `"${keyword}"로 검색합니다` : '검색어를 먼저 만드세요'}
+        </span>
+      </div>
+      {search.error && <p className="mt-2 text-sm text-red-600">{search.error.message}</p>}
+
+      {results && (
+        <div className="mt-3 space-y-3">
+          {allUrls.length > 0 && (
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              onClick={() => void navigator.clipboard.writeText(allUrls.join('\n'))}
+            >
+              주소 {allUrls.length}개 전체 복사 → 작업의 "소스 영상 URL"에 붙여넣기
+            </Button>
+          )}
+          {results.map((r) => (
+            <div key={r.platform}>
+              <p className={clsx('text-xs', r.status === 'ok' ? 'text-slate-500' : 'text-amber-700')}>
+                {r.message}
+              </p>
+              {r.hits.length > 0 && (
+                <div className="mt-1.5 flex gap-2 overflow-x-auto pb-1">
+                  {r.hits.slice(0, 12).map((h) => (
+                    <a
+                      key={h.url}
+                      href={h.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-28 shrink-0 rounded-lg border border-slate-200 p-1 hover:border-brand-400"
+                      title={h.title}
+                    >
+                      {h.thumbnail
+                        ? <img src={h.thumbnail} alt="" className="h-24 w-full rounded object-cover" />
+                        : <div className="flex h-24 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">미리보기 없음</div>}
+                      <p className="mt-1 truncate text-[11px] text-slate-600">{h.title || h.videoId}</p>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

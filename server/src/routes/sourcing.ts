@@ -6,10 +6,16 @@ import {
   buildAllLinks, lensUrl, thumbnailUrl,
 } from '../sourcing/links.js';
 import { suggestKeywords } from '../sourcing/keywords.js';
+import { browserInstalled, hasProfile, loginFlow, clearSession } from '../sourcing/browser.js';
+import { PLATFORMS } from '../sourcing/platforms.js';
+import { searchPlatform } from '../sourcing/search.js';
 import { availableProviders } from '../ai/providers.js';
 import { loadSettings } from '../store/workspace.js';
 
 const router = Router();
+
+const BROWSER_MISSING =
+  '브라우저(Chromium)가 설치되어 있지 않습니다. 터미널에서 `npx playwright install chromium`을 한 번 실행하세요.';
 
 /** 화면이 플랫폼 목록·라벨을 하드코딩하지 않게 */
 router.get('/sourcing/platforms', (_req, res) => {
@@ -67,6 +73,67 @@ router.post('/sourcing/keywords', async (req, res) => {
       links: buildAllLinks(text),
     })),
   });
+});
+
+// ── 브라우저 세션 (도우인·샤오홍슈·틱톡·1688 실검색) ─────────────
+
+const platformParam = z.object({ platform: z.enum(SOURCE_PLATFORMS) });
+
+router.get('/sourcing/sessions', async (_req, res) => {
+  const installed = await browserInstalled();
+  const sessions = await Promise.all(
+    SOURCE_PLATFORMS.map(async (p) => ({
+      platform: p,
+      label: PLATFORMS[p].label,
+      loggedIn: await hasProfile(p),
+      guestSearch: PLATFORMS[p].guestSearch,
+    })),
+  );
+  res.json({ browserInstalled: installed, sessions });
+});
+
+/**
+ * 로그인 창을 띄우고 사용자가 끝낼 때까지 기다린다.
+ * QR 스캔·SMS 인증은 사람만 할 수 있으므로 자동화하지 않는다.
+ */
+router.post('/sourcing/sessions/:platform/login', async (req, res) => {
+  const { platform } = platformParam.parse(req.params);
+  if (!(await browserInstalled())) {
+    return res.status(400).json({ error: BROWSER_MISSING });
+  }
+  const cfg = PLATFORMS[platform];
+  const ok = await loginFlow(platform, cfg.loginUrl, cfg.isLoggedIn);
+  res.json({
+    platform,
+    loggedIn: ok,
+    message: ok
+      ? `${cfg.label} 로그인 완료`
+      : `${cfg.label} 로그인을 확인하지 못했습니다. 창을 닫았거나 시간이 지났습니다.`,
+  });
+});
+
+router.delete('/sourcing/sessions/:platform', async (req, res) => {
+  const { platform } = platformParam.parse(req.params);
+  await clearSession(platform);
+  res.json({ platform, loggedIn: false });
+});
+
+/** 실제 검색 — 플랫폼별로 브라우저를 띄워 결과를 긁는다 */
+router.post('/sourcing/search', async (req, res) => {
+  const body = z.object({
+    keyword: z.string().min(1),
+    platforms: z.array(z.enum(SOURCE_PLATFORMS)).min(1).default(['douyin', 'xiaohongshu', 'tiktok']),
+  }).parse(req.body);
+
+  if (!(await browserInstalled())) {
+    return res.status(400).json({ error: BROWSER_MISSING });
+  }
+  // 여러 플랫폼을 동시에 두드리면 탐지되기 쉬워 하나씩 돈다
+  const results = [];
+  for (const p of body.platforms) {
+    results.push(await searchPlatform(p, body.keyword));
+  }
+  res.json({ keyword: body.keyword, results });
 });
 
 export default router;
