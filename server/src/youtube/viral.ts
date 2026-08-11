@@ -1,6 +1,6 @@
 import type { YouTubeVideo, ViralItem } from '@shared/types';
 import { ytFetch } from './client.js';
-import { searchVideos, SHORTS_MAX_SEC } from './research.js';
+import { searchVideos, hydrateVideos, popularVideos, SHORTS_MAX_SEC } from './research.js';
 
 /**
  * 바이럴 제품 발굴.
@@ -83,6 +83,154 @@ export async function fetchSubscribers(channelIds: string[]): Promise<Map<string
     }
   }
   return out;
+}
+
+/** 모은 영상에 구독자 수를 채우고 점수를 매긴다 (수집 방식이 달라도 채점은 같다) */
+async function scoreAll(
+  videos: YouTubeVideo[],
+  keywordOf: (v: YouTubeVideo) => string[],
+  shortsOnly: boolean,
+): Promise<ViralItem[]> {
+  const subs = await fetchSubscribers(videos.map((v) => v.channelId));
+  const now = new Date();
+  const discoveredAt = now.toISOString();
+  const items = videos.map((video) => {
+    const subscriberCount = subs.get(video.channelId) ?? 0;
+    const s = scoreVideo(video, subscriberCount, now);
+    return {
+      video,
+      source: 'youtube' as const,
+      keywords: keywordOf(video),
+      subscriberCount,
+      viewsPerDay: s.viewsPerDay,
+      outlierRatio: s.outlierRatio,
+      ageDays: s.ageDays,
+      discoveredAt,
+      note: '',
+    };
+  });
+  return shortsOnly ? items.filter((i) => i.video.durationSec <= SHORTS_MAX_SEC) : items;
+}
+
+/**
+ * 카테고리 인기 급상승 (videos.list chart=mostPopular — **2유닛**).
+ *
+ * 검색보다 50배 싸지만 성격이 다르다: 유튜브 전체에서 지금 뜨는 것이라
+ * 대형 채널·음악이 많고, 유튜브 카테고리에는 "주방용품" 같은 제품군이 없다.
+ * 넓게 훑는 용도이지 제품군을 파는 용도가 아니다.
+ */
+export async function discoverByCategory(opts: {
+  categoryId?: string;
+  shortsOnly?: boolean;
+  regionCode?: string;
+}): Promise<ViralItem[]> {
+  const videos = await popularVideos({
+    categoryId: opts.categoryId,
+    regionCode: opts.regionCode,
+    shortsOnly: opts.shortsOnly ?? true,
+    maxResults: 50,
+  });
+  return scoreAll(videos, () => [], opts.shortsOnly ?? true);
+}
+
+/**
+ * 등록한 채널들의 최신 업로드 (**채널당 2유닛**).
+ *
+ * 제품군을 파려면 이쪽이 맞다 — 쇼핑 쇼츠 채널만 골라 등록해두면
+ * 검색 1회(100유닛) 값으로 채널 50개를 훑는다. 하루 수백 번 돌려도 남는다.
+ */
+export async function discoverByChannels(opts: {
+  channelIds: string[];
+  withinDays?: number;
+  shortsOnly?: boolean;
+  perChannel?: number;
+}): Promise<ViralItem[]> {
+  const withinDays = opts.withinDays ?? 14;
+  const cutoff = Date.now() - withinDays * 86_400_000;
+  const uploads = await fetchUploadPlaylists(opts.channelIds);
+
+  const ids: string[] = [];
+  for (const playlistId of uploads.values()) {
+    const data = await ytFetch('playlistItems', {
+      part: 'contentDetails',
+      playlistId,
+      maxResults: String(Math.min(opts.perChannel ?? 20, 50)),
+    });
+    for (const it of data.items ?? []) {
+      const vid = it.contentDetails?.videoId;
+      const at = it.contentDetails?.videoPublishedAt;
+      // 오래된 영상은 아예 조회하지 않는다 — hydrate 비용과 목록 잡음을 같이 줄인다
+      if (vid && (!at || Date.parse(at) >= cutoff)) ids.push(vid);
+    }
+  }
+
+  const videos = await hydrateVideos([...new Set(ids)]);
+  return scoreAll(videos, () => [], opts.shortsOnly ?? true);
+}
+
+/** 채널 → 업로드 재생목록 id (channels.list 1유닛, 50개씩 묶음) */
+export async function fetchUploadPlaylists(channelIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(channelIds)].filter(Boolean);
+  for (let i = 0; i < unique.length; i += 50) {
+    const data = await ytFetch('channels', {
+      part: 'contentDetails',
+      id: unique.slice(i, i + 50).join(','),
+      maxResults: '50',
+    });
+    for (const it of data.items ?? []) {
+      const pid = it.contentDetails?.relatedPlaylists?.uploads;
+      if (pid) out.set(it.id, pid);
+    }
+  }
+  return out;
+}
+
+export interface ResolvedChannel {
+  channelId: string;
+  title: string;
+  thumbnail: string;
+  subscriberCount: number;
+}
+
+/**
+ * 채널 주소·핸들·ID에서 채널을 찾는다 (**1유닛**).
+ *
+ * 채널명 검색(search.list)은 100유닛이라 등록 몇 개에 하루치를 태운다.
+ * 주소를 붙여넣게 하면 id/handle을 뽑아 1유닛으로 끝난다.
+ */
+export function parseChannelRef(input: string): { id?: string; handle?: string } {
+  const s = input.trim();
+  if (/^UC[\w-]{20,}$/.test(s)) return { id: s };
+  if (s.startsWith('@')) return { handle: s.slice(1) };
+  const byId = s.match(/youtube\.com\/channel\/(UC[\w-]+)/);
+  if (byId) return { id: byId[1] };
+  const byHandle = s.match(/youtube\.com\/@([^/?#\s]+)/);
+  if (byHandle) return { handle: byHandle[1] };
+  return {};
+}
+
+export async function resolveChannel(input: string): Promise<ResolvedChannel> {
+  const ref = parseChannelRef(input);
+  if (!ref.id && !ref.handle) {
+    throw Object.assign(
+      new Error('채널 주소를 붙여넣으세요 (예: https://www.youtube.com/@채널핸들). 채널명 검색은 쿼터를 100배 씁니다'),
+      { status: 400 },
+    );
+  }
+  const params: Record<string, string> = { part: 'snippet,statistics' };
+  if (ref.id) params.id = ref.id;
+  else params.forHandle = `@${ref.handle}`;
+
+  const data = await ytFetch('channels', params);
+  const ch = data.items?.[0];
+  if (!ch) throw Object.assign(new Error('채널을 찾지 못했습니다'), { status: 404 });
+  return {
+    channelId: ch.id,
+    title: ch.snippet?.title ?? '',
+    thumbnail: ch.snippet?.thumbnails?.default?.url ?? '',
+    subscriberCount: Number(ch.statistics?.subscriberCount ?? 0),
+  };
 }
 
 export interface DiscoverOptions {

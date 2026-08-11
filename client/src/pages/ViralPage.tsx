@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { TrendingUp, Play, Bookmark, BookmarkX, ExternalLink, Search } from 'lucide-react';
+import { TrendingUp, Play, Bookmark, BookmarkX, ExternalLink, Search, Flame, Radio, Plus, X } from 'lucide-react';
 import { api } from '@/api/client';
 import { Badge, Button, Card, EmptyState, Input, Spinner } from '@/components/ui';
 
@@ -27,6 +27,22 @@ interface DiscoverResult {
 }
 
 type Sort = 'outlier' | 'viewsPerDay' | 'views' | 'newest';
+type Mode = 'channels' | 'category' | 'keyword';
+
+interface TrackedChannel {
+  channelId: string; title: string; thumbnail: string; subscriberCount: number; addedAt: string;
+}
+
+/**
+ * 수집 방식별 쿼터 비용. 검색만 100유닛이고 나머지는 1~2유닛이라
+ * 하루에 쓸 수 있는 횟수가 두 자릿수씩 차이 난다 — 화면에서 그 차이가 보여야
+ * 사용자가 검색을 남발하지 않는다.
+ */
+const MODES: Array<[Mode, string, typeof Search, string]> = [
+  ['channels', '채널 추적', Radio, '채널당 2유닛 · 제품군 적중률 높음'],
+  ['category', '카테고리', Flame, '2유닛 · 유튜브 전체 급상승'],
+  ['keyword', '키워드 검색', Search, '키워드당 100유닛 · 아껴 쓰세요'],
+];
 
 const SORTS: Array<[Sort, string]> = [
   ['outlier', '구독자 대비'],
@@ -52,12 +68,38 @@ export default function ViralPage() {
   const [playing, setPlaying] = useState<string | null>(null);
   const [result, setResult] = useState<DiscoverResult | null>(null);
 
+  const [mode, setMode] = useState<Mode>('channels');
+  const [channelInput, setChannelInput] = useState('');
+
   const board = useQuery({ queryKey: ['viral-board'], queryFn: () => api.get<ViralItem[]>('/viral/board') });
+  const channels = useQuery({
+    queryKey: ['viral-channels'],
+    queryFn: () => api.get<TrackedChannel[]>('/viral/channels'),
+  });
 
   const discover = useMutation({
     mutationFn: (list: string[]) =>
       api.post<DiscoverResult>('/viral/discover', { keywords: list, withinDays, sort }),
     onSuccess: (r) => setResult(r),
+  });
+  const scanChannels = useMutation({
+    mutationFn: () => api.post<DiscoverResult>('/viral/channels/scan', { withinDays, sort }),
+    onSuccess: (r) => setResult(r),
+  });
+  const scanCategory = useMutation({
+    mutationFn: () => api.post<DiscoverResult>('/viral/category', { sort }),
+    onSuccess: (r) => setResult(r),
+  });
+  const addChannel = useMutation({
+    mutationFn: (input: string) => api.post<TrackedChannel[]>('/viral/channels', { input }),
+    onSuccess: () => {
+      setChannelInput('');
+      void qc.invalidateQueries({ queryKey: ['viral-channels'] });
+    },
+  });
+  const dropChannel = useMutation({
+    mutationFn: (id: string) => api.del(`/viral/channels/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['viral-channels'] }),
   });
   const save = useMutation({
     mutationFn: (item: ViralItem) => api.post('/viral/board', item),
@@ -86,48 +128,128 @@ export default function ViralPage() {
       </div>
 
       <Card>
-        <p className="mb-2 text-sm text-slate-500">
-          최근 올라온 영상 중 <span className="font-medium text-slate-700">구독자 수에 비해 조회수가 튄 것</span>을 찾습니다.
+        <p className="mb-3 text-sm text-slate-500">
+          <span className="font-medium text-slate-700">구독자 수에 비해 조회수가 튄 영상</span>을 찾습니다.
           조회수만 보면 큰 채널이 목록을 덮어써서, 소재가 터진 영상이 묻힙니다.
         </p>
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {PRESETS.map(([label, list]) => (
+
+        <div className="mb-3 flex gap-1 rounded-lg bg-slate-100 p-1 text-sm">
+          {MODES.map(([k, label, Icon, hint]) => (
             <button
-              key={label}
-              onClick={() => setKeywords(list.join(', '))}
-              className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-brand-400 hover:text-brand-600"
+              key={k}
+              onClick={() => setMode(k)}
+              title={hint}
+              className={clsx(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5',
+                mode === k ? 'bg-white font-medium shadow-sm' : 'text-slate-500 hover:text-slate-700',
+              )}
             >
-              {label}
+              <Icon size={14} /> {label}
             </button>
           ))}
         </div>
-        <Input
-          value={keywords}
-          onChange={(e) => setKeywords(e.target.value)}
-          placeholder="키워드를 쉼표로 구분 (예: 주방 수납, 틈새 수납)"
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button
-            onClick={() => discover.mutate(parsed)}
-            disabled={!parsed.length || parsed.length > 10 || discover.isPending}
-          >
-            {discover.isPending ? <>찾는 중… <Spinner /></> : <><Search size={15} /> 발굴하기</>}
-          </Button>
-          <select
-            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-            value={withinDays}
-            onChange={(e) => setWithinDays(Number(e.target.value))}
-          >
-            <option value={3}>최근 3일</option>
-            <option value={7}>최근 7일</option>
-            <option value={30}>최근 30일</option>
-          </select>
-          <span className="text-xs text-slate-400">
-            키워드 {parsed.length}개 · 약 {(parsed.length * 100 + 2).toLocaleString()}유닛 소모
-            {parsed.length > 10 && ' · 최대 10개'}
-          </span>
-        </div>
-        {discover.error && <p className="mt-2 text-sm text-red-600">{discover.error.message}</p>}
+        <p className="mb-3 text-xs text-slate-400">{MODES.find(([k]) => k === mode)?.[3]}</p>
+
+        {mode === 'channels' && (
+          <>
+            <div className="mb-2 flex gap-2">
+              <Input
+                value={channelInput}
+                onChange={(e) => setChannelInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && channelInput.trim()) addChannel.mutate(channelInput); }}
+                placeholder="채널 주소 붙여넣기 (예: https://www.youtube.com/@채널핸들)"
+              />
+              <Button
+                variant="secondary"
+                className="shrink-0 whitespace-nowrap"
+                onClick={() => addChannel.mutate(channelInput)}
+                disabled={!channelInput.trim() || addChannel.isPending}
+              >
+                <Plus size={15} /> 추가
+              </Button>
+            </div>
+            {addChannel.error && <p className="mb-2 text-sm text-red-600">{addChannel.error.message}</p>}
+            {(channels.data ?? []).length > 0 ? (
+              <ul className="mb-3 flex flex-wrap gap-1.5">
+                {channels.data!.map((c) => (
+                  <li key={c.channelId} className="flex items-center gap-1.5 rounded-full border border-slate-200 py-1 pl-1 pr-2 text-xs">
+                    {c.thumbnail && <img src={c.thumbnail} alt="" className="h-5 w-5 rounded-full" />}
+                    <span>{c.title}</span>
+                    <span className="text-slate-400">{fmt(c.subscriberCount)}</span>
+                    <button className="text-slate-400 hover:text-red-500" onClick={() => dropChannel.mutate(c.channelId)}>
+                      <X size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mb-3 text-xs text-slate-400">
+                쇼핑 쇼츠 채널을 등록해두면, 검색 1회(100유닛) 값으로 채널 50개를 훑습니다.
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => scanChannels.mutate()} disabled={scanChannels.isPending || !(channels.data ?? []).length}>
+                {scanChannels.isPending ? <>훑는 중… <Spinner /></> : <><Radio size={15} /> 최신 영상 훑기</>}
+              </Button>
+              <DaysSelect value={withinDays} onChange={setWithinDays} />
+              <span className="text-xs text-slate-400">
+                채널 {(channels.data ?? []).length}개 · 약 {((channels.data ?? []).length * 2 + 2).toLocaleString()}유닛
+              </span>
+            </div>
+            {scanChannels.error && <p className="mt-2 text-sm text-red-600">{scanChannels.error.message}</p>}
+          </>
+        )}
+
+        {mode === 'category' && (
+          <>
+            <p className="mb-2 text-xs text-slate-400">
+              유튜브 전체 인기 급상승입니다. 카테고리가 제품군이 아니라서(유튜브에는 "주방용품" 같은 분류가 없습니다)
+              넓게 훑는 용도로만 쓰세요.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => scanCategory.mutate()} disabled={scanCategory.isPending}>
+                {scanCategory.isPending ? <>불러오는 중… <Spinner /></> : <><Flame size={15} /> 급상승 쇼츠 보기</>}
+              </Button>
+              <span className="text-xs text-slate-400">약 2유닛 · 하루 수천 번 가능</span>
+            </div>
+            {scanCategory.error && <p className="mt-2 text-sm text-red-600">{scanCategory.error.message}</p>}
+          </>
+        )}
+
+        {mode === 'keyword' && (
+          <>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {PRESETS.map(([label, list]) => (
+                <button
+                  key={label}
+                  onClick={() => setKeywords(list.join(', '))}
+                  className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-brand-400 hover:text-brand-600"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Input
+              value={keywords}
+              onChange={(e) => setKeywords(e.target.value)}
+              placeholder="키워드를 쉼표로 구분 (예: 주방 수납, 틈새 수납)"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => discover.mutate(parsed)}
+                disabled={!parsed.length || parsed.length > 10 || discover.isPending}
+              >
+                {discover.isPending ? <>찾는 중… <Spinner /></> : <><Search size={15} /> 발굴하기</>}
+              </Button>
+              <DaysSelect value={withinDays} onChange={setWithinDays} />
+              <span className={clsx('text-xs', parsed.length > 3 ? 'text-amber-600' : 'text-slate-400')}>
+                키워드 {parsed.length}개 · 약 {(parsed.length * 100 + 2).toLocaleString()}유닛
+                {parsed.length > 10 && ' · 최대 10개'}
+              </span>
+            </div>
+            {discover.error && <p className="mt-2 text-sm text-red-600">{discover.error.message}</p>}
+          </>
+        )}
       </Card>
 
       {result && (
@@ -184,6 +306,21 @@ export default function ViralPage() {
         </>
       )}
     </div>
+  );
+}
+
+function DaysSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <select
+      className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+    >
+      <option value={3}>최근 3일</option>
+      <option value={7}>최근 7일</option>
+      <option value={14}>최근 14일</option>
+      <option value={30}>최근 30일</option>
+    </select>
   );
 }
 

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { z } from 'zod';
 import { ViralItemSchema, type ViralItem } from '@shared/types';
 import { WORKSPACE_ROOT } from './workspace.js';
 import { readJson, writeJsonAtomic, withFileLock } from '../util/fsx.js';
@@ -34,6 +35,46 @@ export async function removeFromBoard(videoId: string): Promise<ViralItem[]> {
   return withFileLock(BOARD, async () => {
     const next = (await readBoard()).filter((b) => b.video.videoId !== videoId);
     await writeJsonAtomic(BOARD, next);
+    return next;
+  });
+}
+
+// ── 추적 채널 ─────────────────────────────────────────────────────
+
+const CHANNELS = path.join(WORKSPACE_ROOT, 'viral-channels.json');
+
+export const TrackedChannelSchema = z.object({
+  channelId: z.string(),
+  title: z.string().default(''),
+  thumbnail: z.string().default(''),
+  subscriberCount: z.number().default(0),
+  addedAt: z.string(),
+});
+export type TrackedChannel = z.infer<typeof TrackedChannelSchema>;
+
+export async function readChannels(): Promise<TrackedChannel[]> {
+  const raw = await readJson<unknown[]>(CHANNELS);
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((r) => {
+    const p = TrackedChannelSchema.safeParse(r);
+    return p.success ? [p.data] : [];
+  });
+}
+
+export async function addChannel(ch: Omit<TrackedChannel, 'addedAt'>): Promise<TrackedChannel[]> {
+  return withFileLock(CHANNELS, async () => {
+    const list = await readChannels();
+    if (list.some((c) => c.channelId === ch.channelId)) return list;
+    const next = [...list, TrackedChannelSchema.parse({ ...ch, addedAt: new Date().toISOString() })];
+    await writeJsonAtomic(CHANNELS, next);
+    return next;
+  });
+}
+
+export async function removeChannel(channelId: string): Promise<TrackedChannel[]> {
+  return withFileLock(CHANNELS, async () => {
+    const next = (await readChannels()).filter((c) => c.channelId !== channelId);
+    await writeJsonAtomic(CHANNELS, next);
     return next;
   });
 }

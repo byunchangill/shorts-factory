@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ViralItem } from '@shared/types';
-import { scoreVideo, sortViral, dedupe } from './viral.js';
+import { scoreVideo, sortViral, dedupe, parseChannelRef } from './viral.js';
 
 const NOW = new Date('2026-08-11T00:00:00Z');
 
@@ -91,5 +91,27 @@ describe('sortViral', () => {
     const before = items.map((i) => i.video.videoId);
     sortViral(items, 'views');
     expect(items.map((i) => i.video.videoId)).toEqual(before);
+  });
+});
+
+describe('parseChannelRef', () => {
+  it('채널 주소에서 ID를 뽑는다', () => {
+    expect(parseChannelRef('https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv'))
+      .toEqual({ id: 'UCabcdefghijklmnopqrstuv' });
+  });
+
+  it('핸들 주소에서 핸들을 뽑는다', () => {
+    expect(parseChannelRef('https://www.youtube.com/@살림하는유진')).toEqual({ handle: '살림하는유진' });
+    expect(parseChannelRef('https://www.youtube.com/@handle/shorts')).toEqual({ handle: 'handle' });
+  });
+
+  it('@핸들과 raw ID도 그대로 받는다', () => {
+    expect(parseChannelRef('@handle')).toEqual({ handle: 'handle' });
+    expect(parseChannelRef('UCabcdefghijklmnopqrstuv')).toEqual({ id: 'UCabcdefghijklmnopqrstuv' });
+  });
+
+  it('채널명만 넣으면 비어 있게 돌려준다 (검색은 100유닛이라 대신 돌리지 않는다)', () => {
+    expect(parseChannelRef('살림하는유진')).toEqual({});
+    expect(parseChannelRef('https://www.youtube.com/watch?v=abc')).toEqual({});
   });
 });
