@@ -176,6 +176,22 @@ router.get('/youtube/oauth/start', async (_req, res) => {
   res.json({ url: await buildAuthUrl(state), redirectUri: REDIRECT_URI });
 });
 
+/**
+ * 구글이 돌려준 오류 코드를 사람이 고칠 수 있는 말로 바꾼다.
+ * 코드만 보여주면 콘솔 어디를 만져야 하는지 알 수 없다.
+ */
+function oauthErrorHint(error: string): string {
+  if (error === 'access_denied') {
+    return '구글이 로그인을 거부했습니다. OAuth 동의 화면(Google 인증 플랫폼 → 대상)의 '
+      + '<b>테스트 사용자</b>에 로그인하려는 계정이 등록돼 있는지 확인하세요. '
+      + '권한 화면에서 직접 취소하신 경우에도 이 오류가 납니다. (tools/setup-youtube-oauth.md)';
+  }
+  if (error === 'admin_policy_enforced') {
+    return '조직(워크스페이스) 정책이 이 앱을 막았습니다. 개인 구글 계정으로 시도하세요.';
+  }
+  return `구글이 돌려준 오류: ${error}`;
+}
+
 /** 구글이 리디렉트로 돌아오는 지점 — 브라우저에 결과 페이지를 직접 렌더한다 */
 router.get('/youtube/oauth/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
@@ -186,6 +202,11 @@ router.get('/youtube/oauth/callback', async (req, res) => {
      h1{font-size:20px}p{color:#64748b}</style></head>
      <body><h1>${title}</h1><p>${body}</p></body></html>`;
 
+  // 구글이 거절하고 돌려보낸 경우 — 원인을 그대로 보여줘야 사용자가 고칠 수 있다
+  const error = typeof req.query.error === 'string' ? req.query.error : '';
+  if (error) {
+    return res.status(400).send(page('연결 실패', oauthErrorHint(error)));
+  }
   if (!code || !pendingStates.has(state)) {
     return res.status(400).send(page('연결 실패', '인증 요청이 유효하지 않습니다. 앱에서 다시 시도하세요.'));
   }
