@@ -15,13 +15,19 @@ export interface DoctorReport {
   ok: boolean; // 필수 도구 모두 사용 가능 여부
 }
 
+type ToolEntry = DoctorReport['tools'][number];
+
 /**
  * 도구 점검은 외부 프로세스를 4개 띄우므로 요청마다 돌리면 느리다.
  * 캐시해두고 화면에서 명시적으로 새로고침할 때만 다시 돈다.
+ *
+ * 캐시 대상은 **외부 프로세스 점검 결과뿐**이다. API 키로 판정하는 항목은
+ * 파일 한 번 읽으면 끝이고 사용자가 언제든 바꾸므로 매번 새로 본다
+ * (타입캐스트 키를 등록했는데 도구 상태가 계속 "없음"으로 남던 문제).
  */
-let cached: DoctorReport | null = null;
+let cached: ToolEntry[] | null = null;
 let cachedAt = 0;
-let inFlight: Promise<DoctorReport> | null = null;
+let inFlight: Promise<ToolEntry[]> | null = null;
 
 /**
  * 실패한 점검 결과의 수명.
@@ -33,31 +39,42 @@ let inFlight: Promise<DoctorReport> | null = null;
  */
 const FAILED_CACHE_MS = 30_000;
 
-export function cachedDoctor(): DoctorReport | null {
-  return cached;
-}
-
 function cacheUsable(): boolean {
   if (!cached) return false;
-  return cached.ok || Date.now() - cachedAt < FAILED_CACHE_MS;
+  const allFound = cached.filter((t) => t.required).every((t) => t.available);
+  return allFound || Date.now() - cachedAt < FAILED_CACHE_MS;
 }
 
-export function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
-  if (!opts.force && cacheUsable()) return Promise.resolve(cached!);
-  // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
-  inFlight ??= probeAll().then(
-    (r) => {
-      cached = r;
-      cachedAt = Date.now();
-      inFlight = null;
-      return r;
-    },
-    (e) => {
-      inFlight = null;
-      throw e;
-    },
-  );
-  return inFlight;
+export async function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
+  if (opts.force || !cacheUsable()) {
+    // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
+    inFlight ??= probeTools().then(
+      (r) => {
+        cached = r;
+        cachedAt = Date.now();
+        inFlight = null;
+        return r;
+      },
+      (e) => {
+        inFlight = null;
+        throw e;
+      },
+    );
+    await inFlight;
+  }
+  const tools = [...cached!, ...(await keyTools())];
+  return { tools, ok: tools.filter((t) => t.required).every((t) => t.available) };
+}
+
+/** 실행파일이 아니라 API 키로 판정하는 항목 — 캐시하지 않는다 */
+async function keyTools(): Promise<ToolEntry[]> {
+  return [{
+    name: 'Typecast (음성)',
+    required: false,
+    available: await hasKey('typecast'),
+    version: undefined,
+    installHint: 'API 키 메뉴에서 등록 — 미등록 시 씬별 음성 파일을 직접 첨부해야 합니다',
+  }];
 }
 
 /** 테스트용 — 모듈 캐시를 비운다 */
@@ -67,7 +84,7 @@ export function resetDoctorCache(): void {
   inFlight = null;
 }
 
-async function probeAll(): Promise<DoctorReport> {
+async function probeTools(): Promise<ToolEntry[]> {
   const s = await loadSettings();
   const checks = [
     {
@@ -103,15 +120,6 @@ async function probeAll(): Promise<DoctorReport> {
     }),
   );
 
-  // 음성은 외부 실행파일이 아니라 API 키로 동작하므로 키 등록 여부로 표시한다
-  tools.push({
-    name: 'Typecast (음성)',
-    required: false,
-    available: await hasKey('typecast'),
-    version: undefined,
-    installHint: 'API 키 메뉴에서 등록 — 미등록 시 씬별 음성 파일을 직접 첨부해야 합니다',
-  });
-
   // 한글 폰트가 없으면 자막과 텍스트 카드의 한글이 네모로 깨진다
   const font = await findKoreanFont(s.fontPath);
   tools.push({
@@ -124,5 +132,5 @@ async function probeAll(): Promise<DoctorReport> {
       '설정에서 폰트 파일 경로를 직접 지정하세요 (없으면 자막·카드의 한글이 깨집니다)',
   });
 
-  return { tools, ok: tools.filter((t) => t.required).every((t) => t.available) };
+  return tools;
 }

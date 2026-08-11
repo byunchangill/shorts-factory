@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import multer from 'multer';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
@@ -25,7 +25,7 @@ import { readJson } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
 import { broadcast } from '../sse.js';
 
-const router = Router();
+const router = asyncRouter();
 
 function refOr404(jobId: string): jobs.JobRef {
   const ref = jobs.resolveJob(jobId);

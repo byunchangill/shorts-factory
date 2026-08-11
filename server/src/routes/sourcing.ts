@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import { z } from 'zod';
 import { AI_PROVIDERS } from '@shared/constants';
 import {
@@ -12,7 +12,7 @@ import { searchPlatform } from '../sourcing/search.js';
 import { availableProviders } from '../ai/providers.js';
 import { loadSettings } from '../store/workspace.js';
 
-const router = Router();
+const router = asyncRouter();
 
 const BROWSER_MISSING =
   '브라우저(Chromium)가 설치되어 있지 않습니다. 터미널에서 `npx playwright install chromium`을 한 번 실행하세요.';

@@ -14,7 +14,8 @@ vi.mock('./store/workspace.js', () => ({
     fontPath: '',
   }),
 }));
-vi.mock('./store/secrets.js', () => ({ hasKey: async () => false }));
+const hasKey = vi.hoisted(() => vi.fn(async () => false));
+vi.mock('./store/secrets.js', () => ({ hasKey }));
 vi.mock('./pipeline/fonts.js', () => ({ findKoreanFont: async () => '/fonts/NanumGothic.ttf' }));
 
 const { runDoctor, resetDoctorCache } = await import('./doctor.js');
@@ -23,6 +24,8 @@ describe('runDoctor 캐시', () => {
   beforeEach(() => {
     resetDoctorCache();
     checkTool.mockReset();
+    hasKey.mockReset();
+    hasKey.mockResolvedValue(false);
     vi.useFakeTimers();
   });
   afterEach(() => vi.useRealTimers());
@@ -55,5 +58,22 @@ describe('runDoctor 캐시', () => {
     const healed = await runDoctor();
     expect(healed.ok).toBe(true);
     expect(checkTool.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  /**
+   * API 키는 도구 설치와 달리 언제든 바뀐다. 캐시가 이걸 같이 붙들고 있으면
+   * 타입캐스트 키를 등록해도 도구 상태는 계속 "없음"으로 남는다 (실제로 그랬다).
+   */
+  it('API 키로 판정하는 항목은 캐시에 갇히지 않는다', async () => {
+    checkTool.mockResolvedValue({ available: true, version: 'x' });
+    const before = await runDoctor();
+    expect(before.tools.find((t) => t.name === 'Typecast (음성)')?.available).toBe(false);
+
+    hasKey.mockResolvedValue(true); // 사용자가 키를 등록했다
+    const calls = checkTool.mock.calls.length;
+    const after = await runDoctor();
+
+    expect(after.tools.find((t) => t.name === 'Typecast (음성)')?.available).toBe(true);
+    expect(checkTool.mock.calls.length).toBe(calls); // 외부 도구는 다시 안 띄운다
   });
 });

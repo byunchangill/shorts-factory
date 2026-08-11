@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { YOUTUBE_DAILY_QUOTA } from '@shared/constants';
@@ -20,7 +20,7 @@ import { hasKey } from '../store/secrets.js';
 import { resolveJob, mutateJob } from '../store/jobs.js';
 import { nextSeqId } from '../util/ids.js';
 
-const router = Router();
+const router = asyncRouter();
 
 /** 상태 표시줄용 — 키 등록 여부 + 오늘 쿼터 */
 router.get('/youtube/status', async (_req, res) => {

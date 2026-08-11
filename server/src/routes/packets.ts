@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
@@ -12,7 +12,7 @@ import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
 import { runPacketQuality } from '../ai/qualityRunner.js';
 import { broadcast } from '../sse.js';
 
-const router = Router();
+const router = asyncRouter();
 
 /** UI가 실행 방식(API 자동)의 선택 가능 여부를 판단하는 데 사용 */
 router.get('/ai/providers', async (_req, res) => {

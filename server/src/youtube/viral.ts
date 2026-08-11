@@ -270,6 +270,7 @@ export async function discoverViral(opts: DiscoverOptions): Promise<ViralItem[]>
         ageDays: 0,
         source: 'youtube',
         discoveredAt: new Date().toISOString(),
+        note: '',
       });
     }
   }

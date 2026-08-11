@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import multer from 'multer';
 import path from 'node:path';
 import { z } from 'zod';
@@ -11,7 +11,7 @@ import { paths, toMediaUrl } from '../store/workspace.js';
 import { slugify } from '../util/fsx.js';
 import { extractZip, safeEntryPath } from '../util/zip.js';
 
-const router = Router();
+const router = asyncRouter();
 
 function parseMenu(v: unknown): Menu {
   const parsed = z.enum(MENUS).safeParse(v);
