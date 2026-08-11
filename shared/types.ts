@@ -159,6 +159,12 @@ export const SceneLineSchema = z.object({
   imagePrompt: z.string().optional(), // menu-b 씬 이미지 프롬프트
   durationHint: z.number().optional(),
   bgmCue: z.string().optional(),
+  /**
+   * 이 씬이 제품의 단점·주의사항을 말하는 씬인가.
+   * 제품정보리뷰(menu-b)는 최소 1개가 있어야 한다 — 단점 한 줄이
+   * "광고 붙여넣기"와 "리뷰"를 가르고, 재사용 심사에서 제작자의 견해로 인정받는 장치다.
+   */
+  isDownside: z.boolean().default(false),
   /** 이 씬 앞에 끼울 텍스트 카드 문구 (하이브리드 믹싱) */
   cardText: z.string().optional(),
 });
@@ -179,6 +185,8 @@ export const PacketSchema = z.object({
   jobId: z.string().optional(), // format-create는 잡 없이도 발행
   projectId: z.string().optional(),
   formatId: z.string().optional(),
+  /** 메뉴별로 분량·검증 규칙이 다르다. 예전 패킷에는 없으므로 dir에서 유추한다 */
+  menu: MenuSchema.optional(),
   kind: z.enum(PACKET_KINDS),
   status: z.enum(PACKET_STATUSES),
   dir: z.string(), // workspace 기준 상대경로

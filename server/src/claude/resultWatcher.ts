@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import chokidar, { type FSWatcher } from 'chokidar';
-import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema } from '@shared/types';
+import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema, type Script } from '@shared/types';
+import { packetMenu, scriptRuleErrors } from './scriptRules.js';
 import { WORKSPACE_ROOT } from '../store/workspace.js';
 import { readJson, exists } from '../util/fsx.js';
 import { listAllPackets, readPacket, writePacket, resolvePacketDir } from './packets.js';
@@ -121,6 +122,9 @@ export async function ingestPacketResult(packetId: string): Promise<void> {
           `스키마 불일치 result/${spec.file}: ` +
             parsed.error.issues.slice(0, 5).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         );
+      } else if (spec.schema === 'script') {
+        // 스키마는 맞지만 메뉴 규칙을 어긴 경우 (제품정보리뷰의 단점 씬 등)
+        errors.push(...scriptRuleErrors(parsed.data as Script, packetMenu(packet)));
       }
     }
   }

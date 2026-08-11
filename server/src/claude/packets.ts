@@ -1,13 +1,16 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { PacketSchema, type Packet, type Product, type Clip } from '@shared/types';
-import { PACKET_KIND_LABELS, charBudget, type PacketKind, type Menu } from '@shared/constants';
+import {
+  PACKET_KIND_LABELS, charBudget, TARGET_SEC_BY_MENU, type PacketKind, type Menu,
+} from '@shared/constants';
+import { packetMenu } from './scriptRules.js';
 import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
 import { ensureDir, listDirs, readJson, writeJsonAtomic } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
 import { readAllGuidelines, readProduct, listProductFiles } from '../store/projects.js';
 import { getFormat } from '../store/formats.js';
-import { type JobRef, listClips, logJobEvent } from '../store/jobs.js';
+import { type JobRef, listClips, listJobs, logJobEvent } from '../store/jobs.js';
 import { broadcast } from '../sse.js';
 
 /** 패킷 인덱스 (부팅 시 스캔으로 재구성) */
@@ -15,6 +18,27 @@ const packetIndex = new Map<string, string>(); // packetId → packet.json 절�
 
 export function resolvePacketDir(packetId: string): string | null {
   return packetIndex.get(packetId) ?? null;
+}
+
+/**
+ * 요청서 ID는 **전역으로 유일해야 한다.**
+ *
+ * 번호는 잡 안에서 매겨지는데(`p01-script`) 인덱스와 `/packets/{id}` 경로는 ID 하나로 찾는다.
+ * 잡이 둘 이상이면 모든 잡의 첫 요청서가 `p01-*`이라 서로 덮어써서, 먼저 만든 잡의
+ * 요청서를 열 수 없게 되고 재부팅(scanPackets) 뒤에는 어느 쪽이 이길지도 폴더 순서에 달린다.
+ *
+ * 그래서 잡 안에서 비어 있는 번호라도 다른 잡이 쓰고 있으면 다음 번호로 넘긴다.
+ * 잡마다 1번부터 시작하지는 않지만, 번호가 곧 전체 발행 순서가 된다.
+ * 치운(삭제된) 번호는 인덱스에서도 빠지므로 다시 쓰인다.
+ */
+export function uniquePacketId(existingInJob: string[], kind: PacketKind): string {
+  const taken = [...existingInJob];
+  for (let i = 0; i < 1000; i++) {
+    const id = nextSeqId('p', taken, kind);
+    if (!packetIndex.has(id)) return id;
+    taken.push(id);
+  }
+  throw new Error('요청서 ID를 만들지 못했습니다');
 }
 
 export async function scanPackets(): Promise<void> {
@@ -27,6 +51,12 @@ export async function scanPackets(): Promise<void> {
       for (const jobId of jobDirs) {
         const reqRoot = path.join(paths.job(menu, projectId, jobId), 'requests');
         for (const pid of await listDirs(reqRoot)) {
+          // 이미 만들어진 중복은 여기서 고칠 수 없다 — 조용히 덮어쓰지 말고 알린다
+          const dup = packetIndex.get(pid);
+          if (dup) {
+            console.warn(`[packets] 요청서 ID 중복: ${pid} — ${dup} 와 ${path.join(reqRoot, pid)}`);
+            continue;
+          }
           packetIndex.set(pid, path.join(reqRoot, pid));
         }
       }
@@ -79,20 +109,11 @@ interface CreatePacketOptions {
 export async function createPacket(opts: CreatePacketOptions): Promise<Packet> {
   const { kind, jobRef } = opts;
 
-  let dir: string;
-  let existingIds: string[];
-  if (jobRef) {
-    const reqRoot = path.join(paths.job(jobRef.menu, jobRef.projectId, jobRef.jobId), 'requests');
-    existingIds = await listDirs(reqRoot);
-    const id = nextSeqId('p', existingIds, kind);
-    dir = path.join(reqRoot, id);
-  } else {
-    const reqRoot = path.join(paths.formats(), '_requests');
-    existingIds = await listDirs(reqRoot);
-    const id = nextSeqId('p', existingIds, kind);
-    dir = path.join(reqRoot, id);
-  }
-  const id = path.basename(dir);
+  const reqRoot = jobRef
+    ? path.join(paths.job(jobRef.menu, jobRef.projectId, jobRef.jobId), 'requests')
+    : path.join(paths.formats(), '_requests');
+  const id = uniquePacketId(await listDirs(reqRoot), kind);
+  const dir = path.join(reqRoot, id);
 
   await ensureDir(path.join(dir, 'context'));
   await ensureDir(path.join(dir, 'result'));
@@ -103,6 +124,8 @@ export async function createPacket(opts: CreatePacketOptions): Promise<Packet> {
     jobId: jobRef?.jobId,
     projectId: jobRef?.projectId,
     formatId: opts.formatId,
+    // 포맷 생성은 잡이 없지만 제품정보리뷰 전용 기능이라 menu-b다
+    menu: jobRef?.menu ?? 'menu-b',
     kind,
     status: 'waiting',
     dir: toWorkspaceRel(dir),
@@ -287,6 +310,23 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     lines.push('');
   }
 
+  // upload-kit: 시리즈 회차 — 쇼츠는 조회수보다 구독 전환이 어렵고, "다음 탄"이 그걸 만든다
+  if (packet.kind === 'upload-kit' && opts.jobRef?.menu === 'menu-b') {
+    const series = await seriesContext(opts.jobRef);
+    if (series) {
+      lines.push('## 시리즈 위치');
+      lines.push(`- 이 제품의 **${series.episode}번째 편**입니다.`);
+      if (series.previousTitles.length) {
+        lines.push(`- 이전 편: ${series.previousTitles.map((t) => `"${t}"`).join(', ')}`);
+      }
+      lines.push(
+        '- 제목에 회차를 드러내고, 설명 마지막에 **다음 편 예고 한 줄**을 넣으세요. '
+        + '이전 편과 제목이 겹치지 않게 각도를 바꾸세요.',
+      );
+      lines.push('');
+    }
+  }
+
   // format-create: 마법사 답변
   if (packet.kind === 'format-create' && opts.wizardAnswers) {
     lines.push('## 사용자 답변 (이를 바탕으로 포맷 설계)');
@@ -304,24 +344,51 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
   }
   lines.push('');
   lines.push(OUTPUT_SPECS[packet.kind]);
+  const menu = packetMenu(packet);
+  if (menu === 'menu-b' && MENU_B_OUTPUT_SPECS[packet.kind]) {
+    lines.push('');
+    lines.push(MENU_B_OUTPUT_SPECS[packet.kind]!);
+  }
   lines.push('');
 
   // ⑥ 검증 규칙
   lines.push('## 검증 규칙');
-  // 분량 기준은 배속 설정에 따라 달라지므로 발행 시점의 값으로 치환한다
+  // 분량 기준은 배속·메뉴에 따라 달라지므로 발행 시점의 값으로 치환한다
   const settings = await loadSettings();
-  const budget = charBudget(settings.speechRate);
-  lines.push(
-    VALIDATION_RULES[packet.kind]
-      .replace('{SPEECH_RATE}', String(settings.speechRate))
-      .replace('{CHAR_MIN}', String(budget.min))
-      .replace('{CHAR_MAX}', String(budget.max))
-      .replace('{CHAR_REC}', String(budget.recommended)),
-  );
+  const budget = charBudget(settings.speechRate, menu);
+  const target = TARGET_SEC_BY_MENU[menu];
+  const fill = (t: string) => t
+    .replace('{SPEECH_RATE}', String(settings.speechRate))
+    .replace('{CHAR_MIN}', String(budget.min))
+    .replace('{CHAR_MAX}', String(budget.max))
+    .replace('{CHAR_REC}', String(budget.recommended))
+    .replace('{SEC_MAX}', String(target.max))
+    .replace('{SEC_REC}', String(target.recommended));
+  lines.push(fill(VALIDATION_RULES[packet.kind]));
+  if (menu === 'menu-b' && MENU_B_RULES[packet.kind]) {
+    lines.push(fill(MENU_B_RULES[packet.kind]!));
+  }
   lines.push('');
   lines.push('---');
   lines.push('파일을 만들 수 있는 도구라면, 작성이 끝난 뒤 마지막에 `result/.done` 빈 파일을 생성하세요.');
   return lines.join('\n');
+}
+
+/**
+ * 같은 제품(프로젝트)에서 이 잡이 몇 번째 편인지.
+ * 시리즈 표기와 "다음 편 예고"의 재료다.
+ */
+async function seriesContext(
+  ref: JobRef,
+): Promise<{ episode: number; previousTitles: string[] } | null> {
+  const jobs = await listJobs(ref.menu, ref.projectId);
+  const ordered = jobs.slice().sort((a, b) => a.id.localeCompare(b.id));
+  const idx = ordered.findIndex((j) => j.id === ref.jobId);
+  if (idx < 0) return null;
+  return {
+    episode: idx + 1,
+    previousTitles: ordered.slice(0, idx).map((j) => j.title).filter(Boolean).slice(-3),
+  };
 }
 
 const PURPOSES: Record<PacketKind, string> = {
@@ -392,14 +459,37 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
 
 const VALIDATION_RULES: Record<PacketKind, string> = {
   'product-extract': '- 첨부 자료에 없는 사실을 지어내지 않는다\n- 효능/성능 주장은 자료 원문 근거가 있는 것만 포함',
-  script: `- **30초 이내로 끝낸다.** {SPEECH_RATE}배속 낭독 기준 한국어 {CHAR_MIN}~{CHAR_MAX}자 (권장 {CHAR_REC}자)
+  script: `- **{SEC_MAX}초 이내로 끝낸다.** {SPEECH_RATE}배속 낭독 기준 한국어 {CHAR_MIN}~{CHAR_MAX}자 (권장 {CHAR_REC}자)
 - 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
 - 원본 영상의 문장을 그대로 옮기지 않는다 (구조만 참고)
 - 과장 금지: "무조건", "100%", "기적", "완치" 등 사용 금지
 - 첫 씬은 3초 훅
 - 마지막 씬에 CTA 1문장`,
-  'format-create': '- 다른 채널을 그대로 베끼지 않는 고유한 구조일 것\n- beats의 secondsHint 합이 45~55초일 것',
+  'format-create': '- 다른 채널을 그대로 베끼지 않는 고유한 구조일 것\n- beats의 secondsHint 합이 {SEC_MAX}초 이내일 것 (권장 {SEC_REC}초)',
   'scene-images': '- 모든 씬에 동일한 스타일 프롬프트 접두어 적용 (일관성)\n- 실존 인물/브랜드 로고 묘사 금지',
   'upload-kit': '- 제목에 낚시성 허위 표현 금지\n- 공시문구 필수 포함',
   revision: '- script 패킷과 동일한 검증 규칙 + 반려 사유 반영 여부',
+};
+
+/**
+ * 제품정보리뷰(menu-b)에만 더 붙는 규칙.
+ * 해외영상 짜집기는 별도 지침을 따로 세우기로 해서 여기 걸지 않는다.
+ */
+const MENU_B_RULES: Partial<Record<PacketKind, string>> = {
+  script: `- **단점 씬 1개 필수.** 제품의 단점·주의사항을 말하는 씬을 반드시 넣고 그 씬에 \`"isDownside": true\`를 표시한다.
+  이 한 줄이 광고와 리뷰를 가른다 — 없으면 반려된다. 지어내지 말고 제품 정보의 cautions/사양에서 근거를 찾는다
+  (예: "대신 스테인리스라 지문은 묻습니다", "물걸레 기능은 없습니다")
+- 단점 뒤에 그걸 덮는 마무리를 붙이지 않는다. 단점은 단점으로 끝내야 신뢰가 생긴다`,
+  revision: '- script 패킷의 menu-b 규칙(단점 씬 1개 필수)을 동일하게 적용한다',
+  'upload-kit': `- **해시태그는 3~5개까지.** 중복 금지, 유행어 나열 금지 — 이 제품을 찾을 사람이 실제로 칠 단어만 넣는다
+  (유튜브는 설명란 해시태그가 15개를 넘으면 그 영상의 해시태그를 **전부 무시**한다)
+- 설명 마지막에 **다음 편 예고 한 줄**을 넣는다 (구독 전환 장치). 시리즈 위치 정보가 위에 있으면 그걸 쓴다
+- 제목은 이전 편과 겹치지 않게 각도를 바꾼다`,
+};
+
+/** menu-b에서만 추가되는 산출물 형식 안내 */
+const MENU_B_OUTPUT_SPECS: Partial<Record<PacketKind, string>> = {
+  script: '제품정보리뷰는 씬마다 `clipRef` 대신 `imagePrompt`를 쓰고, '
+    + '단점을 말하는 씬에는 `"isDownside": true`를 붙인다.',
+  'upload-kit': '설명 구성: 공시문구 → 제품 요약 2~3문장 → 구매 링크 → **다음 편 예고 한 줄**.',
 };

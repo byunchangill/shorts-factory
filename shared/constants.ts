@@ -139,23 +139,36 @@ export const API_PORT = 4310;
 export const CHARS_PER_MIN = 300;
 
 /**
- * 목표 영상 길이 (초).
- * 짧게 끝내 완주율을 올리는 전략이라 상한이 30초다.
+ * 메뉴별 목표 영상 길이 (초).
+ *
+ * 짧게 끝내 완주율을 올리는 전략이라 어느 쪽도 30초를 넘지 않는다.
+ * 제품정보리뷰(menu-b)는 소재 흐름에 매일 이유가 없어 더 짧게 끊는다 — 권장 22초.
+ * 해외영상 짜집기(menu-a)는 원본 컷의 리듬을 살려야 해서 여유를 둔다.
  * 이 길이는 배속과 함께 계산돼야 한다 — 1.25배속에서 30초는 약 187자다.
  */
-export const TARGET_SEC = { min: 20, recommended: 27, max: 30 } as const;
+export const TARGET_SEC_BY_MENU: Record<Menu, { min: number; recommended: number; max: number }> = {
+  'menu-a': { min: 20, recommended: 27, max: 30 },
+  'menu-b': { min: 18, recommended: 22, max: 26 },
+};
+
+/** 메뉴를 모를 때의 기준 (해외영상 짜집기 = 더 넉넉한 쪽) */
+export const TARGET_SEC = TARGET_SEC_BY_MENU['menu-a'];
 
 /**
  * 배속을 반영한 글자 수 상·하한.
  * 상한은 내림, 하한은 올림한다 — 반올림하면 경계에서 목표 시간을 넘긴다
  * (1.25배속 30초는 187.5자라, 반올림 188자는 30.08초가 되어 상한 위반).
  */
-export function charBudget(speechRate: number): { min: number; recommended: number; max: number } {
+export function charBudget(
+  speechRate: number,
+  menu: Menu = 'menu-a',
+): { min: number; recommended: number; max: number } {
+  const target = TARGET_SEC_BY_MENU[menu];
   const perSec = (CHARS_PER_MIN * speechRate) / 60;
   return {
-    min: Math.ceil(TARGET_SEC.min * perSec),
-    recommended: Math.round(TARGET_SEC.recommended * perSec),
-    max: Math.floor(TARGET_SEC.max * perSec),
+    min: Math.ceil(target.min * perSec),
+    recommended: Math.round(target.recommended * perSec),
+    max: Math.floor(target.max * perSec),
   };
 }
 

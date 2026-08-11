@@ -847,6 +847,79 @@ async function main(): Promise<void> {
     return '키 없음 400 · 보관 중복 방지 · 해제 확인';
   });
 
+  // ── 제품정보리뷰(menu-b) 전용 규칙 ──
+  // 메뉴 A는 별도 지침을 따로 세우기로 해서, 이 규칙들이 A로 새지 않는지도 같이 본다
+  await step('제품정보리뷰 — 짧은 분량 · 단점 씬 게이트 · 시리즈 예고', async () => {
+    const bProduct = '테스트세제통';
+    await post('/projects', { menu: 'menu-b', title: bProduct });
+    const bJob = await post<JobView>(
+      `/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '1편' });
+
+    // ① 요청서가 menu-b 기준(22초·162자)과 단점 씬 규칙을 담아야 한다
+    const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
+    const req = await get<PacketView>(`/packets/${p1.id}`);
+    assert(req.requestMd.includes('26초 이내'), 'menu-b 목표 시간이 요청서에 없음');
+    assert(req.requestMd.includes('162자'), `menu-b 분량 상한이 반영되지 않음`);
+    assert(!req.requestMd.includes('187자'), 'menu-a 분량 상한이 새어 들어옴');
+    assert(req.requestMd.includes('isDownside'), '단점 씬 규칙이 요청서에 없음');
+
+    // ② 단점 씬이 없으면 반려 — 대본이 반영되면 안 된다
+    const noDownside = {
+      title: '세제통 정리',
+      scenes: [
+        { sceneId: 's01', narration: '싱크대 세제통 아직도 그냥 두세요?', subtitle: '아직도?', imagePrompt: 'sink' },
+        { sceneId: 's02', narration: '여기 꽂기만 하면 한 손으로 됩니다.', subtitle: '한 손', imagePrompt: 'pump' },
+      ],
+    };
+    await post<{ errors: string[] }>(`/packets/${p1.id}/paste`,
+      { raw: `\`\`\`json\n${JSON.stringify(noDownside)}\n\`\`\`` });
+    const rejected = await waitFor('단점 씬 누락 검증', async () => {
+      const d = await get<PacketView>(`/packets/${p1.id}`);
+      return d.status === 'received' ? d : null;
+    }, 30_000);
+    assert(rejected.validationErrors.some((e) => e.includes('단점 씬')),
+      `단점 씬 누락이 걸러지지 않음: ${rejected.validationErrors.join(', ')}`);
+    const stillEmpty = await get<JobView>(`/jobs/${bJob.id}`);
+    assert(stillEmpty.script.currentVersion === 0,
+      `반려된 대본이 반영됨: v${stillEmpty.script.currentVersion}`);
+
+    // ③ 단점 씬을 넣으면 통과
+    const p2 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
+    const withDownside = {
+      ...noDownside,
+      scenes: [
+        ...noDownside.scenes,
+        { sceneId: 's03', narration: '대신 스테인리스라 지문은 묻습니다.', subtitle: '지문은 묻어요', imagePrompt: 'steel', isDownside: true },
+      ],
+    };
+    const r2 = await post<{ errors: string[] }>(`/packets/${p2.id}/paste`,
+      { raw: `\`\`\`json\n${JSON.stringify(withDownside)}\n\`\`\`` });
+    assert(r2.errors.length === 0, `단점 씬이 있는데 반려됨: ${r2.errors.join(', ')}`);
+    const applied = await waitFor('menu-b 대본 반영', async () => {
+      const j = await get<JobView>(`/jobs/${bJob.id}`);
+      return j.script.currentVersion === 1 ? j : null;
+    }, 30_000);
+    assert(applied.script.currentVersion === 1, '단점 씬을 넣은 대본이 반영되지 않음');
+
+    // ④ 업로드 킷 요청서에 시리즈 회차와 해시태그 상한이 들어가야 한다
+    await post<JobView>(`/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '2편' });
+    const kit = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'upload-kit' });
+    const kitReq = await get<PacketView>(`/packets/${kit.id}`);
+    assert(kitReq.requestMd.includes('1번째 편'), '시리즈 회차가 요청서에 없음');
+    assert(kitReq.requestMd.includes('3~5개'), '해시태그 상한이 요청서에 없음');
+    assert(kitReq.requestMd.includes('다음 편 예고'), '다음 편 예고 지시가 요청서에 없음');
+
+    // ⑤ 같은 규칙이 menu-a로 새지 않아야 한다 (메뉴 A는 별도 지침 예정)
+    const aPacket = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'script' });
+    const aReq = await get<PacketView>(`/packets/${aPacket.id}`);
+    // 규칙 문장으로 본다 — 이전 대본이 문맥으로 실리면 isDownside 키 자체는 등장할 수 있다
+    assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
+    assert(aReq.requestMd.includes('187자'), 'menu-a 분량 기준이 바뀜');
+    assert(aReq.requestMd.includes('30초 이내'), 'menu-a 목표 시간이 바뀜');
+
+    return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
+  });
+
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
   await step('요청서 파일 감시 — result/.done 감지 → 자동 반영', async () => {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'upload-kit' });

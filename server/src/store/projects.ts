@@ -1,19 +1,39 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { ProjectSchema, type Project, ProductSchema, type Product } from '@shared/types';
-import { GUIDELINE_FILES, type Menu, type GuidelineFile } from '@shared/constants';
-import { paths } from './workspace.js';
+import {
+  GUIDELINE_FILES, charBudget, TARGET_SEC_BY_MENU, type Menu, type GuidelineFile,
+} from '@shared/constants';
+import { paths, loadSettings } from './workspace.js';
 import { ensureDir, exists, listDirs, listFiles, readJson, slugify, writeJsonAtomic } from '../util/fsx.js';
 
 /** menu-b의 formats 디렉토리는 프로젝트가 아님 */
 const RESERVED_DIRS = new Set(['formats', 'templates']);
 
+/**
+ * 기본 지침의 분량 숫자를 메뉴·배속에서 계산해 채운다.
+ * 지침 본문에 숫자를 박아두면 메뉴별 목표가 바뀌어도 그대로 남아, 요청서와 지침이 서로 다른
+ * 분량을 말하게 된다 (실제로 menu-b 프로젝트에 menu-a 기준 187자가 박혀 나갔다).
+ */
+async function fillGuideline(template: string, menu: Menu): Promise<string> {
+  const { speechRate } = await loadSettings();
+  const budget = charBudget(speechRate, menu);
+  const target = TARGET_SEC_BY_MENU[menu];
+  return template
+    .replaceAll('{SPEECH_RATE}', String(speechRate))
+    .replaceAll('{SEC_MAX}', String(target.max))
+    .replaceAll('{SEC_REC}', String(target.recommended))
+    .replaceAll('{CHAR_MIN}', String(budget.min))
+    .replaceAll('{CHAR_MAX}', String(budget.max))
+    .replaceAll('{CHAR_REC}', String(budget.recommended));
+}
+
 const DEFAULT_GUIDELINES: Record<GuidelineFile, string> = {
   'script.md': `# 대본 지침
 
 ## 분량·구조
-- **30초 이내로 끝낸다** — 완주율이 알고리즘에 가장 강하게 작용한다
-- 나레이션 1.25배속 기준 총 125~187자 (권장 160~175자)
+- **{SEC_MAX}초 이내로 끝낸다** — 완주율이 알고리즘에 가장 강하게 작용한다 (권장 {SEC_REC}초)
+- 나레이션 {SPEECH_RATE}배속 기준 총 {CHAR_MIN}~{CHAR_MAX}자 (권장 {CHAR_REC}자)
 - 씬 4~5개, 씬당 35~45자
 - 반전은 1개에 집중한다 — 짧은 분량에 2개를 넣으면 둘 다 약해진다
 - 첫 문장은 3초 안에 시선을 잡는 훅으로 시작한다
@@ -103,7 +123,11 @@ export async function createProject(
   await ensureDir(paths.product(menu, id));
   await ensureDir(paths.guidelines(menu, id));
   for (const file of GUIDELINE_FILES) {
-    await fsp.writeFile(path.join(paths.guidelines(menu, id), file), DEFAULT_GUIDELINES[file], 'utf8');
+    await fsp.writeFile(
+      path.join(paths.guidelines(menu, id), file),
+      await fillGuideline(DEFAULT_GUIDELINES[file], menu),
+      'utf8',
+    );
   }
   await writeJsonAtomic(paths.projectJson(menu, id), project);
   return project;
