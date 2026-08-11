@@ -20,18 +20,35 @@ export interface DoctorReport {
  * 캐시해두고 화면에서 명시적으로 새로고침할 때만 다시 돈다.
  */
 let cached: DoctorReport | null = null;
+let cachedAt = 0;
 let inFlight: Promise<DoctorReport> | null = null;
+
+/**
+ * 실패한 점검 결과의 수명.
+ *
+ * 부팅 직후처럼 시스템이 붐빌 때 프로세스 실행이 한 번 실패하면, 그 "미설치" 결과가
+ * 영원히 캐시돼 설치돼 있는 도구를 계속 없다고 표시한다 (실제로 부팅 로그에
+ * ❌ ffmpeg가 찍히고 새로고침하면 ✅로 바뀌는 것을 확인했다).
+ * 성공한 결과는 도구를 새로 설치하기 전까지 바뀌지 않으므로 계속 들고 있는다.
+ */
+const FAILED_CACHE_MS = 30_000;
 
 export function cachedDoctor(): DoctorReport | null {
   return cached;
 }
 
+function cacheUsable(): boolean {
+  if (!cached) return false;
+  return cached.ok || Date.now() - cachedAt < FAILED_CACHE_MS;
+}
+
 export function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
-  if (!opts.force && cached) return Promise.resolve(cached);
+  if (!opts.force && cacheUsable()) return Promise.resolve(cached!);
   // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
   inFlight ??= probeAll().then(
     (r) => {
       cached = r;
+      cachedAt = Date.now();
       inFlight = null;
       return r;
     },
@@ -41,6 +58,13 @@ export function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport>
     },
   );
   return inFlight;
+}
+
+/** 테스트용 — 모듈 캐시를 비운다 */
+export function resetDoctorCache(): void {
+  cached = null;
+  cachedAt = 0;
+  inFlight = null;
 }
 
 async function probeAll(): Promise<DoctorReport> {
