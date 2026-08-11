@@ -35,6 +35,18 @@ npm run dev
 # 웹 UI: http://localhost:5173  /  API: http://localhost:4310
 ```
 
+## 다른 PC에서 열어볼 때
+
+`workspace/`는 깃에 올라가지 않아 새 PC에서는 화면이 전부 비어 있습니다.
+샘플 하나를 심어두면 눌러볼 것이 생깁니다.
+
+```bash
+npm run seed     # 실제 영상 4개 + 나레이션으로 잡 하나를 음성 단계까지 만든다
+npm run dev
+```
+
+인터넷도 API 키도 필요 없고, ffmpeg가 없으면 없는 만큼만 건너뜁니다. 자세한 내용은 `samples/README.md`.
+
 ## API 키 (필요한 것만)
 
 앱의 **API 키** 메뉴에서 등록합니다. 키는 `workspace/secrets.json`에만 저장되고 깃에 올라가지 않습니다.
