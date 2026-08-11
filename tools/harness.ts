@@ -816,6 +816,37 @@ async function main(): Promise<void> {
     return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
   });
 
+  await step('바이럴 발굴 — 키 없으면 차단 · 보관함 왕복', async () => {
+    // 키가 없는데 조용히 빈 목록을 주면 사용자는 "터진 영상이 없구나"로 오해한다
+    const r = await fetch(`${API}/viral/discover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords: ['주방 수납'] }),
+    });
+    assert(r.status === 400, `키 없이 발굴이 차단되지 않음 (status ${r.status})`);
+    assert(String((await r.json()).error).includes('API 키'), '안내 문구에 키 언급이 없음');
+
+    // 보관함은 유튜브 키 없이도 동작해야 한다 (저장된 항목을 보는 기능이므로)
+    const item = {
+      video: {
+        videoId: 'vh1', title: '주방 틈새 정리', channelId: 'ch1', channelTitle: '살림채널',
+        publishedAt: new Date(Date.now() - 3 * 86400_000).toISOString(), thumbnail: '',
+        viewCount: 2_260_000, likeCount: 0, commentCount: 0, durationSec: 42,
+        url: 'https://www.youtube.com/watch?v=vh1',
+      },
+      source: 'youtube', keywords: ['주방 수납'], subscriberCount: 4200,
+      viewsPerDay: 753_333, outlierRatio: 538.1, ageDays: 3,
+      discoveredAt: new Date().toISOString(), note: '',
+    };
+    await post('/viral/board', item);
+    await post('/viral/board', item); // 같은 영상을 두 번 담아도 하나여야 한다
+    const board = await get<Array<{ video: { videoId: string } }>>('/viral/board');
+    assert(board.length === 1, `보관함 중복: ${board.length}건`);
+
+    const after = await del<unknown[]>(`/viral/board/${item.video.videoId}`);
+    assert(after.length === 0, '보관 해제가 반영되지 않음');
+    return '키 없음 400 · 보관 중복 방지 · 해제 확인';
+  });
+
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
   await step('요청서 파일 감시 — result/.done 감지 → 자동 반영', async () => {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'upload-kit' });

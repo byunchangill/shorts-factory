@@ -2,6 +2,9 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { YOUTUBE_DAILY_QUOTA } from '@shared/constants';
+import { ViralItemSchema } from '@shared/types';
+import { discoverViral, sortViral } from '../youtube/viral.js';
+import { readBoard, saveToBoard, removeFromBoard } from '../store/viralBoard.js';
 import { readQuota, remaining } from '../youtube/quota.js';
 import { clearCache } from '../youtube/client.js';
 import {
@@ -27,6 +30,48 @@ router.get('/youtube/status', async (_req, res) => {
 
 router.post('/youtube/cache/clear', async (_req, res) => {
   res.json({ cleared: await clearCache() });
+});
+
+// ── 바이럴 제품 발굴 ──────────────────────────────────────────────
+
+/**
+ * 키워드로 최근 급상승 영상을 모아 이상치 점수를 매긴다.
+ * 비용이 큰 동작(키워드당 100유닛)이라 키워드 수를 제한한다 —
+ * 실수로 20개를 넣으면 하루 쿼터의 5분의 1이 한 번에 나간다.
+ */
+router.post('/viral/discover', async (req, res) => {
+  if (!(await hasKey('youtube'))) {
+    return res.status(400).json({
+      error: '유튜브 API 키가 없습니다. "API 키" 메뉴에서 먼저 등록하세요.',
+    });
+  }
+  const body = z.object({
+    keywords: z.array(z.string().min(1)).min(1).max(10),
+    withinDays: z.number().int().min(1).max(90).default(7),
+    shortsOnly: z.boolean().default(true),
+    perKeyword: z.number().int().min(5).max(50).default(25),
+    sort: z.enum(['outlier', 'viewsPerDay', 'views', 'newest']).default('outlier'),
+  }).parse(req.body ?? {});
+
+  const items = await discoverViral(body);
+  const ledger = await readQuota();
+  res.json({
+    items: sortViral(items, body.sort),
+    quota: { used: ledger.used, total: YOUTUBE_DAILY_QUOTA, remaining: remaining(ledger) },
+  });
+});
+
+router.get('/viral/board', async (_req, res) => {
+  res.json(await readBoard());
+});
+
+router.post('/viral/board', async (req, res) => {
+  const item = ViralItemSchema.parse(req.body);
+  res.json(await saveToBoard(item));
+});
+
+router.delete('/viral/board/:videoId', async (req, res) => {
+  res.json(await removeFromBoard(req.params.videoId));
 });
 
 // ── 검색 / 인기 ───────────────────────────────────────────────────

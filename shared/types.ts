@@ -331,6 +331,26 @@ export const YouTubeVideoSchema = z.object({
 });
 export type YouTubeVideo = z.infer<typeof YouTubeVideoSchema>;
 
+/**
+ * 바이럴 발굴 항목.
+ * 지금은 유튜브만 채우지만, 나중에 붙일 틱톡·인스타도 같은 카드로 보여줄 수 있게
+ * `source`를 두고 플랫폼 공통 필드만 담는다.
+ */
+export const ViralItemSchema = z.object({
+  video: YouTubeVideoSchema,
+  source: z.enum(['youtube', 'tiktok', 'instagram']).default('youtube'),
+  /** 이 영상이 걸린 검색 키워드들 (여러 키워드에서 겹쳐 나오면 그만큼 강한 신호) */
+  keywords: z.array(z.string()).default([]),
+  subscriberCount: z.number().default(0),
+  viewsPerDay: z.number().default(0),
+  outlierRatio: z.number().default(0),
+  ageDays: z.number().default(0),
+  discoveredAt: z.string(),
+  /** 보관함에 담아둔 항목인지 — 담아둔 것만 workspace에 남는다 */
+  note: z.string().default(''),
+});
+export type ViralItem = z.infer<typeof ViralItemSchema>;
+
 export const ChannelAnalysisSchema = z.object({
   channelId: z.string(),
   title: z.string(),
