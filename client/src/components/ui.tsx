@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
 
 export function Button({
@@ -97,6 +98,65 @@ export function Modal({
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * 되돌리기 어려운 동작(삭제) 확인창.
+ *
+ * `confirmWord`를 주면 그 말을 그대로 타이핑해야 버튼이 열린다 —
+ * 카테고리 하나에 영상 작업이 통째로 딸려가므로, 눌러서 지워지는 거리를 벌린다.
+ */
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel = '삭제',
+  confirmWord,
+  pending,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  description: ReactNode;
+  confirmLabel?: string;
+  confirmWord?: string;
+  pending?: boolean;
+  error?: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  // 창을 닫았다 다시 열면 입력은 비어 있어야 한다 (앞서 친 이름이 남아 바로 눌리면 안 된다)
+  useEffect(() => {
+    if (!open) setTyped('');
+  }, [open]);
+
+  const ready = !confirmWord || typed.trim() === confirmWord;
+
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <div className="space-y-3 text-sm text-slate-600">
+        {description}
+        {confirmWord && (
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">
+              확인을 위해 <b className="text-slate-700">{confirmWord}</b> 를 입력하세요
+            </label>
+            <Input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+          </div>
+        )}
+        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onClose}>취소</Button>
+          <Button variant="danger" onClick={onConfirm} disabled={!ready || pending}>
+            {pending ? '삭제 중…' : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { MENUS, type JobState } from '@shared/constants';
 import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
+import { trashJob } from '../store/remove.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
@@ -87,6 +88,16 @@ router.post('/jobs/:jid/transition', async (req, res) => {
       });
     }
   }
+});
+
+/**
+ * 영상 작업 삭제 — 소재·클립·대본·요청서·산출물이 한 폴더라 통째로 옮긴다.
+ * 지우지 않고 workspace/.trash 로 옮기므로 응답의 trashed 경로로 되돌릴 수 있다.
+ */
+router.delete('/jobs/:jid', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const result = await trashJob(ref);
+  res.json({ ok: true, ...result });
 });
 
 router.get('/jobs/:jid/events', async (req, res) => {

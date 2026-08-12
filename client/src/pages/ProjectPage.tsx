@@ -8,7 +8,7 @@ import {
   type GuidelineFile, type Menu,
 } from '@shared/constants';
 import { api, ApiBootingError } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Input, Modal, Textarea } from '@/components/ui';
+import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal, Textarea } from '@/components/ui';
 import { StepIndicator } from '@/components/pipeline';
 
 interface JobSummary {
@@ -58,6 +58,7 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [target, setTarget] = useState<JobSummary | null>(null);
   const jobs = useQuery({
     queryKey: ['jobs', menu, pid],
     queryFn: () => api.get<JobSummary[]>(`/projects/${menu}/${pid}/jobs`),
@@ -69,6 +70,16 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
       void qc.invalidateQueries({ queryKey: ['active-jobs'] });
       setOpen(false);
       setTitle('');
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (j: JobSummary) => api.del(`/jobs/${j.id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['jobs'] });
+      void qc.invalidateQueries({ queryKey: ['active-jobs'] });
+      void qc.invalidateQueries({ queryKey: ['packets'] });
+      setTarget(null);
     },
   });
 
@@ -102,18 +113,53 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
       </div>
       {jobs.data?.length === 0 && <EmptyState message="아직 작업이 없습니다." />}
       {(jobs.data ?? []).map((j) => (
-        <Link key={j.id} to={`/job/${j.id}`} className="block">
-          <Card className="transition-shadow hover:shadow-md">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="font-medium">{j.title}</span>
-              <Badge color={j.state === 'done' ? 'green' : j.state === 'failed' ? 'red' : 'blue'}>
-                {STATE_LABELS[j.state] ?? j.state}
-              </Badge>
-            </div>
-            <StepIndicator pipeline={j.pipeline} state={j.state} />
-          </Card>
-        </Link>
+        // 삭제 버튼은 링크 밖에 둔다 — 안에 넣으면 눌렀을 때 작업 화면으로 넘어가 버린다
+        <div key={j.id} className="group relative">
+          <Link to={`/job/${j.id}`} className="block">
+            <Card className="transition-shadow hover:shadow-md">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-medium">{j.title}</span>
+                <div className="flex items-center gap-2">
+                  <Badge color={j.state === 'done' ? 'green' : j.state === 'failed' ? 'red' : 'blue'}>
+                    {STATE_LABELS[j.state] ?? j.state}
+                  </Badge>
+                  {/* 배지 자리를 미리 비워둔다 — 버튼이 나타날 때 배지가 밀리지 않게 */}
+                  <span className="w-5" />
+                </div>
+              </div>
+              <StepIndicator pipeline={j.pipeline} state={j.state} />
+            </Card>
+          </Link>
+          <button
+            className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+            title="이 영상 작업 삭제"
+            onClick={() => { remove.reset(); setTarget(j); }}
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
       ))}
+
+      <ConfirmDialog
+        open={!!target}
+        title="영상 작업 삭제"
+        pending={remove.isPending}
+        error={remove.isError ? `삭제하지 못했습니다 — ${remove.error.message}` : undefined}
+        onConfirm={() => target && remove.mutate(target)}
+        onClose={() => setTarget(null)}
+        description={
+          <>
+            <p>
+              <b className="text-slate-800">{target?.title}</b> 작업의 소재·클립·대본·요청서·산출물이
+              모두 사라집니다.
+            </p>
+            <p className="text-xs text-slate-500">
+              완전히 지우지 않고 <code>workspace/.trash/</code> 로 옮깁니다 — 되돌리려면 그 폴더를
+              원래 자리로 옮기면 됩니다. 이미 내보낸 결과물 폴더는 그대로 남습니다.
+            </p>
+          </>
+        }
+      />
       <Modal open={open} onClose={() => setOpen(false)} title="새 영상 작업">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 1편 - 흡입력 비교" autoFocus />
 

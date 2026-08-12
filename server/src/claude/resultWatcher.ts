@@ -20,6 +20,9 @@ const SWEEP_INTERVAL_MS = 5_000;
 /** 워처가 들어갈 필요가 없는 무거운 폴더 — 영상·프레임·음성은 감시 대상이 아니다 */
 const HEAVY_DIRS = new Set([
   'sources', 'output', 'clips', 'frames', 'voice', 'subtitles', 'cache', 'product',
+  // 삭제한 잡·카테고리가 옮겨지는 곳 (store/remove.ts). 그 안에도 처리 대기 중이던
+  // requests/*/result/.done 가 그대로 들어 있어, 감시하면 이미 지운 잡의 결과를 다시 물어온다
+  '.trash',
 ]);
 
 /**

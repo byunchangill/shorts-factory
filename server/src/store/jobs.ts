@@ -75,6 +75,19 @@ export function listJobRefs(): JobRef[] {
   return [...jobIndex.values()];
 }
 
+/**
+ * 인덱스에서만 뺀다 (폴더 정리는 `store/remove.ts`).
+ *
+ * 같은 잡 ID가 다른 프로젝트에도 있을 수 있어(스캔 시 경고만 남기고 넘어간다),
+ * 인덱스가 가리키는 곳이 정말 이 잡일 때만 지운다 — 아니면 남의 잡을 화면에서 지운다.
+ */
+export function forgetJob(ref: JobRef): void {
+  const indexed = jobIndex.get(ref.jobId);
+  if (indexed && indexed.menu === ref.menu && indexed.projectId === ref.projectId) {
+    jobIndex.delete(ref.jobId);
+  }
+}
+
 export async function readJob(ref: JobRef): Promise<Job | null> {
   const raw = await readJson<unknown>(paths.jobJson(ref.menu, ref.projectId, ref.jobId));
   const parsed = JobSchema.safeParse(raw);
