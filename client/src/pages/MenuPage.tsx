@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { FolderPlus, Folder, Sparkles } from 'lucide-react';
+import { FolderPlus, Folder } from 'lucide-react';
 import { MENU_LABELS, type Menu } from '@shared/constants';
-import { api, ApiBootingError } from '@/api/client';
+import { api } from '@/api/client';
 import { Badge, Button, Card, EmptyState, Input, Modal } from '@/components/ui';
 
 interface ProjectWithCounts {
@@ -48,32 +48,9 @@ export default function MenuPage({ menu }: { menu: Menu }) {
     },
   });
 
-  // 샘플 소재는 해외영상 짜집기 흐름(다운로드 → 분석 → 정리)용이라 menu-a에서만 쓴다
-  const sample = useQuery({
-    queryKey: ['sample'],
-    queryFn: () => api.get<{ available: boolean; title: string }>('/projects/sample'),
-    enabled: menu === 'menu-a',
-  });
-
-  const createSample = useMutation({
-    mutationFn: () => api.post<{ project: { id: string }; job: { id: string } }>(
-      '/projects/sample', { title: title.trim() || undefined }),
-    // 개발 서버는 코드가 바뀌면 재시작한다 (git pull 직후가 특히 그렇다).
-    // 그 몇 초를 사용자가 실패로 겪지 않도록 부팅 중이면 조용히 다시 시도한다
-    retry: (count, err) => err instanceof ApiBootingError && count < 5,
-    retryDelay: 2000,
-    onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ['projects'] });
-      setOpen(false);
-      setTitle('');
-      navigate(`/job/${r.job.id}`);
-    },
-  });
-
   // 이전 실패 메시지가 남은 채로 모달이 다시 열리지 않게 한다
   const openModal = () => {
     create.reset();
-    createSample.reset();
     setOpen(true);
   };
 
@@ -83,13 +60,13 @@ export default function MenuPage({ menu }: { menu: Menu }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{MENU_LABELS[menu]} — 작업 폴더</h2>
+        <h2 className="text-lg font-semibold">{MENU_LABELS[menu]} — 카테고리</h2>
         <div className="flex gap-2">
           {menu === 'menu-b' && (
             <Link to="/formats"><Button variant="secondary">고유 포맷 관리</Button></Link>
           )}
           <Button onClick={openModal} disabled={!!noFormats}>
-            <FolderPlus size={16} /> 새 폴더
+            <FolderPlus size={16} /> 새 카테고리
           </Button>
         </div>
       </div>
@@ -106,8 +83,8 @@ export default function MenuPage({ menu }: { menu: Menu }) {
 
       {projects.data?.length === 0 && !noFormats && (
         <EmptyState
-          message="작업 폴더가 없습니다. 제품/주제별로 폴더를 만들어 시작하세요."
-          action={<Button onClick={openModal}><FolderPlus size={16} /> 새 폴더</Button>}
+          message="카테고리가 없습니다. 생활용품·주방·수납처럼 묶어서 만들고, 그 안에 영상 작업을 하나씩 만드세요."
+          action={<Button onClick={openModal}><FolderPlus size={16} /> 새 카테고리</Button>}
         />
       )}
 
@@ -130,11 +107,11 @@ export default function MenuPage({ menu }: { menu: Menu }) {
         ))}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="새 작업 폴더">
+      <Modal open={open} onClose={() => setOpen(false)} title="새 카테고리">
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-sm font-medium">폴더 이름 (제품/주제)</label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 무선청소기" autoFocus />
+            <label className="mb-1 block text-sm font-medium">카테고리 이름</label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 생활용품" autoFocus />
           </div>
           {menu === 'menu-b' && (
             <div>
@@ -149,31 +126,11 @@ export default function MenuPage({ menu }: { menu: Menu }) {
               </select>
             </div>
           )}
-          {(create.isError || createSample.isError) && (
+          {create.isError && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              폴더를 만들지 못했습니다 — {(create.error ?? createSample.error)?.message}
+              카테고리를 만들지 못했습니다 — {create.error.message}
             </p>
           )}
-
-          {/* 리포에 들어 있는 실제 영상으로 바로 시작 — 새 PC에서 눌러볼 것을 만든다 */}
-          {sample.data?.available && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p className="text-sm font-medium">샘플 소재로 시작</p>
-              <p className="mt-1 text-xs text-slate-500">
-                리포에 들어 있는 주방 선반 영상 4개를 넣고 <b>영상 분석</b>부터 시작합니다.
-                이름을 비워두면 "{sample.data.title}"로 만듭니다. 원본 샘플은 그대로 보존됩니다.
-              </p>
-              <Button
-                variant="secondary"
-                className="mt-2"
-                onClick={() => createSample.mutate()}
-                disabled={createSample.isPending}
-              >
-                <Sparkles size={15} /> {createSample.isPending ? '만드는 중…' : '샘플 사용하기'}
-              </Button>
-            </div>
-          )}
-
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpen(false)}>취소</Button>
             <Button

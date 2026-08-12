@@ -10,7 +10,7 @@
 - `workspace/` — 모든 사용자 데이터 + API 키 (gitignore). 서버와 Claude Code가 공유
 
 실행: `npm run dev` (API+UI) / 점검: `npm run doctor` / 단위 테스트: `npm test` / E2E: `npm run harness`
-샘플 심기: `npm run seed` (또는 화면의 "샘플 사용하기") — `samples/`의 실제 영상으로 잡 하나를
+샘플 심기: `npm run seed` (또는 새 영상 작업 모달의 "샘플 사용하기") — `samples/`의 실제 영상으로 잡 하나를
 **영상 분석 단계까지** 만든다. 그 뒤는 직접 밟아 시험하는 것이 목적이라 채우지 않는다
 (`--full`로 음성 단계까지 채울 수 있다). 원본은 항상 복사해 쓰고 옮기지 않는다.
 `workspace/`가 깃에 없어 새 PC에서 화면이 비는 문제를 메운다 (`samples/README.md`)
@@ -27,7 +27,8 @@
 | B. 제품정보리뷰 | `workspace/menu-b/` | 고유 포맷 선택 → 대본 → 씬 이미지 → 음성 → 조립 |
 | 유튜브 리서치 | — | 키워드/쇼츠 검색, 인기 쇼츠, 타채널 분석, 내 채널 분석(OAuth). 검색 결과를 메뉴 A 잡의 소스로 바로 전달 |
 
-프로젝트(세부 폴더) 구조: `{menu}/{project}/` 아래 `project.json`, `guidelines/`(대본·영상·채널 지침), `product/`(쿠팡 상세페이지 첨부), `jobs/{jobId}/`.
+프로젝트 = **카테고리 폴더**(생활용품·주방 등)이고 그 안의 잡 하나가 영상 한 편이다.
+구조: `{menu}/{project}/` 아래 `project.json`, `guidelines/`(대본·영상·채널 지침), `product/`(쿠팡 상세페이지 첨부), `jobs/{jobId}/`.
 
 ## 요청서 프로토콜 (AI 연동의 핵심)
 

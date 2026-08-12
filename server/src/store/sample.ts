@@ -5,17 +5,20 @@ import { REPO_ROOT, paths, loadSettings } from './workspace.js';
 import { exists, ensureDir } from '../util/fsx.js';
 import { createProject, getProject } from './projects.js';
 import { createJob, type JobRef } from './jobs.js';
+import type { Menu } from '@shared/constants';
 import {
   attachSourceFile, analyzePendingSources, reconcileDownloadState,
 } from '../pipeline/downloadQueue.js';
 import * as jobs from './jobs.js';
 
 /**
- * 샘플 소재로 작업 폴더 만들기.
+ * 샘플 소재로 영상 작업 만들기.
  *
  * `workspace/`는 깃에 올라가지 않아 새 PC에서는 볼 것도 눌러볼 것도 없다.
- * 리포에 들어 있는 실제 영상으로 잡 하나를 만들어 **영상 분석 단계부터** 시작하게 한다.
+ * 리포에 들어 있는 실제 영상으로 **영상 작업 하나**를 만들어 분석 단계부터 시작하게 한다.
  * 그 뒤 존 편집·대본·컷 선택·음성·조립은 사용자가 직접 밟는다 — 앞질러 채우지 않는다.
+ *
+ * 폴더는 카테고리(생활용품 등), 그 안의 잡이 영상 한 편이다. 샘플도 잡 단위다.
  *
  * `samples/`의 원본은 절대 건드리지 않는다. 항상 복사본을 작업 폴더에 넣는다
  * (첨부 처리가 파일을 rename으로 옮기기 때문에, 원본을 그대로 넘기면 사라진다).
@@ -30,7 +33,10 @@ const SAMPLE_CLIPS = ['clip1.mp4', 'clip2.mp4', 'clip3.mp4', 'clip4.mp4'];
 export const SAMPLE_NARRATION = path.join(SAMPLE_DIR, 'narration.mp3');
 export const SAMPLE_SRT = path.join(SAMPLE_DIR, 'narration.srt');
 
-export const DEFAULT_SAMPLE_TITLE = '샘플-주방선반';
+/** 카테고리를 따로 만들지 않고 심을 때 쓰는 기본 카테고리 (npm run seed) */
+export const DEFAULT_SAMPLE_CATEGORY = '생활용품';
+/** 샘플 영상 작업의 기본 제목 */
+export const DEFAULT_SAMPLE_JOB_TITLE = '샘플 - 주방 선반';
 
 /** 리포에 샘플이 실제로 들어 있는지 — 없으면 화면에서 버튼을 감춘다 */
 export async function sampleAvailable(): Promise<boolean> {
@@ -38,38 +44,33 @@ export async function sampleAvailable(): Promise<boolean> {
   return checks.every(Boolean);
 }
 
-/** 같은 이름이 있으면 뒤에 번호를 붙인다 — 샘플을 여러 번 만들어 볼 수 있어야 한다 */
-async function freeTitle(base: string): Promise<string> {
-  if (!(await getProject('menu-a', base))) return base;
-  for (let i = 2; i < 100; i++) {
-    const candidate = `${base}-${i}`;
-    if (!(await getProject('menu-a', candidate))) return candidate;
-  }
-  throw new Error('샘플 폴더 이름을 만들지 못했습니다');
-}
-
 export interface SampleResult {
-  project: Project;
   job: Job;
   ref: JobRef;
   attached: number;
 }
 
 /**
- * 샘플 프로젝트 + 잡을 만들고 소재 영상을 첨부한다.
- * 첨부와 동시에 클립 분석·프레임 추출이 백그라운드로 돌아 "영상 분석" 단계가 된다.
+ * 카테고리 안에 샘플 영상 작업을 만들고 소재를 첨부한다.
+ * 첨부 직후 클립 분석·프레임 추출이 배경에서 돌아 "영상 분석" 단계로 넘어간다.
  */
-export async function createSampleProject(title?: string): Promise<SampleResult> {
+export async function createSampleJob(
+  menu: Menu,
+  projectId: string,
+  title?: string,
+): Promise<SampleResult> {
   if (!(await sampleAvailable())) {
     throw Object.assign(
       new Error(`샘플 소재가 없습니다 (${SAMPLE_DIR}). 리포를 다시 받아주세요.`),
       { status: 400 },
     );
   }
+  if (!(await getProject(menu, projectId))) {
+    throw Object.assign(new Error(`카테고리 없음: ${projectId}`), { status: 404 });
+  }
 
-  const project = await createProject('menu-a', await freeTitle(title?.trim() || DEFAULT_SAMPLE_TITLE));
-  const job = await createJob('menu-a', project.id, '1편');
-  const ref: JobRef = { menu: 'menu-a', projectId: project.id, jobId: job.id };
+  const job = await createJob(menu, projectId, title?.trim() || DEFAULT_SAMPLE_JOB_TITLE);
+  const ref: JobRef = { menu, projectId, jobId: job.id };
 
   const settings = await loadSettings();
   const sourcesDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'sources');
@@ -88,8 +89,8 @@ export async function createSampleProject(title?: string): Promise<SampleResult>
     }
     await jobs.transition(ref, 'collecting', 'server');
   } catch (e) {
-    // 반쯤 만들어진 폴더를 남기지 않는다 — 사용자는 지울 방법도 마땅치 않다
-    await fsp.rm(paths.project(ref.menu, ref.projectId), { recursive: true, force: true })
+    // 반쯤 만들어진 작업을 남기지 않는다 — 카테고리는 사용자 것이므로 잡만 지운다
+    await fsp.rm(paths.job(ref.menu, ref.projectId, ref.jobId), { recursive: true, force: true })
       .catch(() => {});
     throw e;
   }
@@ -100,5 +101,18 @@ export async function createSampleProject(title?: string): Promise<SampleResult>
     .then(() => reconcileDownloadState(ref))
     .catch((e) => jobs.logJobEvent(ref, { type: 'sample.analyze_failed', error: String(e) }));
 
-  return { project, job: (await jobs.readJob(ref))!, ref, attached };
+  return { job: (await jobs.readJob(ref))!, ref, attached };
+}
+
+/**
+ * 카테고리까지 함께 만드는 변형 — `npm run seed`처럼 아무것도 없는 상태에서 쓴다.
+ * 카테고리가 이미 있으면 그 안에 작업만 추가한다.
+ */
+export async function seedSample(
+  category = DEFAULT_SAMPLE_CATEGORY,
+): Promise<SampleResult & { project: Project }> {
+  const existing = await getProject('menu-a', category);
+  const project = existing ?? (await createProject('menu-a', category));
+  const result = await createSampleJob('menu-a', project.id);
+  return { ...result, project };
 }

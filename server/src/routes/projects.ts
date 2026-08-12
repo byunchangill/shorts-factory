@@ -9,7 +9,8 @@ import { listJobs } from '../store/jobs.js';
 import fsp from 'node:fs/promises';
 import { paths, toMediaUrl, REPO_ROOT } from '../store/workspace.js';
 import {
-  createSampleProject, sampleAvailable, DEFAULT_SAMPLE_TITLE, SAMPLE_NARRATION, SAMPLE_SRT,
+  createSampleJob, seedSample, sampleAvailable,
+  DEFAULT_SAMPLE_JOB_TITLE, DEFAULT_SAMPLE_CATEGORY, SAMPLE_NARRATION, SAMPLE_SRT,
 } from '../store/sample.js';
 import { slugify } from '../util/fsx.js';
 import { extractZip, safeEntryPath } from '../util/zip.js';
@@ -52,26 +53,40 @@ router.post('/projects', async (req, res) => {
 });
 
 /**
- * 샘플 소재로 작업 폴더 만들기.
+ * 샘플 소재 안내.
  *
  * `/projects/:menu/:pid` 보다 먼저 선언한다 — 뒤에 두면 :menu='sample'로 잡힌다.
  */
 router.get('/projects/sample', async (_req, res) => {
-  res.json({ available: await sampleAvailable(), title: DEFAULT_SAMPLE_TITLE });
-});
-
-router.post('/projects/sample', async (req, res) => {
-  const body = z.object({ title: z.string().optional() }).parse(req.body ?? {});
-  const r = await createSampleProject(body.title);
-  res.status(201).json({
-    project: r.project,
-    job: r.job,
-    attached: r.attached,
-    // 나레이션·자막은 음성 단계에서 직접 첨부할 수 있게 경로를 알려준다
-    narration: toWorkspaceLikePath(SAMPLE_NARRATION),
-    subtitles: toWorkspaceLikePath(SAMPLE_SRT),
+  res.json({
+    available: await sampleAvailable(),
+    jobTitle: DEFAULT_SAMPLE_JOB_TITLE,
+    category: DEFAULT_SAMPLE_CATEGORY,
   });
 });
+
+/** 카테고리까지 함께 만드는 경로 — npm run seed 용 */
+router.post('/projects/sample', async (req, res) => {
+  const body = z.object({ category: z.string().optional() }).parse(req.body ?? {});
+  const r = await seedSample(body.category);
+  res.status(201).json({ ...r, ...sampleExtras() });
+});
+
+/** 화면에서 쓰는 경로 — 이미 있는 카테고리 안에 샘플 영상 작업을 만든다 */
+router.post('/projects/:menu/:pid/jobs/sample', async (req, res) => {
+  const menu = parseMenu(req.params.menu);
+  const body = z.object({ title: z.string().optional() }).parse(req.body ?? {});
+  const r = await createSampleJob(menu, req.params.pid, body.title);
+  res.status(201).json({ ...r, ...sampleExtras() });
+});
+
+/** 나레이션·자막은 음성 단계에서 직접 첨부할 수 있게 경로를 알려준다 */
+function sampleExtras(): { narration: string; subtitles: string } {
+  return {
+    narration: toWorkspaceLikePath(SAMPLE_NARRATION),
+    subtitles: toWorkspaceLikePath(SAMPLE_SRT),
+  };
+}
 
 /** 화면에 보여줄 용도의 리포 상대경로 (workspace 밖이라 /media로는 못 준다) */
 function toWorkspaceLikePath(abs: string): string {

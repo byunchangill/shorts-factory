@@ -867,8 +867,11 @@ async function main(): Promise<void> {
     const info = await get<{ available: boolean }>('/projects/sample');
     assert(info.available, '샘플 소재를 인식하지 못함');
 
-    const r = await post<{ project: { id: string }; job: JobView; attached: number }>(
-      '/projects/sample', {});
+    // 폴더는 카테고리, 샘플은 그 안의 영상 작업 하나다
+    const category = '샘플카테고리';
+    await post('/projects', { menu: 'menu-a', title: category });
+    const r = await post<{ job: JobView; attached: number }>(
+      `/projects/menu-a/${encodeURIComponent(category)}/jobs/sample`, {});
     assert(r.attached >= 4, `첨부된 소재가 부족함: ${r.attached}`);
 
     // 분석은 배경에서 돈다 — 요청은 바로 끝나고 클립이 나중에 채워진다
@@ -889,11 +892,18 @@ async function main(): Promise<void> {
       assert(after.get(name) === hash, `샘플 원본이 변경됨: ${name}`);
     }
 
-    // 같은 이름으로 또 만들어도 겹치지 않아야 한다
-    const again = await post<{ project: { id: string } }>('/projects/sample', {});
-    assert(again.project.id !== r.project.id, `샘플 폴더 이름이 겹침: ${again.project.id}`);
+    // 같은 카테고리에 또 만들어도 앞의 작업을 덮지 않는다
+    const again = await post<{ job: JobView }>(
+      `/projects/menu-a/${encodeURIComponent(category)}/jobs/sample`, {});
+    assert(again.job.id !== r.job.id, `샘플 작업 id가 겹침: ${again.job.id}`);
 
-    return `${r.attached}개 소재 · ${sj.state}까지 · 원본 ${before.size}개 무결 · 재생성 시 이름 분리`;
+    // 없는 카테고리에는 만들 수 없어야 한다 (엉뚱한 폴더가 생기면 안 된다)
+    const orphan = await fetch(`${API}/projects/menu-a/없는카테고리/jobs/sample`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    assert(orphan.status === 404, `없는 카테고리에 만들어짐: ${orphan.status}`);
+
+    return `${r.attached}개 소재 · ${sj.state}까지 · 원본 ${before.size}개 무결 · 카테고리 안에 여러 편`;
   });
 
   // ── 제품정보리뷰(menu-b) 전용 규칙 ──

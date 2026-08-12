@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Plus, Upload, Save, FolderOpen, Trash2 } from 'lucide-react';
+import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles } from 'lucide-react';
 import {
   GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS,
   type GuidelineFile, type Menu,
 } from '@shared/constants';
-import { api } from '@/api/client';
+import { api, ApiBootingError } from '@/api/client';
 import { Badge, Button, Card, EmptyState, Input, Modal, Textarea } from '@/components/ui';
 import { StepIndicator } from '@/components/pipeline';
 
@@ -55,6 +55,7 @@ export default function ProjectPage() {
 
 function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const jobs = useQuery({
@@ -68,6 +69,29 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
       void qc.invalidateQueries({ queryKey: ['active-jobs'] });
       setOpen(false);
       setTitle('');
+    },
+  });
+
+  // 샘플 소재는 해외영상 짜집기 흐름(다운로드 → 분석 → 정리)용이라 menu-a에서만 쓴다
+  const sample = useQuery({
+    queryKey: ['sample'],
+    queryFn: () => api.get<{ available: boolean; jobTitle: string }>('/projects/sample'),
+    enabled: menu === 'menu-a',
+  });
+
+  const createSample = useMutation({
+    mutationFn: () => api.post<{ job: { id: string } }>(
+      `/projects/${menu}/${pid}/jobs/sample`, { title: title.trim() || undefined }),
+    // 개발 서버는 코드가 바뀌면 재시작한다 (git pull 직후가 특히 그렇다).
+    // 그 몇 초를 사용자가 실패로 겪지 않도록 부팅 중이면 조용히 다시 시도한다
+    retry: (count, err) => err instanceof ApiBootingError && count < 5,
+    retryDelay: 2000,
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['jobs'] });
+      void qc.invalidateQueries({ queryKey: ['active-jobs'] });
+      setOpen(false);
+      setTitle('');
+      navigate(`/job/${r.job.id}`);
     },
   });
 
@@ -92,6 +116,32 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
       ))}
       <Modal open={open} onClose={() => setOpen(false)} title="새 영상 작업">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 1편 - 흡입력 비교" autoFocus />
+
+        {(create.isError || createSample.isError) && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            만들지 못했습니다 — {(create.error ?? createSample.error)?.message}
+          </p>
+        )}
+
+        {/* 리포에 들어 있는 실제 영상으로 바로 시작 — 새 PC에서 눌러볼 것을 만든다 */}
+        {sample.data?.available && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-sm font-medium">샘플 소재로 시작</p>
+            <p className="mt-1 text-xs text-slate-500">
+              리포에 들어 있는 주방 선반 영상 4개를 넣고 <b>영상 분석</b>부터 시작합니다.
+              제목을 비워두면 "{sample.data.jobTitle}"로 만듭니다. 원본 샘플은 그대로 보존됩니다.
+            </p>
+            <Button
+              variant="secondary"
+              className="mt-2"
+              onClick={() => createSample.mutate()}
+              disabled={createSample.isPending}
+            >
+              <Sparkles size={15} /> {createSample.isPending ? '만드는 중…' : '샘플 사용하기'}
+            </Button>
+          </div>
+        )}
+
         <div className="mt-3 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)}>취소</Button>
           <Button onClick={() => create.mutate()} disabled={!title.trim() || create.isPending}>만들기</Button>

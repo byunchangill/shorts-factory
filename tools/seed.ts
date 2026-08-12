@@ -30,7 +30,7 @@ const FORCE = process.argv.includes('--force');
 /** 대본·음성까지 미리 채울지 — 기본은 분석 단계에서 멈춰 사용자가 직접 밟게 한다 */
 const FULL = process.argv.includes('--full');
 
-const PROJECT = '샘플-주방선반';
+const CATEGORY = '생활용품';
 const MENU = 'menu-a';
 
 const C = {
@@ -120,16 +120,16 @@ async function main(): Promise<void> {
 
   // --force는 서버를 띄우기 전에 지운다 — 실행 중인 서버가 있으면 잡 인덱스에
   // 지워진 잡이 남지만(다음 재시작에 정리된다) 화면과 데이터는 깨끗하다
-  const projectDir = path.join(REPO_ROOT, 'workspace', MENU, PROJECT);
+  const projectDir = path.join(REPO_ROOT, 'workspace', MENU, CATEGORY);
   const existed = await fsp.stat(projectDir).then(() => true).catch(() => false);
   if (existed && !FORCE) {
-    console.log(`이미 있습니다: ${MENU}/${PROJECT}`);
+    console.log(`이미 있습니다: ${MENU}/${CATEGORY}`);
     console.log(C.dim('다시 만들려면: npm run seed -- --force\n'));
     return;
   }
   if (existed) {
     await fsp.rm(projectDir, { recursive: true, force: true });
-    ok('기존 샘플 프로젝트 삭제 (--force)');
+    ok('기존 샘플 카테고리 삭제 (--force)');
   }
 
   const mode = await ensureServer();
@@ -147,9 +147,10 @@ async function main(): Promise<void> {
 
   // ① 프로젝트 + 잡 + 소재 첨부
   // 화면의 "샘플 사용하기" 버튼과 **같은 서버 기능**을 쓴다 — 두 경로가 갈리면 한쪽만 낡는다
-  const created = await post<{ job: JobView; attached: number }>('/projects/sample', { title: PROJECT });
+  const created = await post<{ job: JobView; attached: number }>(
+    '/projects/sample', { category: CATEGORY });
   const job = created.job;
-  ok(`샘플 폴더 생성 — ${MENU}/${PROJECT} / ${job.id} · 영상 ${created.attached}개 첨부`);
+  ok(`샘플 작업 생성 — ${MENU}/${CATEGORY} / ${job.id} · 영상 ${created.attached}개 첨부`);
 
   let clips: ClipView[] = [];
   if (canMedia) {
@@ -163,7 +164,7 @@ async function main(): Promise<void> {
 
   if (!FULL) {
     const state = (await get<JobView>(`/jobs/${job.id}`)).state;
-    console.log(`\n${C.bold('완료')} — ${MENU}/${PROJECT} / ${job.id} (${state})`);
+    console.log(`\n${C.bold('완료')} — ${MENU}/${CATEGORY} / ${job.id} (${state})`);
     console.log(C.dim('  npm run dev → http://localhost:5173 에서 존 편집부터 직접 진행하세요.'));
     console.log(C.dim('  대본·음성까지 미리 채우려면: npm run seed -- --force --full'));
     console.log('');
@@ -238,7 +239,7 @@ async function main(): Promise<void> {
   }
 
   const state = (await get<JobView>(`/jobs/${job.id}`)).state;
-  console.log(`\n${C.bold('완료')} — ${MENU}/${PROJECT} / ${job.id} (${state})`);
+  console.log(`\n${C.bold('완료')} — ${MENU}/${CATEGORY} / ${job.id} (${state})`);
   console.log(C.dim('  npm run dev → http://localhost:5173 에서 확인하세요.'));
   if (canMedia) {
     console.log(C.dim('  조립까지 해보려면 잡 화면에서 "사용 권리 확인" 후 최종 조립을 누르세요.'));
