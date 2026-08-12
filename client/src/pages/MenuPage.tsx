@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { FolderPlus, Folder } from 'lucide-react';
+import { FolderPlus, Folder, Sparkles } from 'lucide-react';
 import { MENU_LABELS, type Menu } from '@shared/constants';
 import { api } from '@/api/client';
 import { Badge, Button, Card, EmptyState, Input, Modal } from '@/components/ui';
@@ -48,9 +48,28 @@ export default function MenuPage({ menu }: { menu: Menu }) {
     },
   });
 
+  // 샘플 소재는 해외영상 짜집기 흐름(다운로드 → 분석 → 정리)용이라 menu-a에서만 쓴다
+  const sample = useQuery({
+    queryKey: ['sample'],
+    queryFn: () => api.get<{ available: boolean; title: string }>('/projects/sample'),
+    enabled: menu === 'menu-a',
+  });
+
+  const createSample = useMutation({
+    mutationFn: () => api.post<{ project: { id: string }; job: { id: string } }>(
+      '/projects/sample', { title: title.trim() || undefined }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['projects'] });
+      setOpen(false);
+      setTitle('');
+      navigate(`/job/${r.job.id}`);
+    },
+  });
+
   // 이전 실패 메시지가 남은 채로 모달이 다시 열리지 않게 한다
   const openModal = () => {
     create.reset();
+    createSample.reset();
     setOpen(true);
   };
 
@@ -126,11 +145,31 @@ export default function MenuPage({ menu }: { menu: Menu }) {
               </select>
             </div>
           )}
-          {create.isError && (
+          {(create.isError || createSample.isError) && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              폴더를 만들지 못했습니다 — {create.error.message}
+              폴더를 만들지 못했습니다 — {(create.error ?? createSample.error)?.message}
             </p>
           )}
+
+          {/* 리포에 들어 있는 실제 영상으로 바로 시작 — 새 PC에서 눌러볼 것을 만든다 */}
+          {sample.data?.available && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm font-medium">샘플 소재로 시작</p>
+              <p className="mt-1 text-xs text-slate-500">
+                리포에 들어 있는 주방 선반 영상 4개를 넣고 <b>영상 분석</b>부터 시작합니다.
+                이름을 비워두면 "{sample.data.title}"로 만듭니다. 원본 샘플은 그대로 보존됩니다.
+              </p>
+              <Button
+                variant="secondary"
+                className="mt-2"
+                onClick={() => createSample.mutate()}
+                disabled={createSample.isPending}
+              >
+                <Sparkles size={15} /> {createSample.isPending ? '만드는 중…' : '샘플 사용하기'}
+              </Button>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpen(false)}>취소</Button>
             <Button

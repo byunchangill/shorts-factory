@@ -5,10 +5,15 @@
  * 볼 것이 없으면 테스트도 안 되므로, `samples/`의 실제 영상·나레이션으로
  * 프로젝트 하나를 만들어 둔다. 인터넷도 API 키도 필요 없다.
  *
- * 실행: npm run seed          (이미 있으면 건드리지 않음)
- *       npm run seed -- --force  (지우고 다시 만듦)
+ * 기본은 **영상 분석 단계까지만** 만든다 — 그 뒤 존 편집·대본·컷 선택·음성·조립은
+ * 사용자가 직접 밟아야 파이프라인을 처음부터 끝까지 시험할 수 있다.
+ * 화면만 빠르게 채워보고 싶으면 --full로 음성 단계까지 미리 채운다.
  *
- * 도구가 없으면 없는 만큼만 건너뛴다 — ffmpeg 없이도 프로젝트·잡·대본까지는 만들어져
+ * 실행: npm run seed            (분석 단계까지 · 이미 있으면 건드리지 않음)
+ *       npm run seed -- --full  (대본·음성까지 미리 채움)
+ *       npm run seed -- --force (지우고 다시 만듦)
+ *
+ * 도구가 없으면 없는 만큼만 건너뛴다 — ffmpeg 없이도 프로젝트·잡까지는 만들어져
  * 화면 대부분을 볼 수 있다.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -22,10 +27,11 @@ const TSX_BIN = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const SAMPLE_DIR = path.join(REPO_ROOT, 'samples', 'kitchen-shelf');
 const API = 'http://127.0.0.1:4310/api';
 const FORCE = process.argv.includes('--force');
+/** 대본·음성까지 미리 채울지 — 기본은 분석 단계에서 멈춰 사용자가 직접 밟게 한다 */
+const FULL = process.argv.includes('--full');
 
 const PROJECT = '샘플-주방선반';
 const MENU = 'menu-a';
-const JOB_TITLE = '1편';
 
 const C = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -129,39 +135,39 @@ async function main(): Promise<void> {
   const mode = await ensureServer();
   ok(mode === 'attached' ? '실행 중인 서버에 연결' : '서버를 직접 띄움 (끝나면 종료)');
 
-  // 도구 상태에 따라 어디까지 할 수 있는지 먼저 정한다
-  const doctor = await get<{ tools: Array<{ name: string; available: boolean }> }>('/system/doctor');
+  // 도구 상태에 따라 어디까지 할 수 있는지 먼저 정한다.
+  // refresh=1로 다시 확인한다 — seed는 서버가 막 뜬 직후에 물어보는데, 그때가
+  // 부팅이 붐벼 프로세스 실행이 한 번 실패한 결과가 캐시에 남아 있을 확률이 가장 높다
+  // (실제로 ffmpeg이 멀쩡한데 "없음"으로 읽고 분석을 건너뛰었다)
+  const doctor = await get<{ tools: Array<{ name: string; available: boolean }> }>(
+    '/system/doctor?refresh=1');
   const has = (n: string) => doctor.tools.find((t) => t.name === n)?.available ?? false;
   const canMedia = has('ffmpeg') && has('ffprobe');
   if (!canMedia) skip('ffmpeg/ffprobe 없음 — 클립 분석·프레임·음성은 건너뜁니다 (화면 확인은 가능)');
 
-  // ① 프로젝트
-  await post('/projects', { menu: MENU, title: PROJECT });
-  ok(`프로젝트 생성 — ${MENU}/${PROJECT}`);
-
-  // ② 잡
-  const job = await post<JobView>(`/projects/${MENU}/${encodeURIComponent(PROJECT)}/jobs`, { title: JOB_TITLE });
-  ok(`잡 생성 — ${job.id}`);
-
-  // ③ 영상 4개 첨부 (다운로드가 아니라 이미 받아둔 파일 첨부 경로)
-  const clipFiles = ['clip1.mp4', 'clip2.mp4', 'clip3.mp4', 'clip4.mp4'];
-  const fd = new FormData();
-  for (const name of clipFiles) {
-    const buf = await fsp.readFile(path.join(SAMPLE_DIR, name));
-    fd.append('files', new Blob([buf], { type: 'video/mp4' }), name);
-  }
-  const up = await fetch(`${API}/jobs/${job.id}/sources/upload`, { method: 'POST', body: fd });
-  if (!up.ok) throw new Error(`영상 첨부 실패: ${up.status} ${await up.text()}`);
-  ok(`영상 ${clipFiles.length}개 첨부`);
+  // ① 프로젝트 + 잡 + 소재 첨부
+  // 화면의 "샘플 사용하기" 버튼과 **같은 서버 기능**을 쓴다 — 두 경로가 갈리면 한쪽만 낡는다
+  const created = await post<{ job: JobView; attached: number }>('/projects/sample', { title: PROJECT });
+  const job = created.job;
+  ok(`샘플 폴더 생성 — ${MENU}/${PROJECT} / ${job.id} · 영상 ${created.attached}개 첨부`);
 
   let clips: ClipView[] = [];
   if (canMedia) {
     clips = await waitFor('클립 분석', async () => {
       const list = await get<ClipView[]>(`/jobs/${job.id}/clips`);
-      return list.length === clipFiles.length && list.every((c) => c.probe && c.frames.length) ? list : null;
+      return list.length === created.attached && list.every((c) => c.probe && c.frames.length) ? list : null;
     }, 180_000);
     const frames = clips.reduce((s, c) => s + c.frames.length, 0);
     ok(`클립 분석·프레임 추출 — ${clips.length}클립 · 프레임 ${frames}장`);
+  }
+
+  if (!FULL) {
+    const state = (await get<JobView>(`/jobs/${job.id}`)).state;
+    console.log(`\n${C.bold('완료')} — ${MENU}/${PROJECT} / ${job.id} (${state})`);
+    console.log(C.dim('  npm run dev → http://localhost:5173 에서 존 편집부터 직접 진행하세요.'));
+    console.log(C.dim('  대본·음성까지 미리 채우려면: npm run seed -- --force --full'));
+    console.log('');
+    return;
   }
 
   // ④ 대본 — 자막을 씬으로 옮기고, 클립을 고르게 나눠 붙인다

@@ -10,7 +10,9 @@
 - `workspace/` — 모든 사용자 데이터 + API 키 (gitignore). 서버와 Claude Code가 공유
 
 실행: `npm run dev` (API+UI) / 점검: `npm run doctor` / 단위 테스트: `npm test` / E2E: `npm run harness`
-샘플 심기: `npm run seed` — `samples/`의 실제 영상·나레이션으로 잡 하나를 음성 단계까지 만든다.
+샘플 심기: `npm run seed` (또는 화면의 "샘플 사용하기") — `samples/`의 실제 영상으로 잡 하나를
+**영상 분석 단계까지** 만든다. 그 뒤는 직접 밟아 시험하는 것이 목적이라 채우지 않는다
+(`--full`로 음성 단계까지 채울 수 있다). 원본은 항상 복사해 쓰고 옮기지 않는다.
 `workspace/`가 깃에 없어 새 PC에서 화면이 비는 문제를 메운다 (`samples/README.md`)
 
 `npm run harness`(`tools/harness.ts`)는 합성 영상으로 파이프라인 전 구간을 실제로 돌려 영상 1편을 만든다.

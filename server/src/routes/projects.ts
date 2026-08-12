@@ -7,7 +7,10 @@ import { ProductSchema } from '@shared/types';
 import * as projects from '../store/projects.js';
 import { listJobs } from '../store/jobs.js';
 import fsp from 'node:fs/promises';
-import { paths, toMediaUrl } from '../store/workspace.js';
+import { paths, toMediaUrl, REPO_ROOT } from '../store/workspace.js';
+import {
+  createSampleProject, sampleAvailable, DEFAULT_SAMPLE_TITLE, SAMPLE_NARRATION, SAMPLE_SRT,
+} from '../store/sample.js';
 import { slugify } from '../util/fsx.js';
 import { extractZip, safeEntryPath } from '../util/zip.js';
 
@@ -47,6 +50,33 @@ router.post('/projects', async (req, res) => {
   const project = await projects.createProject(body.menu, body.title, body.formatId);
   res.status(201).json(project);
 });
+
+/**
+ * 샘플 소재로 작업 폴더 만들기.
+ *
+ * `/projects/:menu/:pid` 보다 먼저 선언한다 — 뒤에 두면 :menu='sample'로 잡힌다.
+ */
+router.get('/projects/sample', async (_req, res) => {
+  res.json({ available: await sampleAvailable(), title: DEFAULT_SAMPLE_TITLE });
+});
+
+router.post('/projects/sample', async (req, res) => {
+  const body = z.object({ title: z.string().optional() }).parse(req.body ?? {});
+  const r = await createSampleProject(body.title);
+  res.status(201).json({
+    project: r.project,
+    job: r.job,
+    attached: r.attached,
+    // 나레이션·자막은 음성 단계에서 직접 첨부할 수 있게 경로를 알려준다
+    narration: toWorkspaceLikePath(SAMPLE_NARRATION),
+    subtitles: toWorkspaceLikePath(SAMPLE_SRT),
+  });
+});
+
+/** 화면에 보여줄 용도의 리포 상대경로 (workspace 밖이라 /media로는 못 준다) */
+function toWorkspaceLikePath(abs: string): string {
+  return path.relative(REPO_ROOT, abs).replace(/\\/g, '/');
+}
 
 router.get('/projects/:menu/:pid', async (req, res) => {
   const menu = parseMenu(req.params.menu);

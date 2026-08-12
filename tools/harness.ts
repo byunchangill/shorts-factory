@@ -13,6 +13,7 @@ import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -115,6 +116,17 @@ async function abortIfFailed(...types: string[]): Promise<void> {
 
 function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(message);
+}
+
+/** 샘플 원본의 지문 — "샘플 사용하기"가 원본을 옮기거나 지우지 않는지 확인용 */
+async function sampleHashes(): Promise<Map<string, string>> {
+  const dir = path.join(REPO_ROOT, 'samples', 'kitchen-shelf');
+  const out = new Map<string, string>();
+  for (const name of await fsp.readdir(dir).catch(() => [] as string[])) {
+    const buf = await fsp.readFile(path.join(dir, name));
+    out.set(name, createHash('sha1').update(buf).digest('hex'));
+  }
+  return out;
 }
 
 // ── HTTP 헬퍼 ─────────────────────────────────────────────────────
@@ -845,6 +857,40 @@ async function main(): Promise<void> {
     const after = await del<unknown[]>(`/viral/board/${item.video.videoId}`);
     assert(after.length === 0, '보관 해제가 반영되지 않음');
     return '키 없음 400 · 보관 중복 방지 · 해제 확인';
+  });
+
+  // ── 샘플 소재로 시작 (새 PC에서 처음 눌러보는 경로) ──
+  await step('샘플 사용하기 — 분석 단계까지 · 원본 보존', async () => {
+    const before = await sampleHashes();
+    assert(before.size > 0, 'samples/kitchen-shelf에 소재가 없음');
+
+    const info = await get<{ available: boolean }>('/projects/sample');
+    assert(info.available, '샘플 소재를 인식하지 못함');
+
+    const r = await post<{ project: { id: string }; job: JobView; attached: number }>(
+      '/projects/sample', {});
+    assert(r.attached >= 4, `첨부된 소재가 부족함: ${r.attached}`);
+
+    // 분석까지만 가야 한다 — 대본이 미리 채워져 있으면 처음부터 시험할 수 없다
+    const sj = await waitFor('샘플 클립 분석', async () => {
+      const clips = await get<ClipView[]>(`/jobs/${r.job.id}/clips`);
+      return clips.length === r.attached && clips.every((c) => c.probe && c.frames.length)
+        ? await get<JobView>(`/jobs/${r.job.id}`) : null;
+    }, 180_000);
+    assert(sj.script.currentVersion === 0, '샘플에 대본이 미리 채워져 있음');
+    assert(sj.state === 'cleaning', `분석 다음 단계가 아님: ${sj.state}`);
+
+    // 원본을 옮겨버리면 다음 사람이 샘플을 못 쓴다
+    const after = await sampleHashes();
+    for (const [name, hash] of before) {
+      assert(after.get(name) === hash, `샘플 원본이 변경됨: ${name}`);
+    }
+
+    // 같은 이름으로 또 만들어도 겹치지 않아야 한다
+    const again = await post<{ project: { id: string } }>('/projects/sample', {});
+    assert(again.project.id !== r.project.id, `샘플 폴더 이름이 겹침: ${again.project.id}`);
+
+    return `${r.attached}개 소재 · ${sj.state}까지 · 원본 ${before.size}개 무결 · 재생성 시 이름 분리`;
   });
 
   // ── 제품정보리뷰(menu-b) 전용 규칙 ──
