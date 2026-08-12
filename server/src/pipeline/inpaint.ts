@@ -1,7 +1,9 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Clip, Zone } from '@shared/types';
-import { run, checkTool } from '../util/exec.js';
+import { run } from '../util/exec.js';
+import { checkToolAny, IOPAINT_VERSION_ARGS } from '../util/toolCheck.js';
+import { loadSettings } from '../store/workspace.js';
 import { ensureDir } from '../util/fsx.js';
 
 /**
@@ -31,8 +33,15 @@ export interface InpaintProvider {
 export const iopaintProvider: InpaintProvider = {
   name: 'iopaint',
 
+  /**
+   * 설정에 적어둔 경로로 확인한다.
+   *
+   * 예전엔 맨 `iopaint`를 찾았는데, 가상환경에 설치하면(권장 방식이다) PATH에 없어서
+   * 경로를 제대로 넣어둬도 항상 "없음"이 되고 2차 제거가 막혔다.
+   */
   async available(): Promise<boolean> {
-    const r = await checkTool('iopaint', ['--version']);
+    const { iopaintPath } = await loadSettings();
+    const r = await checkToolAny(iopaintPath, IOPAINT_VERSION_ARGS);
     return r.available;
   },
 

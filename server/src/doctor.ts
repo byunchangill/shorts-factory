@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { checkTool } from './util/exec.js';
+import { checkToolAny, IOPAINT_VERSION_ARGS } from './util/toolCheck.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
 import { findKoreanFont } from './pipeline/fonts.js';
@@ -85,26 +85,6 @@ export function resetDoctorCache(): void {
 }
 
 /**
- * 버전 확인 인자를 순서대로 시도해 하나라도 통하면 "설치됨"으로 본다.
- *
- * 도구마다 버전 인자가 제각각이다 (ffmpeg은 `-version`, yt-dlp는 `--version`,
- * iopaint는 버전에 따라 아예 없다). 하나만 보고 판정하면 멀쩡히 깔린 도구를
- * 없다고 표시하게 된다.
- */
-async function checkAny(
-  bin: string,
-  candidates: string[][],
-): Promise<{ available: boolean; version?: string }> {
-  let last: { available: boolean; version?: string } = { available: false };
-  for (const args of candidates) {
-    const r = await checkTool(bin, args);
-    if (r.available) return r;
-    last = r;
-  }
-  return last;
-}
-
-/**
  * 버전 자리에 사용법 안내가 들어가는 것을 막는다.
  * `--help`로 확인한 도구는 첫 줄이 "Usage: ..."라 화면에 그대로 나가면 지저분하다.
  */
@@ -136,14 +116,14 @@ async function probeTools(): Promise<ToolEntry[]> {
       // iopaint는 버전마다 CLI가 다르다 — --version이 없는 빌드가 있어서
       // 그것만 보고 판정하면 설치돼 있어도 "없음"이 된다 (실제로 그랬다).
       // --help는 어느 버전이든 0으로 끝나므로 마지막 확인 수단으로 쓴다.
-      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: [['--version'], ['--help']],
+      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: IOPAINT_VERSION_ARGS,
       installHint: 'pip install iopaint (2차 AI 인페인팅용 — 선택. tools/install-inpaint.md 참조)',
     },
   ];
 
   const tools = await Promise.all(
     checks.map(async (c) => {
-      const r = await checkAny(c.bin, c.versionArgs ?? [['--version']]);
+      const r = await checkToolAny(c.bin, c.versionArgs ?? [['--version']]);
       return {
         name: c.name,
         required: c.required,
