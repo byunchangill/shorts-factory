@@ -1056,6 +1056,61 @@ async function main(): Promise<void> {
       '요청서 인덱스에서 패킷을 찾지 못함');
     return `${packets.length}건 인덱싱됨`;
   });
+
+  // ── 삭제 ──
+  // 지금까지 만든 잡은 그대로 두고(--keep으로 열어볼 산출물이다) 버릴 카테고리를 따로 만들어 지운다
+  await step('작업·카테고리 삭제 — 휴지통 이동 · 인덱스 정리', async () => {
+    const doomed = await post<{ id: string }>('/projects', { menu: 'menu-a', title: '삭제-시험' });
+    const job = await post<{ id: string }>(`/projects/menu-a/${doomed.id}/jobs`, { title: '지울편' });
+    const packet = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'script' });
+
+    const jobResult = await del<{ trashed: string }>(`/jobs/${job.id}`);
+    // 지운 것이 아니라 옮긴 것이다 — 되돌릴 수 있어야 한다
+    const movedJob = path.join(workspace, jobResult.trashed, 'job.json');
+    assert(await exists(movedJob), `휴지통에 job.json이 없음: ${jobResult.trashed}`);
+    assert(!(await exists(path.join(workspace, 'menu-a', doomed.id, 'jobs', job.id))),
+      '원래 자리에 잡 폴더가 남아 있음');
+
+    // 인덱스에서도 빠져야 한다 — 남으면 사라진 폴더를 가리키는 잡·요청서가 화면에 뜬다
+    const gone = await fetch(`${API}/jobs/${job.id}`);
+    assert(gone.status === 404, `삭제한 잡이 아직 열린다: ${gone.status}`);
+    const packets = await get<Array<{ id: string }>>('/packets');
+    assert(!packets.some((p) => p.id === packet.id), '삭제한 잡의 요청서가 인덱스에 남음');
+
+    const projResult = await del<{ trashed: string; jobs: number }>(`/projects/menu-a/${doomed.id}`);
+    const list = await get<Array<{ id: string }>>('/projects?menu=menu-a');
+    assert(!list.some((p) => p.id === doomed.id), '삭제한 카테고리가 목록에 남음');
+    assert(await exists(path.join(workspace, projResult.trashed, 'project.json')),
+      '카테고리가 휴지통으로 옮겨지지 않음');
+    // 작업공간 밖을 가리키는 이름은 400으로 막힌다 (재귀 삭제·이동이 상위로 새면 안 된다).
+    // fetch는 `%2e%2e`를 URL 규격대로 정리해 보내므로 여기서는 원시 요청으로 찔러야 한다
+    const escape = await rawStatus('DELETE', '/api/projects/menu-a/%2E%2E');
+    assert(escape === 400, `상위 경로 삭제가 막히지 않음: ${escape}`);
+    assert(await exists(path.join(workspace, 'menu-a')), 'menu-a 폴더가 사라짐');
+
+    return `잡·카테고리 → .trash 이동 · 404 확인 · 상위 경로 차단`;
+  });
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 경로를 손대지 않고 그대로 보내는 요청 — fetch가 정리해버리는 `%2E%2E` 같은 값 확인용 */
+function rawStatus(method: string, rawPath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port: 4310, method, path: rawPath }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+    });
+    r.on('error', reject);
+    r.end();
+  });
 }
 
 // step()과 달리 값을 함께 돌려주는 변형

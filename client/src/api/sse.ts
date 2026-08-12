@@ -15,6 +15,8 @@ export function useServerEvents(): void {
     };
 
     es.addEventListener('job', () => invalidate('jobs', 'job', 'active-jobs'));
+    // 카테고리 삭제 — 다른 탭에서 지웠어도 목록에서 사라져야 한다
+    es.addEventListener('project', () => invalidate('projects', 'jobs', 'active-jobs'));
     es.addEventListener('source', () => invalidate('job'));
     es.addEventListener('source.progress', (e) => {
       const data = JSON.parse((e as MessageEvent).data);

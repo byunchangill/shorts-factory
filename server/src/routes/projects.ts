@@ -6,6 +6,7 @@ import { MENUS, GUIDELINE_FILES, type Menu, type GuidelineFile } from '@shared/c
 import { ProductSchema } from '@shared/types';
 import * as projects from '../store/projects.js';
 import { listJobs } from '../store/jobs.js';
+import { trashProject } from '../store/remove.js';
 import fsp from 'node:fs/promises';
 import { paths, toMediaUrl, REPO_ROOT } from '../store/workspace.js';
 import {
@@ -110,6 +111,16 @@ router.patch('/projects/:menu/:pid', async (req, res) => {
   const updated = await projects.updateProject(menu, req.params.pid, body);
   if (!updated) return res.status(404).json({ error: '프로젝트 없음' });
   res.json(updated);
+});
+
+/**
+ * 카테고리 삭제 — 지침·제품자료·그 안의 영상 작업이 전부 함께 사라진다.
+ * 지우지 않고 workspace/.trash 로 옮기므로 응답의 trashed 경로로 되돌릴 수 있다.
+ */
+router.delete('/projects/:menu/:pid', async (req, res) => {
+  const menu = parseMenu(req.params.menu);
+  const result = await trashProject(menu, req.params.pid);
+  res.json({ ok: true, ...result });
 });
 
 // ── 지침 ──────────────────────────────────────────────────────────
