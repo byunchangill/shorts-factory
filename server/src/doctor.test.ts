@@ -78,6 +78,41 @@ describe('runDoctor 캐시', () => {
   });
 
   /**
+   * force는 "지금 다시 봐달라"는 뜻이다. 진행 중인 점검에 편승하면 그 점검이 시작된
+   * 시점의 상태를 돌려주게 되어, 요청한 쪽은 새 결과를 받은 줄 알고 낡은 답을 쓴다.
+   *
+   * 실제로 `npm run seed`가 이걸 밟았다 — 서버를 직접 띄우고 곧바로 refresh=1로
+   * 물었더니 부팅 점검(index.ts)에 편승해 "ffmpeg 없음"을 받고, 멀쩡한 ffmpeg를
+   * 두고 클립 분석·프레임 추출을 통째로 건너뛰었다.
+   */
+  it('진행 중인 점검이 있어도 force는 새로 점검한다', async () => {
+    // 부팅 점검 — 붐벼서 실패하고, 늦게 끝난다
+    let releaseBoot!: () => void;
+    const bootBusy = new Promise<void>((r) => { releaseBoot = r; });
+    checkTool.mockImplementation(async () => {
+      await bootBusy;
+      return { available: false, error: 'spawn 실패' };
+    });
+    const boot = runDoctor({ force: true });
+    // 부팅 점검이 실제로 checkTool까지 들어가 붙들려 있게 한다
+    for (let i = 0; i < 100 && checkTool.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(checkTool.mock.calls.length).toBeGreaterThan(0);
+
+    // 그 사이 seed가 물어본다 — 이번엔 도구가 정상 응답한다
+    checkTool.mockResolvedValue({ available: true, version: 'ffmpeg 6.1' });
+    const seed = runDoctor({ force: true });
+
+    releaseBoot();
+    const [bootReport, seedReport] = await Promise.all([boot, seed]);
+
+    expect(bootReport.ok).toBe(false); // 부팅 점검은 자기가 본 대로
+    expect(seedReport.ok).toBe(true);  // seed는 새로 점검해 찾아낸다
+
+    // 늦게 끝난 실패가 새 성공을 덮어쓰면 도구가 다시 "없음"으로 돌아간다
+    expect((await runDoctor()).ok).toBe(true);
+  });
+
+  /**
    * API 키는 도구 설치와 달리 언제든 바뀐다. 캐시가 이걸 같이 붙들고 있으면
    * 타입캐스트 키를 등록해도 도구 상태는 계속 "없음"으로 남는다 (실제로 그랬다).
    */

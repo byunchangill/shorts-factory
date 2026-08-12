@@ -107,6 +107,24 @@ function stopServer(): void {
   spawned = null;
 }
 
+/**
+ * ffmpeg·ffprobe가 잡힐 때까지 짧게 다시 물어본다.
+ *
+ * 서버를 갓 띄운 참이라 첫 점검은 프로세스 실행이 느려 한 번 실패할 수 있다.
+ * 그걸 그대로 믿고 건너뛰면 아무 오류 없이 클립 분석·프레임이 빠진 샘플이 만들어지고,
+ * 처음 쓰는 사람은 "원래 이런가 보다" 하고 넘어간다.
+ */
+async function waitForMediaTools(tries = 3): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    const doctor = await get<{ tools: Array<{ name: string; available: boolean }> }>(
+      '/system/doctor?refresh=1');
+    const has = (n: string) => doctor.tools.find((t) => t.name === n)?.available ?? false;
+    if (has('ffmpeg') && has('ffprobe')) return true;
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, 1_500));
+  }
+  return false;
+}
+
 // ── 본체 ──────────────────────────────────────────────────────────
 
 interface JobView { id: string; state: string; sources: Array<{ id: string; origin: string }> }
@@ -136,13 +154,9 @@ async function main(): Promise<void> {
   ok(mode === 'attached' ? '실행 중인 서버에 연결' : '서버를 직접 띄움 (끝나면 종료)');
 
   // 도구 상태에 따라 어디까지 할 수 있는지 먼저 정한다.
-  // refresh=1로 다시 확인한다 — seed는 서버가 막 뜬 직후에 물어보는데, 그때가
-  // 부팅이 붐벼 프로세스 실행이 한 번 실패한 결과가 캐시에 남아 있을 확률이 가장 높다
-  // (실제로 ffmpeg이 멀쩡한데 "없음"으로 읽고 분석을 건너뛰었다)
-  const doctor = await get<{ tools: Array<{ name: string; available: boolean }> }>(
-    '/system/doctor?refresh=1');
-  const has = (n: string) => doctor.tools.find((t) => t.name === n)?.available ?? false;
-  const canMedia = has('ffmpeg') && has('ffprobe');
+  // seed는 서버가 막 뜬 직후에 물어보는데, 그때가 프로세스 실행이 한 번 실패할
+  // 확률이 가장 높다 (실제로 ffmpeg이 멀쩡한데 "없음"으로 읽고 분석을 건너뛰었다)
+  const canMedia = await waitForMediaTools();
   if (!canMedia) skip('ffmpeg/ffprobe 없음 — 클립 분석·프레임·음성은 건너뜁니다 (화면 확인은 가능)');
 
   // ① 프로젝트 + 잡 + 소재 첨부
