@@ -312,6 +312,9 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   // 프레임 + 표시용 URL을 한 덩어리로 (서버가 같은 순서로 내려준다)
   const frames = (current?.frames ?? []).map((f, i) => ({ ...f, url: current!.frameUrls[i] }));
   const shownFrame = frames.find((f) => f.file === activeFrame) ?? frames[0];
+  // 1차(크롭·보간·블러)와 2차(AI 인페인팅)는 서로 다른 존을 필요로 한다
+  const tier1Zones = (current?.zones ?? []).filter((z) => z.method !== 'inpaint').length;
+  const tier2Zones = (current?.zones ?? []).filter((z) => z.method === 'inpaint').length;
 
   const toggleMark = (file: string) =>
     setMarked((prev) => {
@@ -418,20 +421,32 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
               onClick={() => clean.mutate({ cid: current.id, tier: 1 })}
-              disabled={current.zones.filter((z) => z.method !== 'inpaint').length === 0 || cleaning === current.id}
+              disabled={tier1Zones === 0 || cleaning === current.id}
             >
               1차 제거 실행 (크롭/블러/보간)
             </Button>
             <Button
               variant="secondary"
               onClick={() => clean.mutate({ cid: current.id, tier: 2 })}
-              disabled={current.zones.filter((z) => z.method === 'inpaint').length === 0 || cleaning === current.id}
-              title="inpaint 방식으로 지정한 존이 있어야 하며, iopaint 설치 필요"
+              disabled={tier2Zones === 0 || cleaning === current.id}
             >
               AI 인페인팅 (2차)
             </Button>
             {cleaning === current.id && <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 처리 중…</span>}
           </div>
+          {/*
+            비활성 버튼은 이유를 말해주지 않으면 고장으로 보인다.
+            무엇을 해야 눌리는지 그 자리에서 알려준다.
+          */}
+          {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
+            <p className="mt-2 text-xs text-slate-500">
+              {current.zones.length === 0
+                ? '위 이미지에서 지울 부분(자막 띠·워터마크)을 드래그하면 버튼이 켜집니다.'
+                : tier1Zones === 0
+                  ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
+                  : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
+            </p>
+          )}
           {current.cleanUrls.length > 0 && (
             <div className="mt-4">
               <p className="mb-1.5 text-sm font-medium">정리본 미리보기 (v{current.currentCleanVersion})</p>
