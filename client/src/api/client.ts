@@ -43,6 +43,9 @@ export async function pingApi(): Promise<boolean> {
 const OFFLINE_MESSAGE =
   'API 서버(localhost:4310)에 연결할 수 없습니다. `npm run dev` 터미널의 [api] 로그를 확인하세요.';
 
+/** 서버가 아직 준비 전일 때 던지는 오류 — 잠깐 기다리면 되는 상황이라 재시도할 수 있다 */
+export class ApiBootingError extends Error {}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
@@ -55,9 +58,16 @@ async function handle<T>(res: Response): Promise<T> {
       offline = !!body.offline;
       booting = !!body.booting;
     } catch { /* JSON 아님 */ }
+    // 부팅 중은 "서버가 죽었다"와 다르다 — 개발 서버는 코드가 바뀔 때마다 재시작하므로
+    // git pull 직후에 흔히 만난다. 원인을 그대로 알려주고 재시도할 수 있게 구분한다
+    if (booting) {
+      setHealth({ online: false, reason: message });
+      throw new ApiBootingError(
+        `${message} (개발 서버는 코드가 바뀌면 재시작합니다 — 몇 초 뒤 자동으로 다시 시도합니다)`,
+      );
+    }
     // 503 offline은 vite 프록시가 만든 것 — API 서버 자체가 죽어 있다
     if (offline) setHealth({ online: false, reason: message });
-    else if (booting) setHealth({ online: false, reason: message });
     else setHealth({ online: true });
     throw new Error(message);
   }
@@ -90,6 +100,7 @@ export const api = {
     request<T>(`/api${url}`, { method: 'PUT', headers: JSON_HEADERS, body: json(body) }),
   patch: <T>(url: string, body: unknown) =>
     request<T>(`/api${url}`, { method: 'PATCH', headers: JSON_HEADERS, body: json(body) }),
+  del: <T>(url: string) => request<T>(`/api${url}`, { method: 'DELETE' }),
   upload: <T>(url: string, formData: FormData) =>
     request<T>(`/api${url}`, { method: 'POST', body: formData }),
 };

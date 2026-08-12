@@ -1,10 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
 import { writeJsonAtomic, readJson, withFileLock } from './fsx.js';
 
+/** 윈도우 EPERM을 흉내내는 오류 */
+function errno(code: string): NodeJS.ErrnoException {
+  const e = new Error(`${code}: operation not permitted, rename`) as NodeJS.ErrnoException;
+  e.code = code;
+  return e;
+}
+
 describe('writeJsonAtomic', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
   it('같은 밀리초에 동시 호출해도 임시 파일이 충돌하지 않는다', async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fsx-'));
     const file = path.join(dir, 'state.json');
@@ -15,6 +24,33 @@ describe('writeJsonAtomic', () => {
     const result = await readJson<{ n: number }>(file);
     expect(result).not.toBeNull();
     expect(typeof result!.n).toBe('number');
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it('윈도우 EPERM(백신·탐색기 잠금)이면 rename을 다시 시도한다', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fsx-eperm-'));
+    const file = path.join(dir, 'job.json');
+    const real = fsp.rename;
+    let calls = 0;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      // 처음 두 번은 잠겨 있다가 풀리는 상황
+      if (++calls <= 2) throw errno('EPERM');
+      return real(from, to);
+    });
+
+    await writeJsonAtomic(file, { ok: true });
+    expect(calls).toBe(3);
+    expect(await readJson<{ ok: boolean }>(file)).toEqual({ ok: true });
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it('재시도해도 안 되면 임시 파일을 남기지 않고 오류를 올린다', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fsx-fail-'));
+    const file = path.join(dir, 'job.json');
+    vi.spyOn(fsp, 'rename').mockRejectedValue(errno('ENOSPC')); // 재시도 대상이 아닌 오류
+
+    await expect(writeJsonAtomic(file, { ok: true })).rejects.toThrow('ENOSPC');
+    expect(await fsp.readdir(dir)).toEqual([]); // .tmp- 잔해 없음
     await fsp.rm(dir, { recursive: true, force: true });
   });
 });

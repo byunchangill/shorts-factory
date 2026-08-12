@@ -6,10 +6,11 @@ import { ClipSchema } from '@shared/types';
 import { run } from '../util/exec.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
-import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip } from '../store/jobs.js';
-import { paths } from '../store/workspace.js';
+import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
+import { paths, WORKSPACE_ROOT } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { toWorkspaceRel } from '../store/workspace.js';
+import { nextSeqId } from '../util/ids.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -35,8 +36,10 @@ export async function downloadAll(settings: Settings, ref: JobRef): Promise<void
 
     const job = await readJob(ref);
     if (!job) return;
+    // 첨부 파일 소스는 받을 것이 없으므로 큐에 넣지 않는다
     const pending = job.sources.filter(
-      (s) => s.status === 'queued' || (s.status === 'failed' && s.attempts < MAX_ATTEMPTS),
+      (s) => s.origin !== 'file'
+        && (s.status === 'queued' || (s.status === 'failed' && s.attempts < MAX_ATTEMPTS)),
     );
 
     // 한 건이 터져도 나머지 다운로드와 서버는 계속 살아 있어야 한다
@@ -57,6 +60,31 @@ export async function downloadAll(settings: Settings, ref: JobRef): Promise<void
     running.delete(ref.jobId);
     broadcast('download.finished', { jobId: ref.jobId });
   }
+}
+
+/**
+ * 다운로드가 끝난 잡을 다음 단계로 전진시킨다.
+ *
+ * 전진을 다운로드 요청의 일회성 콜백에만 두면, 그 사이 서버가 재시작되거나
+ * 프로세스가 죽었을 때 잡이 `downloading`에 영구히 갇힌다 — 소스는 전부 "완료"인데
+ * 화면은 다음 단계로 넘어가지 않는 상태가 된다. 그래서 언제 몇 번 불러도 안전한
+ * 멱등 함수로 빼두고, 다운로드 직후·부팅 시·다운로드 재시작 시 모두 호출한다.
+ * 소스를 첨부하거나 실패한 소스를 지웠을 때도 같은 판단이 필요하므로 그쪽에서도 부른다.
+ *
+ * `collecting`도 대상이다 — 받을 것 없이 파일만 첨부한 잡은 다운로드를 한 번도 거치지 않는다.
+ *
+ * @returns 실제로 전진시켰으면 true
+ */
+export async function reconcileDownloadState(ref: JobRef): Promise<boolean> {
+  const job = await readJob(ref);
+  if (!job) return false;
+  if (job.state !== 'downloading' && job.state !== 'collecting') return false;
+  if (job.sources.length === 0) return false;
+  const allDone = job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
+  if (!allDone) return false;
+  // probe/프레임은 다운로드 직후 이미 끝났으므로 정리 단계까지 보낸다
+  await advanceTo(ref, 'cleaning');
+  return true;
 }
 
 async function setSource(ref: JobRef, sourceId: string, patch: Partial<SourceUrl>): Promise<SourceUrl> {
@@ -156,17 +184,101 @@ async function createClipForSource(
   let clip: Clip = ClipSchema.parse({ id: clipId, sourceId });
   try {
     const probe = await probeVideo(settings, filePath);
-    const frames = await extractFrames(settings, filePath, framesDir, probe.duration, 5);
+    const frames = await extractFrames(settings, filePath, framesDir, probe.duration);
     clip = ClipSchema.parse({
       id: clipId,
       sourceId,
       probe,
-      frames: frames.map(toWorkspaceRel),
+      frames: frames.map((f) => ({
+        file: toWorkspaceRel(f.filePath),
+        t: f.t,
+        recommended: f.recommended,
+      })),
     });
   } catch (e) {
     await logJobEvent(ref, { type: 'clip.probe_failed', clipId, error: String(e) });
   }
   await writeClip(ref, clip);
+}
+
+/**
+ * 사용자가 이미 받아둔 영상 파일을 소스로 편입한다.
+ * yt-dlp를 거치지 않을 뿐, 이후 단계(probe → 프레임 추출 → 클립 생성)는 다운로드 소스와 같다.
+ *
+ * @param tmpPath 업로드가 저장된 임시 파일 경로 (sources/ 안에 있어야 rename이 같은 볼륨에서 끝난다)
+ * @returns 배정된 소스 id
+ */
+export async function attachSourceFile(
+  settings: Settings,
+  ref: JobRef,
+  tmpPath: string,
+  originalName: string,
+  opts: { analyze?: boolean } = {},
+): Promise<string> {
+  const ext = path.extname(originalName) || path.extname(tmpPath) || '.mp4';
+  let sourceId = '';
+  await mutateJob(ref, (job) => {
+    sourceId = nextSeqId('s', job.sources.map((s) => s.id));
+    job.sources.push({
+      id: sourceId,
+      url: originalName,
+      origin: 'file',
+      status: 'downloaded',
+      attempts: 0,
+      progress: 100,
+    });
+  });
+
+  const filePath = path.join(path.dirname(tmpPath), `${sourceId}${ext}`);
+  await fsp.rename(tmpPath, filePath);
+  await setSource(ref, sourceId, { filePath: toWorkspaceRel(filePath) });
+  await logJobEvent(ref, { type: 'source.attached', sourceId, fileName: originalName });
+
+  // 분석(probe + 프레임 추출)은 파일당 몇 초씩 걸린다. 요청 안에서 다 돌리면
+  // 그 사이에 서버가 재시작될 때 소스가 반만 붙은 폴더가 남는다 — 뒤로 미룰 수 있게 열어둔다
+  if (opts.analyze !== false) await createClipForSource(settings, ref, sourceId, filePath);
+  return sourceId;
+}
+
+/**
+ * 아직 클립이 없는 첨부 소스를 분석한다 (probe + 프레임 추출).
+ * `attachSourceFile(..., { analyze: false })`로 미뤄둔 작업을 나중에 몰아서 돌릴 때 쓴다.
+ * 이미 클립이 있으면 건너뛰므로 몇 번을 돌려도 안전하다.
+ */
+export async function analyzePendingSources(settings: Settings, ref: JobRef): Promise<number> {
+  const job = await readJob(ref);
+  if (!job) return 0;
+  let done = 0;
+  for (const s of job.sources) {
+    if (s.status !== 'downloaded' || !s.filePath) continue;
+    await createClipForSource(settings, ref, s.id, path.join(WORKSPACE_ROOT, s.filePath));
+    done++;
+  }
+  return done;
+}
+
+/** 소스 1건 제거 — 파일·클립까지 함께 지운다 */
+export async function removeSource(ref: JobRef, sourceId: string): Promise<void> {
+  const job = await readJob(ref);
+  const source = job?.sources.find((s) => s.id === sourceId);
+  if (!source) return;
+
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  // 다운로드 산출물(영상·info.json)과 클립 폴더를 함께 정리한다 — 남기면 용량만 먹는다
+  const sourcesDir = path.join(jobDir, 'sources');
+  for (const f of await fsp.readdir(sourcesDir).catch(() => [] as string[])) {
+    if (f === sourceId || f.startsWith(`${sourceId}.`)) {
+      await fsp.rm(path.join(sourcesDir, f), { force: true }).catch(() => {});
+    }
+  }
+  const clipId = sourceId.replace(/^s/, 'c');
+  await fsp.rm(path.join(jobDir, 'clips', clipId), { recursive: true, force: true }).catch(() => {});
+
+  await mutateJob(ref, (j) => {
+    j.sources = j.sources.filter((s) => s.id !== sourceId);
+  });
+  await logJobEvent(ref, { type: 'source.removed', sourceId, url: source.url });
+  broadcast('source.removed', { jobId: ref.jobId, sourceId });
 }
 
 /** 단일 소스 재시도 */

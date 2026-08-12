@@ -27,6 +27,16 @@ export async function scanJobs(): Promise<void> {
       if (projectId === 'formats') continue;
       const jobDirs = await listDirs(paths.jobs(menu, projectId));
       for (const jobId of jobDirs) {
+        // 이미 만들어진 중복은 여기서 고칠 수 없다 — 조용히 덮어쓰지 말고 알린다.
+        // 덮어쓰면 그 잡의 모든 요청이 다른 제품 폴더로 가는데 화면에는 아무 단서도 안 남는다
+        const dup = jobIndex.get(jobId);
+        if (dup) {
+          console.warn(
+            `[jobs] 잡 ID 중복: ${jobId} — ${dup.menu}/${dup.projectId} 와 ${menu}/${projectId}. ` +
+            '한쪽 폴더 이름을 바꿔야 합니다 (지금은 먼저 찾은 쪽만 열립니다)',
+          );
+          continue;
+        }
         jobIndex.set(jobId, { menu, projectId, jobId });
       }
     }
@@ -35,6 +45,34 @@ export async function scanJobs(): Promise<void> {
 
 export function resolveJob(jobId: string): JobRef | null {
   return jobIndex.get(jobId) ?? null;
+}
+
+/**
+ * 잡 ID는 **전역으로 유일해야 한다.**
+ *
+ * 잡 번호는 프로젝트 안에서 매겨지는데(`20260811-001-1편`) 인덱스는 ID 하나로 찾는다.
+ * 그래서 같은 날 다른 제품에 같은 제목("1편")으로 잡을 만들면 ID가 겹치고,
+ * 나중 것이 인덱스에서 앞 것을 덮어써서 `/jobs/{id}/...` 요청이 통째로
+ * 엉뚱한 제품 폴더로 간다 — 대본도 영상도 남의 제품에 쌓인다.
+ * 시리즈로 찍을수록 "1편"이 겹치므로 반드시 막는다.
+ *
+ * 프로젝트 안에서 비어 있는 번호라도 다른 프로젝트가 쓰고 있으면 다음 번호로 넘긴다.
+ */
+export function uniqueJobId(existingInProject: string[], title: string): string {
+  const slug = slugify(title).slice(0, 20);
+  const taken = [...existingInProject];
+  for (let i = 0; i < 1000; i++) {
+    const id = `${nextJobId(taken)}-${slug}`;
+    if (!jobIndex.has(id)) return id;
+    // 이 번호는 다른 프로젝트가 쓰고 있다 — 번호를 하나 밀어 다시 시도한다
+    taken.push(id);
+  }
+  throw new Error('잡 ID를 만들지 못했습니다 (같은 날 잡이 너무 많습니다)');
+}
+
+/** 인덱싱된 모든 잡 — 부팅 시 일괄 점검용 */
+export function listJobRefs(): JobRef[] {
+  return [...jobIndex.values()];
 }
 
 export async function readJob(ref: JobRef): Promise<Job | null> {
@@ -75,7 +113,7 @@ export async function listActiveJobs(): Promise<Array<Job & { projectId: string 
 
 export async function createJob(menu: Menu, projectId: string, title: string): Promise<Job> {
   const existing = await listDirs(paths.jobs(menu, projectId));
-  const id = `${nextJobId(existing)}-${slugify(title).slice(0, 20)}`;
+  const id = uniqueJobId(existing, title);
   const now = new Date().toISOString();
   const job = JobSchema.parse({
     id,

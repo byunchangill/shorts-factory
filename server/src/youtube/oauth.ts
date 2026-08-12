@@ -80,8 +80,14 @@ export async function getAccessToken(): Promise<string> {
   });
   if (!r.ok) {
     const body = await r.text().catch(() => '');
+    // 앱이 "테스트 중" 상태면 refresh_token이 7일 만에 만료된다.
+    // 코드로 막을 수 없는 구글 정책이라 원인과 해결책을 문장으로 알려주는 게 최선이다.
+    const expired = body.includes('invalid_grant');
     throw Object.assign(
-      new Error(`액세스 토큰 갱신 실패 ${r.status}: ${body.slice(0, 200)}`),
+      new Error(expired
+        ? '구글 연결이 만료됐습니다. OAuth 동의 화면이 "테스트 중"이면 토큰이 7일마다 만료됩니다. '
+          + 'API 키 메뉴에서 다시 연결하거나, 동의 화면에서 앱을 게시(프로덕션)하면 만료되지 않습니다.'
+        : `액세스 토큰 갱신 실패 ${r.status}: ${body.slice(0, 200)}`),
       { status: 401 },
     );
   }

@@ -1,7 +1,9 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Clip, Zone } from '@shared/types';
-import { run, checkTool } from '../util/exec.js';
+import { run } from '../util/exec.js';
+import { checkToolAny, IOPAINT_VERSION_ARGS } from '../util/toolCheck.js';
+import { loadSettings } from '../store/workspace.js';
 import { ensureDir } from '../util/fsx.js';
 
 /**
@@ -31,8 +33,15 @@ export interface InpaintProvider {
 export const iopaintProvider: InpaintProvider = {
   name: 'iopaint',
 
+  /**
+   * 설정에 적어둔 경로로 확인한다.
+   *
+   * 예전엔 맨 `iopaint`를 찾았는데, 가상환경에 설치하면(권장 방식이다) PATH에 없어서
+   * 경로를 제대로 넣어둬도 항상 "없음"이 되고 2차 제거가 막혔다.
+   */
   async available(): Promise<boolean> {
-    const r = await checkTool('iopaint', ['--version']);
+    const { iopaintPath } = await loadSettings();
+    const r = await checkToolAny(iopaintPath, IOPAINT_VERSION_ARGS);
     return r.available;
   },
 
@@ -59,7 +68,9 @@ export const iopaintProvider: InpaintProvider = {
     const drawboxes = zones
       .map((z) => `drawbox=x=${Math.round(z.x)}:y=${Math.round(z.y)}:w=${Math.round(z.w)}:h=${Math.round(z.h)}:color=white@1:t=fill`)
       .join(',');
-    const maskPath = path.join(masksDir, 'mask.png');
+    // 원본 마스크는 masks/ 밖에 둔다 — 안에 두면 프레임과 짝이 없는 파일이 하나 섞여
+    // iopaint가 이미지:마스크를 1:1로 맞출 때 걸린다
+    const maskPath = path.join(workDir, 'mask.png');
     await run(settings.ffmpegPath, [
       '-y', '-f', 'lavfi', '-i', `color=black:s=${width}x${height}`,
       '-vf', drawboxes, '-frames:v', '1', maskPath,
@@ -72,14 +83,35 @@ export const iopaintProvider: InpaintProvider = {
     }
 
     onProgress?.(`IOPaint 실행 중… (${frameFiles.length} 프레임)`);
-    await run(settings.iopaintPath, [
-      'run',
-      '--model=lama',
-      '--device=cpu',
-      `--image=${framesDir}`,
-      `--mask=${masksDir}`,
-      `--output=${outFramesDir}`,
-    ], { timeoutMs: 3_600_000, onStdout: onProgress });
+    // iopaint가 실패하면 종료 코드만으로는 아무것도 알 수 없다. 표준 오류를 모아
+    // 실패 메시지에 붙인다 — 모델 내려받기 실패인지, 인자가 안 맞는지가 여기 있다
+    const stderr: string[] = [];
+    try {
+      await run(settings.iopaintPath, [
+        'run',
+        '--model=lama',
+        '--device=cpu',
+        `--image=${framesDir}`,
+        `--mask=${masksDir}`,
+        `--output=${outFramesDir}`,
+      ], {
+        timeoutMs: 3_600_000,
+        onStdout: onProgress,
+        onStderr: (line) => {
+          stderr.push(line);
+          if (stderr.length > 40) stderr.shift(); // 마지막 몇 줄이면 충분하다
+          // 화면에는 요약만 가므로 전체는 서버 로그에 남긴다 (npm run logs)
+          console.error(`[iopaint] ${line}`);
+        },
+      });
+    } catch (e) {
+      const tail = stderr.slice(-8).join('\n');
+      throw new Error(
+        `IOPaint 실행 실패${tail ? `:\n${tail}` : ` (${e instanceof Error ? e.message.split('\n')[0] : String(e)})`}\n`
+        + '처음 실행이면 모델(LaMa)을 내려받는 중일 수 있습니다 — 사내망이면 여기서 막힙니다. '
+        + '전체 로그는 workspace/logs/server.log (npm run logs)에 있습니다.',
+      );
+    }
 
     onProgress?.('재인코딩 중…');
     await run(settings.ffmpegPath, [

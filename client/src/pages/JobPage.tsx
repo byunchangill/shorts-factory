@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import { clsx } from 'clsx';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
   Play, Trash2, FolderOpen,
 } from 'lucide-react';
-import { MENU_LABELS, STATE_LABELS } from '@shared/constants';
+import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Spinner, Textarea } from '@/components/ui';
 import { ProgressRail } from '@/components/pipeline';
@@ -14,7 +15,7 @@ import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
 import { SegmentPicker, type SegmentDraft } from '@/components/SegmentPicker';
 
 interface SourceInfo {
-  id: string; url: string; status: string; attempts: number; progress: number;
+  id: string; url: string; origin: 'url' | 'file'; status: string; attempts: number; progress: number;
   error?: string; uploader?: string; license?: string; licenseNote?: string;
 }
 interface JobDetail {
@@ -31,7 +32,8 @@ interface JobDetail {
 interface ClipInfo {
   id: string; sourceId: string;
   probe?: { width: number; height: number; fps: number; duration: number };
-  frames: string[]; frameUrls: string[];
+  frames: Array<{ file: string; t: number; recommended: boolean }>;
+  frameUrls: string[];
   zones: ZoneDraft[];
   cleanVersions: Array<{ v: number; tier: 1 | 2; filePath: string; createdAt: string }>;
   cleanUrls: Array<{ v: number; url: string }>;
@@ -119,7 +121,25 @@ function SourcesPanel({ job }: { job: JobDetail }) {
     mutationFn: () => api.post(`/jobs/${job.id}/download/start`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
   });
+  // 이미 받아둔 영상 첨부 — yt-dlp가 못 받는 사이트의 우회로
+  const attach = useMutation({
+    mutationFn: (files: FileList) => {
+      const fd = new FormData();
+      for (const f of Array.from(files)) fd.append('files', f);
+      return api.upload(`/jobs/${job.id}/sources/upload`, fd);
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
+  const remove = useMutation({
+    mutationFn: (sid: string) => api.del(`/jobs/${job.id}/sources/${sid}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+  });
   const retry = (sid: string) => api.post(`/jobs/${job.id}/sources/${sid}/retry`).then(() => qc.invalidateQueries({ queryKey: ['job'] }));
+
+  // 전부 받았는데 아직 다음 단계로 안 넘어간 상태 (서버 재시작 등으로 전진이 끊긴 경우)
+  const allSourcesReady =
+    job.sources.length > 0 &&
+    job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
 
   const statusBadge = (s: SourceInfo) => {
     const map: Record<string, { label: string; color: 'slate' | 'blue' | 'green' | 'red' | 'amber' }> = {
@@ -145,16 +165,48 @@ function SourcesPanel({ job }: { job: JobDetail }) {
         onChange={(e) => setUrls(e.target.value)}
         placeholder={'https://www.youtube.com/watch?v=...\nhttps://www.tiktok.com/@user/video/...'}
       />
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button onClick={() => addSources.mutate()} disabled={!urls.trim() || addSources.isPending}>
           URL 추가
         </Button>
         {job.sources.length > 0 && (
-          <Button variant="secondary" onClick={() => start.mutate()} disabled={job.downloading || start.isPending}>
-            {job.downloading ? <>다운로드 진행 중… <Spinner /></> : '다운로드 시작'}
+          <Button
+            variant={allSourcesReady ? 'primary' : 'secondary'}
+            onClick={() => start.mutate()}
+            disabled={job.downloading || start.isPending}
+          >
+            {job.downloading
+              ? <>다운로드 진행 중… <Spinner /></>
+              : allSourcesReady ? '다음 단계로' : '다운로드 시작'}
           </Button>
         )}
+        <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          {attach.isPending ? <span className="inline-flex items-center gap-1.5">첨부 중… <Spinner /></span> : '영상 파일 첨부'}
+          <input
+            type="file"
+            accept="video/*"
+            multiple
+            className="hidden"
+            disabled={attach.isPending}
+            onChange={(e) => {
+              if (e.target.files?.length) attach.mutate(e.target.files);
+              e.target.value = ''; // 같은 파일을 다시 고를 수 있게 초기화
+            }}
+          />
+        </label>
       </div>
+      <p className="mt-1.5 text-xs text-slate-400">
+        yt-dlp가 받지 못하는 사이트(쇼핑몰 상세페이지 등)는 직접 받은 영상 파일을 첨부하세요.
+      </p>
+      {(attach.error || remove.error) && (
+        <p className="mt-1.5 text-xs text-red-500">{(attach.error ?? remove.error)?.message}</p>
+      )}
+
+      {allSourcesReady && !job.downloading && (
+        <p className="mt-2 text-sm text-slate-500">
+          소스를 모두 받았습니다. <strong>다음 단계로</strong>를 누르면 자막/워터마크 제거로 넘어갑니다.
+        </p>
+      )}
 
       {job.sources.length > 0 && (
         <table className="mt-4 w-full text-sm">
@@ -166,16 +218,28 @@ function SourcesPanel({ job }: { job: JobDetail }) {
           <tbody>
             {job.sources.map((s) => (
               <tr key={s.id} className="border-b border-slate-100">
-                <td className="max-w-[280px] truncate py-2 pr-2" title={s.url}>{s.url}</td>
+                <td className="max-w-[280px] truncate py-2 pr-2" title={s.url}>
+                  {s.origin === 'file' && <Badge color="slate">첨부</Badge>} {s.url}
+                </td>
                 <td className="py-2 pr-2">
                   {statusBadge(s)}
                   {s.error && <p className="mt-0.5 max-w-[200px] truncate text-xs text-red-500" title={s.error}>{s.error}</p>}
                 </td>
                 <td className="py-2 pr-2 text-xs text-slate-500">{s.uploader ?? '—'}</td>
-                <td className="py-2 text-right">
-                  {s.status === 'failed' && (
+                <td className="whitespace-nowrap py-2 text-right">
+                  {s.status === 'failed' && s.origin === 'url' && (
                     <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => void retry(s.id)}>
                       <RefreshCw size={13} /> 재시도
+                    </Button>
+                  )}
+                  {s.status !== 'downloading' && (
+                    <Button
+                      variant="ghost"
+                      className="px-2 py-1 text-xs text-red-500"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(s.id)}
+                    >
+                      <Trash2 size={13} /> 삭제
                     </Button>
                   )}
                 </td>
@@ -197,19 +261,45 @@ function ClipsPanel({ job }: { job: JobDetail }) {
     queryFn: () => api.get<ClipInfo[]>(`/jobs/${job.id}/clips`),
   });
   const [activeClip, setActiveClip] = useState<string | null>(null);
-  const [frameIdx, setFrameIdx] = useState(0);
+  const [activeFrame, setActiveFrame] = useState<string | null>(null);
+  const [marked, setMarked] = useState<Set<string>>(new Set()); // 한 번에 지우려고 찍어둔 프레임
   const [cleaning, setCleaning] = useState<string | null>(null);
+  const [reframing, setReframing] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState<string | null>(null);
 
   const saveZones = useMutation({
     mutationFn: ({ cid, zones }: { cid: string; zones: ZoneDraft[] }) =>
       api.put(`/jobs/${job.id}/clips/${cid}/zones`, { zones }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
   });
+  // 프레임을 지우는 것이 곧 "이 장면은 안 쓴다"는 선택이다 — 남은 것이 대본 소재가 된다
+  const deleteFrames = useMutation({
+    mutationFn: ({ cid, files }: { cid: string; files: string[] }) =>
+      api.del(`/jobs/${job.id}/clips/${cid}/frames?${
+        files.map((f) => `file=${encodeURIComponent(f)}`).join('&')}`),
+    onSuccess: () => {
+      setMarked(new Set());
+      void qc.invalidateQueries({ queryKey: ['clips'] });
+    },
+  });
+  // 프레임이 5장뿐인 예전 클립, 또는 지운 것을 되살릴 때.
+  // 결과는 SSE(clip)로 들어오므로 여기서는 진행 표시만 건다
+  const reextract = useMutation({
+    mutationFn: (cid: string) => {
+      setReframing(cid);
+      return api.post(`/jobs/${job.id}/clips/${cid}/frames/reextract`);
+    },
+  });
+  // 정리는 길게 걸려 서버가 즉시 응답하고 결과는 SSE로 온다.
+  // 지난 실행의 종료 기록이 남아 있으면 시작하자마자 표시가 꺼지므로 먼저 지운다
   const clean = useMutation({
     mutationFn: ({ cid, tier }: { cid: string; tier: 1 | 2 }) => {
+      qc.removeQueries({ queryKey: ['clean-end', job.id, cid] });
       setCleaning(cid);
       return api.post(`/jobs/${job.id}/clips/${cid}/clean`, { tier });
     },
+    // 요청 자체가 거부되면(존 없음 등) SSE가 오지 않는다 — 여기서 내린다
+    onError: () => setCleaning(null),
   });
   const toScript = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/packets`, { kind: 'script' }),
@@ -219,8 +309,40 @@ function ClipsPanel({ job }: { job: JobDetail }) {
     },
   });
 
+  // 재추출 결과는 SSE로 들어온다 — 클립 데이터가 갱신되면 진행 표시를 내린다
+  useEffect(() => { setReframing(null); }, [clips.dataUpdatedAt]);
+
+  /**
+   * 정리 종료 신호. SSE 핸들러가 캐시에 적어두면 여기서 읽어 표시를 내린다.
+   * 클립 데이터 갱신만 보고 판단하면 안 된다 — 존을 저장해도 클립이 갱신되므로
+   * 정리가 도는 중에 표시가 먼저 꺼진다.
+   */
+  const cleanEnd = useQuery<{ at: number; error?: string } | undefined>({
+    queryKey: ['clean-end', job.id, cleaning ?? ''],
+    enabled: false, // 서버에 물어볼 것이 없다. 캐시 구독만 한다
+    queryFn: () => undefined,
+  });
+  useEffect(() => {
+    if (cleaning && cleanEnd.data) setCleaning(null);
+  }, [cleaning, cleanEnd.data]);
+
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
+
+  // 프레임 + 표시용 URL을 한 덩어리로 (서버가 같은 순서로 내려준다)
+  const frames = (current?.frames ?? []).map((f, i) => ({ ...f, url: current!.frameUrls[i] }));
+  const shownFrame = frames.find((f) => f.file === activeFrame) ?? frames[0];
+  // 1차(크롭·보간·블러)와 2차(AI 인페인팅)는 서로 다른 존을 필요로 한다
+  const tier1Zones = (current?.zones ?? []).filter((z) => z.method !== 'inpaint').length;
+  const tier2Zones = (current?.zones ?? []).filter((z) => z.method === 'inpaint').length;
+
+  const toggleMark = (file: string) =>
+    setMarked((prev) => {
+      const next = new Set(prev);
+      if (next.has(file)) next.delete(file);
+      else next.add(file);
+      return next;
+    });
 
   return (
     <div className="space-y-4">
@@ -235,7 +357,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           {list.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setActiveClip(c.id); setFrameIdx(0); }}
+              onClick={() => { setActiveClip(c.id); setActiveFrame(null); setMarked(new Set()); }}
               className={`rounded-lg border px-3 py-1.5 text-sm ${current?.id === c.id ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200'}`}
             >
               {c.id}
@@ -246,43 +368,145 @@ function ClipsPanel({ job }: { job: JobDetail }) {
         </div>
       </Card>
 
-      {current && current.probe && (
+      {current && current.probe && shownFrame && (
         <Card>
-          <div className="mb-2 flex items-center gap-2">
-            {current.frameUrls.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setFrameIdx(i)}
-                className={`rounded px-2 py-1 text-xs ${frameIdx === i ? 'bg-brand-100 text-brand-700' : 'bg-slate-100 text-slate-500'}`}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-slate-500">
+              전체 {frames.length}장 · <span className="font-medium text-slate-700">남은 장면으로 대본을 씁니다.</span>
+              {' '}안 쓸 장면을 지우세요.
+            </p>
+            <div className="flex shrink-0 items-center gap-1">
+              {marked.size > 0 && (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1 text-xs text-red-600"
+                  disabled={deleteFrames.isPending}
+                  onClick={() => deleteFrames.mutate({ cid: current.id, files: [...marked] })}
+                >
+                  <Trash2 size={12} /> 찍은 {marked.size}장 삭제
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                title="원본 영상에서 프레임을 전부 다시 뽑습니다 — 프레임이 몇 장 없는 예전 클립이나, 지운 것을 되살릴 때 쓰세요"
+                disabled={reframing === current.id}
+                onClick={() => reextract.mutate(current.id)}
               >
-                프레임 {i + 1}
-              </button>
+                {reframing === current.id
+                  ? <span className="inline-flex items-center gap-1">불러오는 중… <Spinner /></span>
+                  : <><RefreshCw size={12} /> 전체 프레임 불러오기</>}
+              </Button>
+            </div>
+          </div>
+          <div className="mb-3 flex max-h-72 flex-wrap gap-2 overflow-y-auto pb-1">
+            {frames.map((f) => (
+              <div
+                key={f.file}
+                className={clsx(
+                  'relative rounded-lg border-2 p-0.5',
+                  marked.has(f.file) ? 'border-red-400 bg-red-50'
+                    : shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
+                )}
+              >
+                <button onClick={() => setActiveFrame(f.file)} className="block" title="이 프레임에 존 그리기">
+                  <img
+                    src={f.url}
+                    alt={`${f.t}초`}
+                    className={clsx('h-20 w-auto rounded', marked.has(f.file) && 'opacity-40')}
+                    draggable={false}
+                  />
+                </button>
+                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600">
+                  <span>{f.t.toFixed(1)}초</span>
+                  {f.recommended && <span className="text-brand-600" title="장면이 바뀌는 지점">▸</span>}
+                  <button
+                    className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-400 hover:text-red-500')}
+                    title={marked.has(f.file) ? '삭제 취소' : '삭제할 프레임으로 찍기'}
+                    onClick={() => toggleMark(f.file)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
           <ZoneEditor
-            frameUrl={current.frameUrls[frameIdx]}
+            frameUrl={shownFrame.url}
+            frameTime={shownFrame.t}
+            frameTimes={frames.map((f) => f.t)}
+            duration={current.probe.duration}
             videoWidth={current.probe.width}
             videoHeight={current.probe.height}
             zones={current.zones}
             onChange={(zones) => saveZones.mutate({ cid: current.id, zones })}
+            detecting={detecting}
+            onDetect={async (zone) => {
+              setDetecting(zone.id);
+              try {
+                const r = await api.post<{
+                  verdict: 'ranges' | 'always' | 'none' | 'unclear';
+                  ranges: Array<{ t0: number; t1: number }>;
+                  frames: Array<{ t: number; score: number }>;
+                }>(`/jobs/${job.id}/clips/${current.id}/zones/detect`, {
+                  zone: { x: zone.x, y: zone.y, w: zone.w, h: zone.h },
+                });
+                // 애매하면 구간을 넣지 않는다 — 틀린 구간이 조용히 적용되면 더 나쁘다
+                if (r.verdict !== 'ranges') {
+                  alert({
+                    always: '이 영역에는 영상 내내 글자가 있습니다.\n전체 구간으로 두시면 됩니다.',
+                    none: '이 영역에서 글자를 찾지 못했습니다.\n영역이 자막에서 벗어났는지 확인해 보세요.',
+                    unclear: '구간을 특정하지 못했습니다.\n배경과 잘 구분되지 않는 경우입니다. 직접 골라주세요.',
+                  }[r.verdict]);
+                  return;
+                }
+                const [best, ...rest] = r.ranges;
+                saveZones.mutate({
+                  cid: current.id,
+                  zones: current.zones.map((z) =>
+                    z.id === zone.id ? { ...z, t0: best.t0, t1: best.t1 } : z),
+                });
+                if (rest.length) {
+                  alert(
+                    `${best.t0.toFixed(1)}~${best.t1.toFixed(1)}초를 넣었습니다.\n`
+                    + `다른 구간도 있습니다: ${rest.map((x) => `${x.t0.toFixed(1)}~${x.t1.toFixed(1)}초`).join(', ')}\n`
+                    + '필요하면 존을 하나 더 그려서 그 구간을 지정하세요.',
+                  );
+                }
+              } finally {
+                setDetecting(null);
+              }
+            }}
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
               onClick={() => clean.mutate({ cid: current.id, tier: 1 })}
-              disabled={current.zones.filter((z) => z.method !== 'inpaint').length === 0 || cleaning === current.id}
+              disabled={tier1Zones === 0 || cleaning === current.id}
             >
               1차 제거 실행 (크롭/블러/보간)
             </Button>
             <Button
               variant="secondary"
               onClick={() => clean.mutate({ cid: current.id, tier: 2 })}
-              disabled={current.zones.filter((z) => z.method === 'inpaint').length === 0 || cleaning === current.id}
-              title="inpaint 방식으로 지정한 존이 있어야 하며, iopaint 설치 필요"
+              disabled={tier2Zones === 0 || cleaning === current.id}
             >
               AI 인페인팅 (2차)
             </Button>
             {cleaning === current.id && <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 처리 중…</span>}
           </div>
+          {/*
+            비활성 버튼은 이유를 말해주지 않으면 고장으로 보인다.
+            무엇을 해야 눌리는지 그 자리에서 알려준다.
+          */}
+          {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
+            <p className="mt-2 text-xs text-slate-500">
+              {current.zones.length === 0
+                ? '위 이미지에서 지울 부분(자막 띠·워터마크)을 드래그하면 버튼이 켜집니다.'
+                : tier1Zones === 0
+                  ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
+                  : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
+            </p>
+          )}
           {current.cleanUrls.length > 0 && (
             <div className="mt-4">
               <p className="mb-1.5 text-sm font-medium">정리본 미리보기 (v{current.currentCleanVersion})</p>
@@ -325,10 +549,20 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
   return (
     <div className="space-y-4">
       <Card>
-        <div className="flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-semibold"><FileText size={17} /> 대본</h3>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => issue.mutate('product-extract')} disabled={issue.isPending}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 font-semibold"><FileText size={17} /> 대본</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              다시 발행하면 대기 중인 같은 종류 요청서는 정리되고 최신 소재로 새로 만들어집니다.
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="secondary"
+              title={PACKET_KIND_DESCRIPTIONS['product-extract']}
+              onClick={() => issue.mutate('product-extract')}
+              disabled={issue.isPending}
+            >
               제품정보 추출 요청서
             </Button>
             <Button onClick={() => issue.mutate('script')} disabled={issue.isPending}>
@@ -336,6 +570,18 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             </Button>
           </div>
         </div>
+        {issue.error && (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {issue.error.message}
+            {' '}
+            <Link
+              to={`/project/${job.menu}/${encodeURIComponent(job.projectId)}`}
+              className="font-medium underline"
+            >
+              제품자료 탭 열기
+            </Link>
+          </p>
+        )}
       </Card>
 
       {scriptPackets.map((p) => <PacketCard key={p.id} packet={p} />)}
@@ -399,6 +645,11 @@ function TrimPanel({ job }: { job: JobDetail }) {
       void qc.invalidateQueries({ queryKey: ['clips'] });
     },
   });
+  // 자막/워터마크 단계에서 고른 프레임 시각 주변을 구간으로 만들어준다
+  const fromFrames = useMutation({
+    mutationFn: (cid: string) => api.post(`/jobs/${job.id}/clips/${cid}/segments/from-frames`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
+  });
   const next = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/transition`, { to: 'voicing' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
@@ -406,6 +657,7 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
+  const keptFrames = current?.frames.length ?? 0;
   const videoUrl = current
     ? current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url ??
       `/media/${job.menu}/${job.projectId}/jobs/${job.id}/sources/${current.sourceId}.mp4`
@@ -441,6 +693,20 @@ function TrimPanel({ job }: { job: JobDetail }) {
 
       {current && videoUrl && (
         <Card>
+          {keptFrames > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => fromFrames.mutate(current.id)}
+                disabled={fromFrames.isPending}
+              >
+                남은 장면 {keptFrames}개로 구간 채우기
+              </Button>
+              <span className="text-xs text-slate-500">
+                남은 프레임 앞뒤 1.5초씩 구간을 만들고 겹치면 합칩니다. 만든 뒤 아래에서 다듬을 수 있습니다 (기존 구간은 대체됩니다).
+              </span>
+            </div>
+          )}
           <SegmentPicker
             videoUrl={videoUrl}
             segments={current.segments}

@@ -5,19 +5,29 @@
 
 ## 설치
 
-```bash
-# Python 3.10+ 필요. 가상환경 권장:
-python -m venv .venv-inpaint
-# Windows: .venv-inpaint\Scripts\activate
-# macOS/Linux:
-source .venv-inpaint/bin/activate
+Python 3.12를 먼저 깝니다 (3.13은 PyTorch 지원이 아직 안 따라온 경우가 있습니다).
 
+```bash
+# Windows: winget install Python.Python.3.12
 pip install iopaint
-iopaint --version   # 확인
+iopaint --help   # 확인 (--version 이 없는 버전이 있다)
 ```
 
-가상환경을 쓴 경우, 웹앱 설정 화면에서 `iopaint` 경로를
-`.venv-inpaint/bin/iopaint` (Windows: `.venv-inpaint\Scripts\iopaint.exe`)로 지정하세요.
+**그냥 전역에 까세요.** PATH에 잡히므로 앱이 알아서 찾고, 설정에서 경로를 건드릴 일이
+없습니다. PyTorch가 딸려 와 2GB 넘게 받으니 시간이 걸립니다.
+
+### 가상환경에 깔았다면
+
+격리가 필요한 장비(회사 PC 등)에서 venv를 썼다면 PATH에 없으므로,
+웹앱 **설정 → 도구 경로**의 `iopaint` 칸에 실행 파일 경로를 직접 넣어야 합니다.
+
+```
+Windows: <리포>\.venv-inpaint\Scripts\iopaint.exe
+macOS/Linux: <리포>/.venv-inpaint/bin/iopaint
+```
+
+이 값은 `workspace/settings.json`에 저장되고 깃에 올라가지 않으므로 **기계마다 따로** 넣어야 합니다.
+그래서 특별한 이유가 없으면 전역 설치가 편합니다.
 
 ## GPU 가속 (선택)
 

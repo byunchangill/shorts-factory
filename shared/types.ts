@@ -69,7 +69,10 @@ export type Format = z.infer<typeof FormatSchema>;
 
 export const SourceUrlSchema = z.object({
   id: z.string(),
-  url: z.string().url(),
+  /** URL 소스는 주소, 첨부 파일 소스는 원본 파일명 (표시용) */
+  url: z.string(),
+  /** file = 사용자가 직접 받아둔 영상을 첨부한 것 — 다운로드 대상이 아니다 */
+  origin: z.enum(['url', 'file']).default('url'),
   status: z.enum(['queued', 'downloading', 'downloaded', 'failed', 'skipped']),
   attempts: z.number().int().default(0),
   progress: z.number().min(0).max(100).default(0),
@@ -102,6 +105,25 @@ export const SegmentSchema = z.object({
 });
 export type Segment = z.infer<typeof SegmentSchema>;
 
+/**
+ * 클립에서 뽑아낸 프레임.
+ *
+ * 존 편집의 배경이자, 대본을 쓰는 AI가 보는 소재 이미지다.
+ * **남아 있는 프레임이 곧 사용할 장면이다** — 사용자는 필요 없는 것을 지워서 고른다.
+ */
+export const ClipFrameSchema = z.object({
+  file: z.string(), // 작업공간 상대경로
+  t: z.number().min(0).default(0), // 영상 내 시각(초) — 컷 구간 후보 계산에 쓴다
+  recommended: z.boolean().default(false), // 장면이 바뀌는 지점 (훑을 때 눈에 띄라고 표시만)
+});
+export type ClipFrame = z.infer<typeof ClipFrameSchema>;
+
+/** 예전 clip.json은 frames가 경로 문자열 배열이었다 — 읽을 때 객체로 승격한다 */
+const legacyFrames = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map((f) => (typeof f === 'string' ? { file: f, t: 0, recommended: true } : f))
+    : v;
+
 export const ClipSchema = z.object({
   id: z.string(),
   sourceId: z.string(),
@@ -109,7 +131,7 @@ export const ClipSchema = z.object({
     width: z.number(), height: z.number(),
     fps: z.number(), duration: z.number(),
   }).optional(),
-  frames: z.array(z.string()).default([]), // 프레임 이미지 상대경로
+  frames: z.preprocess(legacyFrames, z.array(ClipFrameSchema)).default([]),
   zones: z.array(ZoneSchema).default([]),
   cleanVersions: z.array(z.object({
     v: z.number().int(),
@@ -137,6 +159,12 @@ export const SceneLineSchema = z.object({
   imagePrompt: z.string().optional(), // menu-b 씬 이미지 프롬프트
   durationHint: z.number().optional(),
   bgmCue: z.string().optional(),
+  /**
+   * 이 씬이 제품의 단점·주의사항을 말하는 씬인가.
+   * 제품정보리뷰(menu-b)는 최소 1개가 있어야 한다 — 단점 한 줄이
+   * "광고 붙여넣기"와 "리뷰"를 가르고, 재사용 심사에서 제작자의 견해로 인정받는 장치다.
+   */
+  isDownside: z.boolean().default(false),
   /** 이 씬 앞에 끼울 텍스트 카드 문구 (하이브리드 믹싱) */
   cardText: z.string().optional(),
 });
@@ -157,6 +185,8 @@ export const PacketSchema = z.object({
   jobId: z.string().optional(), // format-create는 잡 없이도 발행
   projectId: z.string().optional(),
   formatId: z.string().optional(),
+  /** 메뉴별로 분량·검증 규칙이 다르다. 예전 패킷에는 없으므로 dir에서 유추한다 */
+  menu: MenuSchema.optional(),
   kind: z.enum(PACKET_KINDS),
   status: z.enum(PACKET_STATUSES),
   dir: z.string(), // workspace 기준 상대경로
@@ -308,6 +338,26 @@ export const YouTubeVideoSchema = z.object({
   url: z.string(),
 });
 export type YouTubeVideo = z.infer<typeof YouTubeVideoSchema>;
+
+/**
+ * 바이럴 발굴 항목.
+ * 지금은 유튜브만 채우지만, 나중에 붙일 틱톡·인스타도 같은 카드로 보여줄 수 있게
+ * `source`를 두고 플랫폼 공통 필드만 담는다.
+ */
+export const ViralItemSchema = z.object({
+  video: YouTubeVideoSchema,
+  source: z.enum(['youtube', 'tiktok', 'instagram']).default('youtube'),
+  /** 이 영상이 걸린 검색 키워드들 (여러 키워드에서 겹쳐 나오면 그만큼 강한 신호) */
+  keywords: z.array(z.string()).default([]),
+  subscriberCount: z.number().default(0),
+  viewsPerDay: z.number().default(0),
+  outlierRatio: z.number().default(0),
+  ageDays: z.number().default(0),
+  discoveredAt: z.string(),
+  /** 보관함에 담아둔 항목인지 — 담아둔 것만 workspace에 남는다 */
+  note: z.string().default(''),
+});
+export type ViralItem = z.infer<typeof ViralItemSchema>;
 
 export const ChannelAnalysisSchema = z.object({
   channelId: z.string(),
