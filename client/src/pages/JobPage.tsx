@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
-import { Badge, Button, Card, ConfirmDialog, Spinner, Textarea } from '@/components/ui';
+import { BackLink, Badge, Button, Card, ConfirmDialog, Spinner, Textarea } from '@/components/ui';
 import { ProgressRail } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
@@ -89,7 +89,11 @@ export default function JobPage() {
       {/* 좌측 진행 레일 */}
       <aside className="w-52 shrink-0">
         <Card className="sticky top-4 p-2.5">
-          <p className="mb-1 px-2 text-xs text-slate-400">{MENU_LABELS[j.menu]} / {j.projectId}</p>
+          <div className="mb-1 px-2">
+            <BackLink to={`/project/${j.menu}/${j.projectId}`}>
+              {MENU_LABELS[j.menu]} / {j.projectId}
+            </BackLink>
+          </div>
           <p className="mb-2.5 px-2 font-semibold">{j.title}</p>
           <ProgressRail pipeline={j.pipeline} state={j.state} onNavigate={setViewState} />
           {(j.state === 'failed' || j.state === 'paused') && (

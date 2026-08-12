@@ -1,5 +1,7 @@
 import { clsx } from 'clsx';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
 
 export function Button({
@@ -163,6 +165,26 @@ export function ConfirmDialog({
 export function Spinner() {
   return (
     <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
+  );
+}
+
+/**
+ * 상위 화면으로 올라가는 링크. 브라우저 뒤로가기와 달리 어디서 들어왔든 늘 같은 곳으로 간다 —
+ * 대시보드에서 잡으로 바로 들어오거나 URL을 새로 열었을 때도 갈 곳이 있어야 한다
+ */
+export function BackLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex items-start gap-1 text-xs text-slate-400 transition-colors hover:text-slate-700"
+    >
+      {/*
+        좁은 사이드바에서 카테고리 이름이 잘리지 않고 접히도록 아이콘만 고정폭으로 둔다.
+        break-keep이 없으면 한글이 "생활용/품"처럼 낱글자로 끊긴다
+      */}
+      <ArrowLeft size={13} className="mt-0.5 shrink-0" />
+      <span className="break-keep">{children}</span>
+    </Link>
   );
 }
 

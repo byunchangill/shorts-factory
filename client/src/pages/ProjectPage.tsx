@@ -8,7 +8,7 @@ import {
   type GuidelineFile, type Menu,
 } from '@shared/constants';
 import { api, ApiBootingError } from '@/api/client';
-import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal, Textarea } from '@/components/ui';
+import { BackLink, Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal, Textarea } from '@/components/ui';
 import { StepIndicator } from '@/components/pipeline';
 
 interface JobSummary {
@@ -27,7 +27,7 @@ export default function ProjectPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs text-slate-400">{MENU_LABELS[menu]}</p>
+          <BackLink to={`/${menu}`}>{MENU_LABELS[menu]}</BackLink>
           <h2 className="text-lg font-semibold">{pid}</h2>
         </div>
         <nav className="flex gap-1 rounded-lg bg-slate-100 p-1">
