@@ -84,37 +84,71 @@ export function resetDoctorCache(): void {
   inFlight = null;
 }
 
+/**
+ * 버전 확인 인자를 순서대로 시도해 하나라도 통하면 "설치됨"으로 본다.
+ *
+ * 도구마다 버전 인자가 제각각이다 (ffmpeg은 `-version`, yt-dlp는 `--version`,
+ * iopaint는 버전에 따라 아예 없다). 하나만 보고 판정하면 멀쩡히 깔린 도구를
+ * 없다고 표시하게 된다.
+ */
+async function checkAny(
+  bin: string,
+  candidates: string[][],
+): Promise<{ available: boolean; version?: string }> {
+  let last: { available: boolean; version?: string } = { available: false };
+  for (const args of candidates) {
+    const r = await checkTool(bin, args);
+    if (r.available) return r;
+    last = r;
+  }
+  return last;
+}
+
+/**
+ * 버전 자리에 사용법 안내가 들어가는 것을 막는다.
+ * `--help`로 확인한 도구는 첫 줄이 "Usage: ..."라 화면에 그대로 나가면 지저분하다.
+ */
+function cleanVersion(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  const t = v.trim();
+  if (!t || t.length > 80 || /^usage[: ]/i.test(t)) return undefined;
+  return t;
+}
+
 async function probeTools(): Promise<ToolEntry[]> {
   const s = await loadSettings();
   const checks = [
     {
       // ffmpeg 계열은 대시 하나짜리 -version 이다. --version 은 알 수 없는 옵션으로 실패하므로
       // 설치돼 있어도 "없음"으로 잘못 표시된다.
-      name: 'ffmpeg', bin: s.ffmpegPath, versionArgs: ['-version'], required: true,
+      name: 'ffmpeg', bin: s.ffmpegPath, versionArgs: [['-version']], required: true,
       installHint: 'https://ffmpeg.org/download.html 또는 winget install ffmpeg / brew install ffmpeg',
     },
     {
-      name: 'ffprobe', bin: s.ffprobePath, versionArgs: ['-version'], required: true,
+      name: 'ffprobe', bin: s.ffprobePath, versionArgs: [['-version']], required: true,
       installHint: 'ffmpeg에 포함되어 함께 설치됩니다',
     },
     {
-      name: 'yt-dlp', bin: s.ytdlpPath, required: true, versionArgs: ['--version'],
-      installHint: 'pip install yt-dlp 또는 winget install yt-dlp (자주 깨지므로 주기적으로 yt-dlp -U)',
+      name: 'yt-dlp', bin: s.ytdlpPath, required: true, versionArgs: [['--version']],
+      installHint: 'winget install yt-dlp.yt-dlp 또는 pip install yt-dlp (자주 깨지므로 주기적으로 yt-dlp -U)',
     },
     {
-      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: ['--version'],
+      // iopaint는 버전마다 CLI가 다르다 — --version이 없는 빌드가 있어서
+      // 그것만 보고 판정하면 설치돼 있어도 "없음"이 된다 (실제로 그랬다).
+      // --help는 어느 버전이든 0으로 끝나므로 마지막 확인 수단으로 쓴다.
+      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: [['--version'], ['--help']],
       installHint: 'pip install iopaint (2차 AI 인페인팅용 — 선택. tools/install-inpaint.md 참조)',
     },
   ];
 
   const tools = await Promise.all(
     checks.map(async (c) => {
-      const r = await checkTool(c.bin, c.versionArgs ?? ['--version']);
+      const r = await checkAny(c.bin, c.versionArgs ?? [['--version']]);
       return {
         name: c.name,
         required: c.required,
         available: r.available,
-        version: r.version,
+        version: cleanVersion(r.version),
         installHint: c.installHint,
       };
     }),

@@ -61,6 +61,23 @@ describe('runDoctor 캐시', () => {
   });
 
   /**
+   * iopaint는 버전마다 CLI가 다르다. --version이 없는 빌드에서 그 인자만 보고 판정하면
+   * 멀쩡히 깔린 도구가 계속 "없음"으로 나온다 (회사 PC에서 실제로 그랬다).
+   */
+  it('버전 인자가 안 통하면 다음 인자로 다시 확인한다', async () => {
+    checkTool.mockImplementation(async (_bin: string, args: string[]) =>
+      args.includes('--help')
+        ? { available: true, version: 'Usage: iopaint [OPTIONS] COMMAND [ARGS]...' }
+        : { available: false, error: 'No such option: --version' });
+
+    const report = await runDoctor();
+    const iopaint = report.tools.find((t) => t.name === 'iopaint');
+    expect(iopaint?.available).toBe(true);
+    // 사용법 안내가 버전 자리에 그대로 나가면 안 된다
+    expect(iopaint?.version).toBeUndefined();
+  });
+
+  /**
    * API 키는 도구 설치와 달리 언제든 바뀐다. 캐시가 이걸 같이 붙들고 있으면
    * 타입캐스트 키를 등록해도 도구 상태는 계속 "없음"으로 남는다 (실제로 그랬다).
    */
