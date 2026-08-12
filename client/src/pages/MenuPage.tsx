@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { FolderPlus, Folder } from 'lucide-react';
+import { FolderPlus, Folder, Trash2 } from 'lucide-react';
 import { MENU_LABELS, type Menu } from '@shared/constants';
 import { api } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Input, Modal } from '@/components/ui';
+import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal } from '@/components/ui';
 
 interface ProjectWithCounts {
   id: string;
@@ -22,6 +22,7 @@ export default function MenuPage({ menu }: { menu: Menu }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [formatId, setFormatId] = useState('');
+  const [target, setTarget] = useState<ProjectWithCounts | null>(null);
 
   const projects = useQuery({
     queryKey: ['projects', menu],
@@ -48,10 +49,26 @@ export default function MenuPage({ menu }: { menu: Menu }) {
     },
   });
 
+  const remove = useMutation({
+    mutationFn: (p: ProjectWithCounts) => api.del(`/projects/${menu}/${p.id}`),
+    onSuccess: () => {
+      // 카테고리가 사라지면 그 안의 잡도 함께 사라진다 — 대시보드의 "지금 할 일"까지 갱신
+      void qc.invalidateQueries({ queryKey: ['projects'] });
+      void qc.invalidateQueries({ queryKey: ['jobs'] });
+      void qc.invalidateQueries({ queryKey: ['active-jobs'] });
+      setTarget(null);
+    },
+  });
+
   // 이전 실패 메시지가 남은 채로 모달이 다시 열리지 않게 한다
   const openModal = () => {
     create.reset();
     setOpen(true);
+  };
+
+  const openDelete = (p: ProjectWithCounts) => {
+    remove.reset();
+    setTarget(p);
   };
 
   // menu-b 최초 진입: 포맷이 하나도 없으면 포맷 만들기로 유도
@@ -90,22 +107,58 @@ export default function MenuPage({ menu }: { menu: Menu }) {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {(projects.data ?? []).map((p) => (
-          <Link key={p.id} to={`/project/${menu}/${p.id}`}>
-            <Card className="transition-shadow hover:shadow-md">
-              <div className="flex items-center gap-2.5">
-                <Folder size={18} className="text-slate-400" />
-                <span className="font-medium">{p.title}</span>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                {p.jobCounts.active > 0 && <Badge color="blue">진행 {p.jobCounts.active}</Badge>}
-                {p.jobCounts.done > 0 && <Badge color="green">완료 {p.jobCounts.done}</Badge>}
-                {p.jobCounts.total === 0 && <Badge>작업 없음</Badge>}
-                {p.formatId && <Badge color="violet">{p.formatId}</Badge>}
-              </div>
-            </Card>
-          </Link>
+          // 삭제 버튼은 링크 밖에 둔다 — 안에 넣으면 눌렀을 때 카테고리로 들어가 버린다
+          <div key={p.id} className="group relative">
+            <Link to={`/project/${menu}/${p.id}`}>
+              <Card className="transition-shadow hover:shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <Folder size={18} className="text-slate-400" />
+                  <span className="font-medium">{p.title}</span>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  {p.jobCounts.active > 0 && <Badge color="blue">진행 {p.jobCounts.active}</Badge>}
+                  {p.jobCounts.done > 0 && <Badge color="green">완료 {p.jobCounts.done}</Badge>}
+                  {p.jobCounts.total === 0 && <Badge>작업 없음</Badge>}
+                  {p.formatId && <Badge color="violet">{p.formatId}</Badge>}
+                </div>
+              </Card>
+            </Link>
+            <button
+              className="absolute right-2 top-2 rounded-lg p-1.5 text-slate-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+              title="카테고리 삭제"
+              onClick={() => openDelete(p)}
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
         ))}
       </div>
+
+      <ConfirmDialog
+        open={!!target}
+        title="카테고리 삭제"
+        confirmWord={target && target.jobCounts.total > 0 ? target.title : undefined}
+        pending={remove.isPending}
+        error={remove.isError ? `삭제하지 못했습니다 — ${remove.error.message}` : undefined}
+        onConfirm={() => target && remove.mutate(target)}
+        onClose={() => setTarget(null)}
+        description={
+          <>
+            <p>
+              <b className="text-slate-800">{target?.title}</b> 카테고리와 그 안의 지침·제품자료
+              {target && target.jobCounts.total > 0 && (
+                <>, 영상 작업 <b className="text-slate-800">{target.jobCounts.total}개</b>
+                  {target.jobCounts.active > 0 && ` (진행 중 ${target.jobCounts.active}개)`}</>
+              )}
+              가 함께 사라집니다.
+            </p>
+            <p className="text-xs text-slate-500">
+              완전히 지우지 않고 <code>workspace/.trash/</code> 로 옮깁니다 — 되돌리려면 그 폴더를
+              원래 자리로 옮기면 됩니다. 이미 내보낸 결과물 폴더는 그대로 남습니다.
+            </p>
+          </>
+        }
+      />
 
       <Modal open={open} onClose={() => setOpen(false)} title="새 카테고리">
         <div className="space-y-3">

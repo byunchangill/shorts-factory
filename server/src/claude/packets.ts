@@ -159,6 +159,27 @@ export async function deletePacket(packetId: string): Promise<void> {
 }
 
 /**
+ * 폴더째 사라진(삭제된 잡·카테고리) 요청서를 인덱스에서 뺀다.
+ *
+ * 인덱스에 남겨두면 두 가지가 어긋난다:
+ * `/packets/{id}`가 이제 없는 폴더를 가리키고, `uniquePacketId`가 그 번호를 계속
+ * 쓰인 것으로 보아 남은 잡의 요청서 번호가 이유 없이 밀린다.
+ *
+ * @param dirAbs 사라진 폴더의 절대경로 (이 폴더 **아래** 요청서가 대상)
+ * @returns 인덱스에서 뺀 요청서 ID
+ */
+export function forgetPacketsUnder(dirAbs: string): string[] {
+  const root = path.resolve(dirAbs);
+  const dropped: string[] = [];
+  for (const [id, dir] of packetIndex) {
+    const rel = path.relative(root, dir);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) dropped.push(id);
+  }
+  for (const id of dropped) packetIndex.delete(id);
+  return dropped;
+}
+
+/**
  * 같은 잡·같은 종류로 아직 대기 중인 요청서를 치운다.
  *
  * "다시 발행"이 새 요청서를 계속 쌓는 바람에 화면이 대기 카드로 도배됐다.

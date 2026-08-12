@@ -20,6 +20,8 @@ export const paths = {
   root: () => WORKSPACE_ROOT,
   settings: () => path.join(WORKSPACE_ROOT, 'settings.json'),
   templates: () => path.join(WORKSPACE_ROOT, 'templates'),
+  /** 삭제한 카테고리·작업이 옮겨지는 곳 (`store/remove.ts`) — 지우지 않고 여기 둔다 */
+  trash: () => path.join(WORKSPACE_ROOT, '.trash'),
   menu: (menu: Menu) => path.join(WORKSPACE_ROOT, menu),
   formats: () => path.join(WORKSPACE_ROOT, 'menu-b', 'formats'),
   format: (formatId: string) => path.join(WORKSPACE_ROOT, 'menu-b', 'formats', formatId),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
-import { Badge, Button, Card, Spinner, Textarea } from '@/components/ui';
+import { Badge, Button, Card, ConfirmDialog, Spinner, Textarea } from '@/components/ui';
 import { ProgressRail } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
@@ -49,7 +49,10 @@ interface ScriptData { version: number; title: string; scenes: SceneLine[]; note
 
 export default function JobPage() {
   const { jid } = useParams() as { jid: string };
+  const qc = useQueryClient();
+  const navigate = useNavigate();
   const [viewState, setViewState] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const job = useQuery({
     queryKey: ['job', jid],
@@ -68,6 +71,17 @@ export default function JobPage() {
     [packets.data, jid],
   );
 
+  // 삭제하면 이 화면이 가리키던 잡이 사라지므로 카테고리 화면으로 돌려보낸다
+  const remove = useMutation({
+    mutationFn: () => api.del(`/jobs/${jid}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['jobs'] });
+      void qc.invalidateQueries({ queryKey: ['active-jobs'] });
+      void qc.invalidateQueries({ queryKey: ['packets'] });
+      navigate(j ? `/project/${j.menu}/${j.projectId}` : '/');
+    },
+  });
+
   if (!j) return <div className="flex justify-center py-20"><Spinner /></div>;
 
   return (
@@ -81,8 +95,35 @@ export default function JobPage() {
           {(j.state === 'failed' || j.state === 'paused') && (
             <p className="mt-2 px-2 text-xs text-red-500">{STATE_LABELS[j.state]}</p>
           )}
+          <button
+            className="mt-2 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+            onClick={() => { remove.reset(); setConfirmDelete(true); }}
+          >
+            <Trash2 size={13} /> 이 작업 삭제
+          </button>
         </Card>
       </aside>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="영상 작업 삭제"
+        pending={remove.isPending}
+        error={remove.isError ? `삭제하지 못했습니다 — ${remove.error.message}` : undefined}
+        onConfirm={() => remove.mutate()}
+        onClose={() => setConfirmDelete(false)}
+        description={
+          <>
+            <p>
+              <b className="text-slate-800">{j.title}</b> 작업의 소재·클립·대본·요청서·산출물이
+              모두 사라집니다.
+            </p>
+            <p className="text-xs text-slate-500">
+              완전히 지우지 않고 <code>workspace/.trash/</code> 로 옮깁니다 — 되돌리려면 그 폴더를
+              원래 자리로 옮기면 됩니다. 이미 내보낸 결과물 폴더는 그대로 남습니다.
+            </p>
+          </>
+        }
+      />
 
       {/* 중앙 패널 */}
       <main className="min-w-0 flex-1 space-y-4">
