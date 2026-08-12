@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # 같은 브랜치에 새 푸시가 오면 진행 중인 실행을 접는다
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: 빌드 · 타입체크 · 단위 테스트 (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines가 >=20이므로 하한과 개발 버전을 함께 본다
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # tsc --noEmit (server) + tsc --noEmit && vite build (client)
+      - name: 빌드 · 타입체크
+        run: npm run build
+
+      - name: 단위 테스트
+        run: npm test
+
+  harness:
+    name: E2E 하네스 (파이프라인 전 구간)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 하네스는 실제로 영상을 만든다 — ffmpeg/ffprobe로 합성·조립하고,
+      # yt-dlp로 로컬 소재 서버에서 내려받고, 자막 번인에 한글 폰트를 쓴다.
+      # 폰트가 없으면 doctor 단계에서 바로 실패한다 (pipeline/fonts.ts의 탐색 경로)
+      - name: ffmpeg · 한글 폰트 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-nanum
+
+      - name: yt-dlp 설치
+        run: |
+          sudo curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          yt-dlp --version
+
+      - run: npm ci
+
+      # 하네스는 os.tmpdir() 아래 격리 작업공간을 만든다. TMPDIR을 고정해 두면
+      # 실패했을 때 그 산출물을 그대로 아티팩트로 걷어올 수 있다
+      - name: 하네스 실행
+        env:
+          TMPDIR: ${{ runner.temp }}/harness
+        run: |
+          mkdir -p "$TMPDIR"
+          npm run harness
+
+      - name: 실패 시 산출물 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-output
+          path: ${{ runner.temp }}/harness/shorts-harness-*
+          retention-days: 7
+          if-no-files-found: ignore
