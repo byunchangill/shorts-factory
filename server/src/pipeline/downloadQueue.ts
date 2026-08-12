@@ -7,7 +7,7 @@ import { run } from '../util/exec.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
 import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
-import { paths } from '../store/workspace.js';
+import { paths, WORKSPACE_ROOT } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { toWorkspaceRel } from '../store/workspace.js';
 import { nextSeqId } from '../util/ids.js';
@@ -213,6 +213,7 @@ export async function attachSourceFile(
   ref: JobRef,
   tmpPath: string,
   originalName: string,
+  opts: { analyze?: boolean } = {},
 ): Promise<string> {
   const ext = path.extname(originalName) || path.extname(tmpPath) || '.mp4';
   let sourceId = '';
@@ -233,8 +234,27 @@ export async function attachSourceFile(
   await setSource(ref, sourceId, { filePath: toWorkspaceRel(filePath) });
   await logJobEvent(ref, { type: 'source.attached', sourceId, fileName: originalName });
 
-  await createClipForSource(settings, ref, sourceId, filePath);
+  // 분석(probe + 프레임 추출)은 파일당 몇 초씩 걸린다. 요청 안에서 다 돌리면
+  // 그 사이에 서버가 재시작될 때 소스가 반만 붙은 폴더가 남는다 — 뒤로 미룰 수 있게 열어둔다
+  if (opts.analyze !== false) await createClipForSource(settings, ref, sourceId, filePath);
   return sourceId;
+}
+
+/**
+ * 아직 클립이 없는 첨부 소스를 분석한다 (probe + 프레임 추출).
+ * `attachSourceFile(..., { analyze: false })`로 미뤄둔 작업을 나중에 몰아서 돌릴 때 쓴다.
+ * 이미 클립이 있으면 건너뛰므로 몇 번을 돌려도 안전하다.
+ */
+export async function analyzePendingSources(settings: Settings, ref: JobRef): Promise<number> {
+  const job = await readJob(ref);
+  if (!job) return 0;
+  let done = 0;
+  for (const s of job.sources) {
+    if (s.status !== 'downloaded' || !s.filePath) continue;
+    await createClipForSource(settings, ref, s.id, path.join(WORKSPACE_ROOT, s.filePath));
+    done++;
+  }
+  return done;
 }
 
 /** 소스 1건 제거 — 파일·클립까지 함께 지운다 */

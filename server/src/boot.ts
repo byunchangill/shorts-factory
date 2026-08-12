@@ -1,6 +1,6 @@
-import { initWorkspace } from './store/workspace.js';
+import { initWorkspace, loadSettings } from './store/workspace.js';
 import { scanJobs, listJobRefs } from './store/jobs.js';
-import { reconcileDownloadState } from './pipeline/downloadQueue.js';
+import { reconcileDownloadState, analyzePendingSources } from './pipeline/downloadQueue.js';
 import { scanPackets } from './claude/packets.js';
 import { startResultWatcher, startResultSweep, catchUpPendingResults } from './claude/resultWatcher.js';
 
@@ -60,11 +60,17 @@ async function step(name: string, fn: () => Promise<void> | void): Promise<void>
  * 다운로드는 끝났는데 다음 단계로 못 넘어간 잡을 풀어준다.
  * 전진은 다운로드 요청의 백그라운드 콜백에서 일어나므로, 그 사이 서버가 재시작되면
  * 소스는 전부 "완료"인데 상태만 `downloading`에 갇힌다. 부팅 때 한 번 훑어 수습한다.
+ *
+ * 분석(probe·프레임)도 배경에서 도는 작업이라 같은 자리에서 끊긴다 — 소스는 붙었는데
+ * 클립이 없는 잡이 남는다. 전진시키기 전에 빠진 분석부터 마저 돌린다
+ * (이미 클립이 있으면 건너뛰므로 부팅이 느려지지 않는다).
  */
 async function recoverStalledDownloads(): Promise<void> {
   let recovered = 0;
+  const settings = await loadSettings();
   for (const ref of listJobRefs()) {
     try {
+      await analyzePendingSources(settings, ref);
       if (await reconcileDownloadState(ref)) {
         recovered++;
         console.log(`[boot] 중단된 다운로드 수습: ${ref.jobId} → 자막/워터마크 제거 단계`);

@@ -871,14 +871,17 @@ async function main(): Promise<void> {
       '/projects/sample', {});
     assert(r.attached >= 4, `첨부된 소재가 부족함: ${r.attached}`);
 
+    // 분석은 배경에서 돈다 — 요청은 바로 끝나고 클립이 나중에 채워진다
+    assert(r.job.state !== 'cleaning', `분석을 기다리느라 요청이 늦게 끝남: ${r.job.state}`);
+
     // 분석까지만 가야 한다 — 대본이 미리 채워져 있으면 처음부터 시험할 수 없다
     const sj = await waitFor('샘플 클립 분석', async () => {
       const clips = await get<ClipView[]>(`/jobs/${r.job.id}/clips`);
-      return clips.length === r.attached && clips.every((c) => c.probe && c.frames.length)
-        ? await get<JobView>(`/jobs/${r.job.id}`) : null;
+      if (clips.length !== r.attached || !clips.every((c) => c.probe && c.frames.length)) return null;
+      const v = await get<JobView>(`/jobs/${r.job.id}`);
+      return v.state === 'cleaning' ? v : null;
     }, 180_000);
     assert(sj.script.currentVersion === 0, '샘플에 대본이 미리 채워져 있음');
-    assert(sj.state === 'cleaning', `분석 다음 단계가 아님: ${sj.state}`);
 
     // 원본을 옮겨버리면 다음 사람이 샘플을 못 쓴다
     const after = await sampleHashes();

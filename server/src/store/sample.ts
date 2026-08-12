@@ -5,7 +5,9 @@ import { REPO_ROOT, paths, loadSettings } from './workspace.js';
 import { exists, ensureDir } from '../util/fsx.js';
 import { createProject, getProject } from './projects.js';
 import { createJob, type JobRef } from './jobs.js';
-import { attachSourceFile, reconcileDownloadState } from '../pipeline/downloadQueue.js';
+import {
+  attachSourceFile, analyzePendingSources, reconcileDownloadState,
+} from '../pipeline/downloadQueue.js';
 import * as jobs from './jobs.js';
 
 /**
@@ -74,17 +76,29 @@ export async function createSampleProject(title?: string): Promise<SampleResult>
   await ensureDir(sourcesDir);
 
   let attached = 0;
-  for (const name of SAMPLE_CLIPS) {
-    // 첨부 처리가 rename으로 옮기므로 원본이 아니라 복사본을 넘긴다
-    const staged = path.join(sourcesDir, `sample-${name}`);
-    await fsp.copyFile(path.join(SAMPLE_DIR, name), staged);
-    await attachSourceFile(settings, ref, staged, name);
-    attached++;
+  try {
+    for (const name of SAMPLE_CLIPS) {
+      // 첨부 처리가 rename으로 옮기므로 원본이 아니라 복사본을 넘긴다
+      const staged = path.join(sourcesDir, `sample-${name}`);
+      await fsp.copyFile(path.join(SAMPLE_DIR, name), staged);
+      // 분석은 뒤로 미룬다 — 파일당 몇 초씩 걸려서 요청 안에서 다 돌리면,
+      // 그 사이 서버가 재시작될 때 소재가 반만 붙은 폴더가 남는다 (실제로 발생)
+      await attachSourceFile(settings, ref, staged, name, { analyze: false });
+      attached++;
+    }
+    await jobs.transition(ref, 'collecting', 'server');
+  } catch (e) {
+    // 반쯤 만들어진 폴더를 남기지 않는다 — 사용자는 지울 방법도 마땅치 않다
+    await fsp.rm(paths.project(ref.menu, ref.projectId), { recursive: true, force: true })
+      .catch(() => {});
+    throw e;
   }
 
-  await jobs.transition(ref, 'collecting', 'server');
-  // 받을 것이 없으므로 바로 다음 단계로 — 안 그러면 "다운로드 시작" 화면에 갇힌다
-  await reconcileDownloadState(ref);
+  // 분석은 배경에서 — 화면은 "영상 분석"이 진행되는 것을 그대로 보여준다.
+  // 백그라운드 작업에는 반드시 .catch()를 단다 (없으면 로컬 서버가 통째로 죽는다)
+  void analyzePendingSources(settings, ref)
+    .then(() => reconcileDownloadState(ref))
+    .catch((e) => jobs.logJobEvent(ref, { type: 'sample.analyze_failed', error: String(e) }));
 
   return { project, job: (await jobs.readJob(ref))!, ref, attached };
 }

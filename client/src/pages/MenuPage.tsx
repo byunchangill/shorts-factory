@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { FolderPlus, Folder, Sparkles } from 'lucide-react';
 import { MENU_LABELS, type Menu } from '@shared/constants';
-import { api } from '@/api/client';
+import { api, ApiBootingError } from '@/api/client';
 import { Badge, Button, Card, EmptyState, Input, Modal } from '@/components/ui';
 
 interface ProjectWithCounts {
@@ -58,6 +58,10 @@ export default function MenuPage({ menu }: { menu: Menu }) {
   const createSample = useMutation({
     mutationFn: () => api.post<{ project: { id: string }; job: { id: string } }>(
       '/projects/sample', { title: title.trim() || undefined }),
+    // 개발 서버는 코드가 바뀌면 재시작한다 (git pull 직후가 특히 그렇다).
+    // 그 몇 초를 사용자가 실패로 겪지 않도록 부팅 중이면 조용히 다시 시도한다
+    retry: (count, err) => err instanceof ApiBootingError && count < 5,
+    retryDelay: 2000,
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
       setOpen(false);
