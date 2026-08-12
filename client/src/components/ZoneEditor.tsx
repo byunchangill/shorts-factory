@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui';
@@ -47,11 +47,26 @@ export function ZoneEditor({
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const scale = () => {
-    const img = imgRef.current;
-    if (!img) return 1;
-    return videoWidth / img.clientWidth;
-  };
+  /**
+   * 화면에 그려진 이미지의 실제 너비(px). 존 좌표(원본 픽셀)를 화면 좌표로 바꾸는 기준이다.
+   *
+   * ref에서 매번 읽으면 안 된다 — 첫 렌더에는 ref가 비어 있고 이미지도 아직 안 실려서
+   * 비율이 1로 잡히고, 저장된 존이 원본 픽셀 크기 그대로 이미지 밖까지 그려진다.
+   * 그 뒤 리렌더가 있어야 제자리를 찾으므로, 화면에 들어오자마자 본 사람에게는
+   * "지정한 적 없는 영역이 잡혀 있는" 것처럼 보인다 (실제 신고된 증상).
+   * 그래서 로드·리사이즈 시점에 재서 상태로 들고 있는다.
+   */
+  const [imgW, setImgW] = useState(0);
+  const measure = () => setImgW(imgRef.current?.clientWidth ?? 0);
+  useEffect(() => {
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  // 클립·프레임을 바꾸면 이미지가 새로 실린다 — 그때 다시 잰다
+  useEffect(() => { measure(); }, [frameUrl]);
+
+  const scale = () => (imgW > 0 ? videoWidth / imgW : 1);
 
   const toLocal = (e: React.MouseEvent) => {
     const rect = imgRef.current!.getBoundingClientRect();
@@ -101,8 +116,16 @@ export function ZoneEditor({
         onMouseUp={onMouseUp}
         onMouseLeave={() => setDrag(null)}
       >
-        <img ref={imgRef} src={frameUrl} alt="frame" className="max-h-[420px] rounded-lg" draggable={false} />
-        {zones.map((z) => (
+        <img
+          ref={imgRef}
+          src={frameUrl}
+          alt="frame"
+          className="max-h-[420px] rounded-lg"
+          draggable={false}
+          onLoad={measure}
+        />
+        {/* 크기를 재기 전에는 그리지 않는다 — 엉뚱한 자리에 한 번 번쩍이는 것을 막는다 */}
+        {imgW > 0 && zones.map((z) => (
           <div
             key={z.id}
             onClick={(e) => { e.stopPropagation(); setSelected(z.id); }}

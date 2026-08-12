@@ -289,11 +289,16 @@ function ClipsPanel({ job }: { job: JobDetail }) {
       return api.post(`/jobs/${job.id}/clips/${cid}/frames/reextract`);
     },
   });
+  // 정리는 길게 걸려 서버가 즉시 응답하고 결과는 SSE로 온다.
+  // 지난 실행의 종료 기록이 남아 있으면 시작하자마자 표시가 꺼지므로 먼저 지운다
   const clean = useMutation({
     mutationFn: ({ cid, tier }: { cid: string; tier: 1 | 2 }) => {
+      qc.removeQueries({ queryKey: ['clean-end', job.id, cid] });
       setCleaning(cid);
       return api.post(`/jobs/${job.id}/clips/${cid}/clean`, { tier });
     },
+    // 요청 자체가 거부되면(존 없음 등) SSE가 오지 않는다 — 여기서 내린다
+    onError: () => setCleaning(null),
   });
   const toScript = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/packets`, { kind: 'script' }),
@@ -305,6 +310,20 @@ function ClipsPanel({ job }: { job: JobDetail }) {
 
   // 재추출 결과는 SSE로 들어온다 — 클립 데이터가 갱신되면 진행 표시를 내린다
   useEffect(() => { setReframing(null); }, [clips.dataUpdatedAt]);
+
+  /**
+   * 정리 종료 신호. SSE 핸들러가 캐시에 적어두면 여기서 읽어 표시를 내린다.
+   * 클립 데이터 갱신만 보고 판단하면 안 된다 — 존을 저장해도 클립이 갱신되므로
+   * 정리가 도는 중에 표시가 먼저 꺼진다.
+   */
+  const cleanEnd = useQuery<{ at: number; error?: string } | undefined>({
+    queryKey: ['clean-end', job.id, cleaning ?? ''],
+    enabled: false, // 서버에 물어볼 것이 없다. 캐시 구독만 한다
+    queryFn: () => undefined,
+  });
+  useEffect(() => {
+    if (cleaning && cleanEnd.data) setCleaning(null);
+  }, [cleaning, cleanEnd.data]);
 
   const list = clips.data ?? [];
   const current = list.find((c) => c.id === activeClip) ?? list[0];
