@@ -27,6 +27,7 @@ const METHOD_COLOR = {
 export function ZoneEditor({
   frameUrl,
   frameTime,
+  frameTimes,
   duration,
   videoWidth,
   videoHeight,
@@ -36,6 +37,8 @@ export function ZoneEditor({
   frameUrl: string;
   /** 지금 보고 있는 프레임의 시각(초) — 구간 지정의 기준점 */
   frameTime: number;
+  /** 뽑아둔 프레임들의 시각(초, 오름차순) — 구간은 이 중에서 고른다 */
+  frameTimes: number[];
   /** 클립 전체 길이(초) */
   duration: number;
   videoWidth: number;
@@ -192,6 +195,7 @@ export function ZoneEditor({
               <TimeRange
                 zone={z}
                 frameTime={frameTime}
+                frameTimes={frameTimes}
                 duration={duration}
                 onChange={(patch) =>
                   onChange(zones.map((x) => (x.id === z.id ? { ...x, ...patch } : x)))
@@ -217,69 +221,88 @@ export function ZoneEditor({
 }
 
 /**
- * 존을 클립 전체에 걸지, 특정 구간에만 걸지 정한다.
+ * 존을 클립 전체에 걸지, 어느 프레임 구간에만 걸지 정한다.
  *
- * 자막·워터마크가 영상 내내 떠 있지 않은 경우가 많은데, 전체에 걸면 멀쩡한 화면까지
- * 뭉갠다. 서버는 처음부터 구간 한정(`enable=between`)을 지원했지만 화면에 그걸 정할
- * 자리가 없어 늘 전체로 나갔다.
+ * 자막·워터마크가 영상 내내 떠 있는 경우는 드물어서, 전체에 걸면 멀쩡한 화면까지 뭉갠다.
+ * 구간은 **뽑아둔 프레임 중에서 고른다** — 초를 손으로 입력하게 하면 사용자가
+ * 이미 눈으로 보고 있는 프레임과 숫자를 머릿속에서 맞춰야 한다.
+ *
+ * 끝 프레임은 "그 프레임까지 포함"으로 해석해 다음 프레임 직전까지를 구간으로 잡는다.
+ * 9.0초 프레임을 끝으로 골랐는데 t1=9.0으로 자르면 그 프레임이 통째로 빠진다.
  *
  * 크롭은 화면 크기를 바꾸는 방식이라 시간대별로 다르게 적용할 수 없다 — 전체 고정이다.
  */
 function TimeRange({
   zone,
   frameTime,
+  frameTimes,
   duration,
   onChange,
 }: {
   zone: ZoneDraft;
   frameTime: number;
+  frameTimes: number[];
   duration: number;
   onChange: (patch: Partial<ZoneDraft>) => void;
 }) {
   const limited = zone.t0 !== undefined && zone.t1 !== undefined;
-  const round = (v: number) => Math.max(0, Math.round(v * 10) / 10);
+  const times = frameTimes.length ? frameTimes : [0];
+
+  /** 프레임 간격 — 마지막 프레임의 끝을 잡을 때 쓴다 */
+  const step = times.length > 1 ? times[1] - times[0] : 1;
+  /** 끝 프레임 시각 → 구간 끝(초). 그 프레임이 통째로 들어가게 다음 프레임 직전까지 */
+  const endOf = (t: number) => Math.min(duration, Math.round((t + step) * 10) / 10);
+  /** 구간 끝(초) → 지금 선택된 끝 프레임 */
+  const endFrame = (t1: number) => {
+    const inRange = times.filter((t) => t < t1);
+    return inRange.length ? inRange[inRange.length - 1] : times[0];
+  };
+  /** 시작(초) → 가장 가까운 프레임 (예전에 초로 저장된 값도 자연스럽게 맞춰진다) */
+  const startFrame = (t0: number) =>
+    times.reduce((best, t) => (Math.abs(t - t0) < Math.abs(best - t0) ? t : best), times[0]);
 
   if (zone.method === 'crop') {
     return <span className="text-xs text-slate-400">전체 구간 (크롭은 구간 지정 불가)</span>;
   }
 
+  const frameSelect = (value: number, onPick: (t: number) => void, label: string) => (
+    <select
+      aria-label={label}
+      className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+      value={value}
+      onChange={(e) => onPick(Number(e.target.value))}
+    >
+      {times.map((t) => <option key={t} value={t}>{t.toFixed(1)}초</option>)}
+    </select>
+  );
+
   return (
-    <span className="flex items-center gap-1 text-xs" onClick={(e) => e.stopPropagation()}>
+    <span className="flex flex-wrap items-center gap-1 text-xs" onClick={(e) => e.stopPropagation()}>
       <select
         className="rounded border border-slate-300 px-1.5 py-1 text-xs"
         value={limited ? 'range' : 'all'}
         onChange={(e) =>
           onChange(e.target.value === 'all'
             ? { t0: undefined, t1: undefined }
-            // 지금 보고 있는 프레임을 시작으로, 1초짜리 구간을 기본값으로 준다
-            : { t0: round(frameTime), t1: round(Math.min(duration, frameTime + 1)) })
+            // 지금 보고 있는 프레임부터 끝까지 — 자막을 발견한 지점이 곧 시작이다
+            : { t0: startFrame(frameTime), t1: endOf(times[times.length - 1]) })
         }
       >
         <option value="all">전체 구간</option>
-        <option value="range">구간 지정</option>
+        <option value="range">프레임 구간</option>
       </select>
       {limited && (
         <>
-          <input
-            type="number" step="0.1" min={0} max={duration}
-            className="w-16 rounded border border-slate-300 px-1 py-1 text-xs"
-            value={zone.t0}
-            onChange={(e) => onChange({ t0: round(Number(e.target.value)) })}
-          />
+          {frameSelect(startFrame(zone.t0!), (t) => onChange({ t0: t, t1: Math.max(zone.t1!, endOf(t)) }), '시작 프레임')}
           <span className="text-slate-400">~</span>
-          <input
-            type="number" step="0.1" min={0} max={duration}
-            className="w-16 rounded border border-slate-300 px-1 py-1 text-xs"
-            value={zone.t1}
-            onChange={(e) => onChange({ t1: round(Number(e.target.value)) })}
-          />
-          <span className="text-slate-400">초</span>
+          {frameSelect(endFrame(zone.t1!), (t) => onChange({ t1: endOf(t) }), '끝 프레임')}
+          <span className="text-slate-400">프레임</span>
           <button
             className="rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-            title="지금 보고 있는 프레임 시각을 끝으로 잡습니다"
-            onClick={() => onChange({ t1: round(Math.max(zone.t0! + 0.1, frameTime)) })}
+            title="지금 보고 있는 프레임을 끝으로 잡습니다"
+            onClick={() => onChange({ t1: endOf(startFrame(frameTime)) })}
           >
-            여기까지 ({frameTime.toFixed(1)}초)
+            여기까지
           </button>
         </>
       )}
