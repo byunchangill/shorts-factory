@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui';
 
 export interface ZoneDraft {
@@ -33,6 +33,8 @@ export function ZoneEditor({
   videoHeight,
   zones,
   onChange,
+  onDetect,
+  detecting,
 }: {
   frameUrl: string;
   /** 지금 보고 있는 프레임의 시각(초) — 구간 지정의 기준점 */
@@ -45,6 +47,10 @@ export function ZoneEditor({
   videoHeight: number;
   zones: ZoneDraft[];
   onChange: (zones: ZoneDraft[]) => void;
+  /** 존이 나타나는 구간을 영상에서 직접 찾아준다 (없으면 버튼을 감춘다) */
+  onDetect?: (zone: ZoneDraft) => Promise<void>;
+  /** 지금 자동 찾기 중인 존 id */
+  detecting?: string | null;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -202,6 +208,17 @@ export function ZoneEditor({
                 }
               />
               <span className="ml-auto" />
+              {onDetect && z.method !== 'crop' && (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1 text-xs"
+                  title="이 영역에 글자가 있는 프레임을 찾아 구간을 채웁니다. 글자처럼 획이 빽빽한 곳을 찾는 방식이라, 물건이 많은 화면을 글자로 볼 수도 있습니다 — 결과는 눈으로 확인하세요"
+                  disabled={!!detecting}
+                  onClick={(e) => { e.stopPropagation(); void onDetect(z); }}
+                >
+                  <Wand2 size={13} /> {detecting === z.id ? '찾는 중…' : '구간 자동 찾기'}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 className="px-1.5 py-1"

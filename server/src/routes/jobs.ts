@@ -14,6 +14,7 @@ import {
 } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
+import { detectZoneRanges } from '../pipeline/detectZone.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
 import {
   listVoices as listTypecastVoices, synthesize as typecastSynthesize, AUDIO_MIME,
@@ -367,6 +368,28 @@ router.put('/jobs/:jid/clips/:cid/zones', async (req, res) => {
   clip.zones = body.zones;
   await jobs.writeClip(ref, clip);
   res.json(clip);
+});
+
+/**
+ * 존이 실제로 나타나는 구간 자동 찾기.
+ * 판정이 애매하면 구간 없이 점수만 돌려준다 — 틀린 구간을 자신 있게 주지 않는다.
+ */
+router.post('/jobs/:jid/clips/:cid/zones/detect', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({
+    zone: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
+  }).parse(req.body);
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  if (!clip.probe) return res.status(400).json({ error: '분석 전이라 프레임이 없습니다' });
+  if (clip.frames.length < 2) {
+    return res.status(400).json({ error: '프레임이 2장 미만이라 구간을 찾을 수 없습니다' });
+  }
+
+  const settings = await loadSettings();
+  const frames = clip.frames.map((f) => ({ t: f.t, filePath: fromWorkspaceRel(f.file) }));
+  const result = await detectZoneRanges(settings, frames, body.zone, clip.probe.duration);
+  res.json(result);
 });
 
 router.post('/jobs/:jid/clips/:cid/clean', async (req, res) => {

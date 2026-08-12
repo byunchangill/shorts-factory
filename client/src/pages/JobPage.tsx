@@ -265,6 +265,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   const [marked, setMarked] = useState<Set<string>>(new Set()); // 한 번에 지우려고 찍어둔 프레임
   const [cleaning, setCleaning] = useState<string | null>(null);
   const [reframing, setReframing] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState<string | null>(null);
 
   const saveZones = useMutation({
     mutationFn: ({ cid, zones }: { cid: string; zones: ZoneDraft[] }) =>
@@ -439,6 +440,43 @@ function ClipsPanel({ job }: { job: JobDetail }) {
             videoHeight={current.probe.height}
             zones={current.zones}
             onChange={(zones) => saveZones.mutate({ cid: current.id, zones })}
+            detecting={detecting}
+            onDetect={async (zone) => {
+              setDetecting(zone.id);
+              try {
+                const r = await api.post<{
+                  verdict: 'ranges' | 'always' | 'none' | 'unclear';
+                  ranges: Array<{ t0: number; t1: number }>;
+                  frames: Array<{ t: number; score: number }>;
+                }>(`/jobs/${job.id}/clips/${current.id}/zones/detect`, {
+                  zone: { x: zone.x, y: zone.y, w: zone.w, h: zone.h },
+                });
+                // 애매하면 구간을 넣지 않는다 — 틀린 구간이 조용히 적용되면 더 나쁘다
+                if (r.verdict !== 'ranges') {
+                  alert({
+                    always: '이 영역에는 영상 내내 글자가 있습니다.\n전체 구간으로 두시면 됩니다.',
+                    none: '이 영역에서 글자를 찾지 못했습니다.\n영역이 자막에서 벗어났는지 확인해 보세요.',
+                    unclear: '구간을 특정하지 못했습니다.\n배경과 잘 구분되지 않는 경우입니다. 직접 골라주세요.',
+                  }[r.verdict]);
+                  return;
+                }
+                const [best, ...rest] = r.ranges;
+                saveZones.mutate({
+                  cid: current.id,
+                  zones: current.zones.map((z) =>
+                    z.id === zone.id ? { ...z, t0: best.t0, t1: best.t1 } : z),
+                });
+                if (rest.length) {
+                  alert(
+                    `${best.t0.toFixed(1)}~${best.t1.toFixed(1)}초를 넣었습니다.\n`
+                    + `다른 구간도 있습니다: ${rest.map((x) => `${x.t0.toFixed(1)}~${x.t1.toFixed(1)}초`).join(', ')}\n`
+                    + '필요하면 존을 하나 더 그려서 그 구간을 지정하세요.',
+                  );
+                }
+              } finally {
+                setDetecting(null);
+              }
+            }}
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
