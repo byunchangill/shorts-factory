@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { SettingsSchema } from '@shared/types';
 import { wrapCardText, suggestCards } from './cards.js';
-import { buildLayoutFilter } from './assemble.js';
-import { fontFamilyOf, escapeDrawText, escapeFilterPath } from './fonts.js';
+import { buildLayoutFilter, toConcatPath } from './assemble.js';
+import { fontFamilyOf, escapeDrawText, filterFileArg } from './fonts.js';
 
 describe('wrapCardText', () => {
   it('짧은 문구는 한 줄', () => {
@@ -86,7 +86,19 @@ describe('폰트 유틸', () => {
     expect(escapeDrawText('50%')).toContain('\\%');
   });
 
-  it('윈도우 경로의 드라이브 콜론을 이스케이프', () => {
-    expect(escapeFilterPath('C:/Windows/Fonts/malgun.ttf')).toBe('C\\:/Windows/Fonts/malgun.ttf');
+  it('필터 인자에는 경로 대신 파일명 + cwd를 준다', () => {
+    // 필터그래프 안의 콜론(윈도우 드라이브)은 ffmpeg 빌드마다 해석이 달라 신뢰할 수 없다.
+    // 이스케이프로 버티는 대신 폴더를 cwd로 잡고 파일명만 넘긴다.
+    expect(filterFileArg('/usr/share/fonts/nanum/NanumGothic.ttf'))
+      .toEqual({ arg: 'NanumGothic.ttf', cwd: '/usr/share/fonts/nanum' });
+    const { arg } = filterFileArg('C:\\Windows\\Fonts\\malgunbd.ttf');
+    expect(arg).not.toContain(':');
+    expect(arg).not.toContain('\\');
+  });
+
+  it('concat 목록 경로는 백슬래시를 슬래시로 바꾼다', () => {
+    // concat 데먹서는 백슬래시를 이스케이프로 해석해 `\U`, `\s` 등이 깨진다
+    expect(toConcatPath('C:\\Users\\me\\jobs\\seg_01.mp4')).toBe('C:/Users/me/jobs/seg_01.mp4');
+    expect(toConcatPath('/home/me/jobs/seg_01.mp4')).toBe('/home/me/jobs/seg_01.mp4');
   });
 });

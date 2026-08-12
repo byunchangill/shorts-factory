@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal, Zap, Users } from 'lucide-react';
 import {
-  PACKET_KIND_LABELS, AI_PROVIDERS, AI_PROVIDER_LABELS,
+  PACKET_KIND_LABELS, PACKET_KIND_DESCRIPTIONS, AI_PROVIDERS, AI_PROVIDER_LABELS,
   type PacketKind, type AiProvider,
 } from '@shared/constants';
 import { api } from '@/api/client';
@@ -97,6 +97,13 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
       void qc.invalidateQueries({ queryKey: ['packets'] });
     },
   });
+  const cancel = useMutation({
+    mutationFn: () => api.del(`/packets/${packet.id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['packets'] });
+      void qc.invalidateQueries({ queryKey: ['job'] });
+    },
+  });
   const runApi = useMutation({
     mutationFn: ({ provider, mode }: { provider: AiProvider; mode: 'fast' | 'quality' }) => {
       setRunning(true);
@@ -143,8 +150,23 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
             <Badge color="violet">{AI_PROVIDER_LABELS[packet.provider]}</Badge>
           )}
         </div>
-        <span className="text-xs text-slate-400">{packet.id}</span>
+        <div className="flex items-center gap-2">
+          {(packet.status === 'waiting' || packet.status === 'draft') && (
+            <button
+              className="text-xs text-slate-400 hover:text-red-500"
+              title="이 요청서 취소 (아직 처리 전이라 버려도 잃을 것이 없습니다)"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
+              취소
+            </button>
+          )}
+          <span className="text-xs text-slate-400">{packet.id}</span>
+        </div>
       </div>
+      {!compact && (
+        <p className="mt-1 text-xs text-slate-500">{PACKET_KIND_DESCRIPTIONS[packet.kind]}</p>
+      )}
 
       {packet.status === 'waiting' && detail.data && (
         <div className="mt-3">

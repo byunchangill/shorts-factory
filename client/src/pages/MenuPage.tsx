@@ -60,13 +60,13 @@ export default function MenuPage({ menu }: { menu: Menu }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{MENU_LABELS[menu]} — 작업 폴더</h2>
+        <h2 className="text-lg font-semibold">{MENU_LABELS[menu]} — 카테고리</h2>
         <div className="flex gap-2">
           {menu === 'menu-b' && (
             <Link to="/formats"><Button variant="secondary">고유 포맷 관리</Button></Link>
           )}
           <Button onClick={openModal} disabled={!!noFormats}>
-            <FolderPlus size={16} /> 새 폴더
+            <FolderPlus size={16} /> 새 카테고리
           </Button>
         </div>
       </div>
@@ -83,8 +83,8 @@ export default function MenuPage({ menu }: { menu: Menu }) {
 
       {projects.data?.length === 0 && !noFormats && (
         <EmptyState
-          message="작업 폴더가 없습니다. 제품/주제별로 폴더를 만들어 시작하세요."
-          action={<Button onClick={openModal}><FolderPlus size={16} /> 새 폴더</Button>}
+          message="카테고리가 없습니다. 생활용품·주방·수납처럼 묶어서 만들고, 그 안에 영상 작업을 하나씩 만드세요."
+          action={<Button onClick={openModal}><FolderPlus size={16} /> 새 카테고리</Button>}
         />
       )}
 
@@ -107,11 +107,11 @@ export default function MenuPage({ menu }: { menu: Menu }) {
         ))}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="새 작업 폴더">
+      <Modal open={open} onClose={() => setOpen(false)} title="새 카테고리">
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-sm font-medium">폴더 이름 (제품/주제)</label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 무선청소기" autoFocus />
+            <label className="mb-1 block text-sm font-medium">카테고리 이름</label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 생활용품" autoFocus />
           </div>
           {menu === 'menu-b' && (
             <div>
@@ -128,7 +128,7 @@ export default function MenuPage({ menu }: { menu: Menu }) {
           )}
           {create.isError && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              폴더를 만들지 못했습니다 — {create.error.message}
+              카테고리를 만들지 못했습니다 — {create.error.message}
             </p>
           )}
           <div className="flex justify-end gap-2">

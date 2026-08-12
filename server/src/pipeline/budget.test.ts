@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { charBudget, estimateSeconds, TARGET_SEC, CHARS_PER_MIN } from '@shared/constants';
+import {
+  charBudget, estimateSeconds, TARGET_SEC, TARGET_SEC_BY_MENU, CHARS_PER_MIN,
+} from '@shared/constants';
 import { SettingsSchema } from '@shared/types';
 
 describe('대본 분량 계산', () => {
@@ -43,5 +45,32 @@ describe('대본 분량 계산', () => {
 
   it('정속 낭독 속도는 분당 300자', () => {
     expect(CHARS_PER_MIN).toBe(300);
+  });
+
+  describe('메뉴별 목표 길이', () => {
+    it('제품정보리뷰는 22초 권장 · 26초 상한으로 더 짧다', () => {
+      const b = TARGET_SEC_BY_MENU['menu-b'];
+      expect(b.recommended).toBe(22);
+      expect(b.max).toBe(26);
+      expect(b.min).toBe(18);
+    });
+
+    it('두 메뉴 모두 30초를 넘지 않는다', () => {
+      for (const t of Object.values(TARGET_SEC_BY_MENU)) {
+        expect(t.max).toBeLessThanOrEqual(30);
+        expect(t.min).toBeLessThan(t.recommended);
+        expect(t.recommended).toBeLessThan(t.max);
+      }
+    });
+
+    it('제품정보리뷰 분량이 해외영상 짜집기보다 짧게 계산된다', () => {
+      expect(charBudget(1.25, 'menu-b').max).toBeLessThan(charBudget(1.25, 'menu-a').max);
+      expect(charBudget(1.25, 'menu-b').recommended).toBe(138); // 22초
+      expect(charBudget(1.25, 'menu-b').max).toBe(162);         // 26초
+    });
+
+    it('메뉴를 안 주면 해외영상 짜집기 기준을 쓴다 (기존 호출부 보호)', () => {
+      expect(charBudget(1.25)).toEqual(charBudget(1.25, 'menu-a'));
+    });
   });
 });

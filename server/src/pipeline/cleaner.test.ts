@@ -35,6 +35,26 @@ describe('buildCleanFiltergraph', () => {
     expect(g).toContain("enable='between(t,2,5)'");
   });
 
+  /**
+   * 자막이 영상 내내 떠 있는 경우는 드물다. 구간을 지정했는데 전체에 걸리면
+   * 멀쩡한 화면까지 뭉개므로, 두 방식 모두 구간을 지키는지 고정해 둔다.
+   */
+  it('블러도 구간을 지킨다 (전체에 걸리지 않는다)', () => {
+    const zones: Zone[] = [
+      { id: 'z1', kind: 'subtitle', x: 100, y: 900, w: 300, h: 80, t0: 1.5, t1: 4, method: 'boxblur' },
+    ];
+    const g = buildCleanFiltergraph(zones, probe);
+    expect(g).toContain("enable='between(t,1.5,4)'");
+  });
+
+  it('구간을 안 주면 전체 적용 — enable 식이 붙지 않는다', () => {
+    const zones: Zone[] = [
+      { id: 'z1', kind: 'logo', x: 10, y: 10, w: 100, h: 40, method: 'delogo' },
+      { id: 'z2', kind: 'emoji', x: 200, y: 200, w: 80, h: 80, method: 'boxblur' },
+    ];
+    expect(buildCleanFiltergraph(zones, probe)).not.toContain('enable=');
+  });
+
   it('boxblur는 split/crop/overlay 체인', () => {
     const zones: Zone[] = [
       { id: 'z1', kind: 'emoji', x: 500, y: 300, w: 120, h: 120, method: 'boxblur' },

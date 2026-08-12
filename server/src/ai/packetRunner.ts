@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { RESULT_SCHEMAS } from '@shared/types';
-import type { AiProvider, PacketMode } from '@shared/constants';
+import { RESULT_SCHEMAS, type Script } from '@shared/types';
+import type { AiProvider, PacketMode, Menu } from '@shared/constants';
+import { packetMenu, scriptRuleErrors } from '../claude/scriptRules.js';
 import { loadSettings } from '../store/workspace.js';
 import { readPacket, writePacket, resolvePacketDir } from '../claude/packets.js';
 import { ingestPacketResult } from '../claude/resultWatcher.js';
@@ -47,8 +48,12 @@ async function writeResultFiles(
   await ingestPacketResult(packetId);
 }
 
-/** 스키마 위반을 미리 잡아 재프롬프트에 쓸 오류 메시지를 만든다 */
-function validate(files: Record<string, string>, resultSpec: Array<{ file: string; schema: string }>): string[] {
+/** 스키마·메뉴 규칙 위반을 미리 잡아 재프롬프트에 쓸 오류 메시지를 만든다 */
+function validate(
+  files: Record<string, string>,
+  resultSpec: Array<{ file: string; schema: string }>,
+  menu: Menu,
+): string[] {
   const errors: string[] = [];
   for (const spec of resultSpec) {
     if (spec.schema === 'markdown') continue;
@@ -65,6 +70,8 @@ function validate(files: Record<string, string>, resultSpec: Array<{ file: strin
         `${spec.file}: ` +
           parsed.error.issues.slice(0, 5).map((i) => `${i.path.join('.')} — ${i.message}`).join('; '),
       );
+    } else if (spec.schema === 'script') {
+      errors.push(...scriptRuleErrors(parsed.data as Script, menu));
     }
   }
   return errors;
@@ -98,7 +105,9 @@ JSON은 주석 없이 파싱 가능한 형태여야 하며, 설명 문장은 최
   for (let attempt = 1; attempt <= 2; attempt++) {
     const response = await runProvider(provider, { prompt, settings });
     const { files, errors: parseErrors } = parseResultFiles(response, packet.resultSpec);
-    const schemaErrors = parseErrors.length ? parseErrors : validate(files, packet.resultSpec);
+    const schemaErrors = parseErrors.length
+      ? parseErrors
+      : validate(files, packet.resultSpec, packetMenu(packet));
 
     const fresh = await readPacket(packetId);
     if (fresh) {

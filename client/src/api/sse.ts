@@ -21,11 +21,30 @@ export function useServerEvents(): void {
       qc.setQueryData(['source-progress', data.jobId, data.sourceId], data.progress);
     });
     es.addEventListener('download.finished', () => invalidate('job', 'clips', 'active-jobs'));
+    es.addEventListener('download.failed', (e) => {
+      alert(`다운로드 실패: ${JSON.parse((e as MessageEvent).data).error}`);
+      invalidate('job', 'active-jobs');
+    });
     es.addEventListener('clip', () => invalidate('clips'));
-    es.addEventListener('clean.done', () => invalidate('clips'));
+
+    /**
+     * 정리(1차·2차)가 끝났음을 화면에 알린다.
+     * 성공이든 실패든 이걸 안 남기면 "처리 중…"이 영원히 안 꺼진다 — 실제로 그랬다.
+     */
+    const endClean = (data: { jobId: string; clipId: string }, error?: string) => {
+      qc.setQueryData(['clean-end', data.jobId, data.clipId], { at: Date.now(), error });
+      invalidate('clips');
+    };
+    es.addEventListener('clean.done', (e) => endClean(JSON.parse((e as MessageEvent).data)));
+    es.addEventListener('frames.failed', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      alert(`프레임 추출 실패 (${data.clipId}): ${data.error}`);
+      invalidate('clips');
+    });
     es.addEventListener('clean.failed', (e) => {
       const data = JSON.parse((e as MessageEvent).data);
       alert(`정리 실패 (${data.clipId}): ${data.error}`);
+      endClean(data, data.error);
     });
     es.addEventListener('packet', () => invalidate('packets', 'packet'));
     es.addEventListener('packet.received', () => invalidate('packets', 'packet', 'job', 'script'));

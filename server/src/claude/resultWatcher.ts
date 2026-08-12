@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import chokidar, { type FSWatcher } from 'chokidar';
-import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema } from '@shared/types';
+import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema, type Script } from '@shared/types';
+import { packetMenu, scriptRuleErrors } from './scriptRules.js';
 import { WORKSPACE_ROOT } from '../store/workspace.js';
 import { readJson, exists } from '../util/fsx.js';
 import { listAllPackets, readPacket, writePacket, resolvePacketDir } from './packets.js';
@@ -16,6 +17,28 @@ let sweepTimer: NodeJS.Timeout | null = null;
 /** 워처가 이벤트를 놓쳐도 결과가 반드시 반영되도록 하는 안전망 주기 */
 const SWEEP_INTERVAL_MS = 5_000;
 
+/** 워처가 들어갈 필요가 없는 무거운 폴더 — 영상·프레임·음성은 감시 대상이 아니다 */
+const HEAVY_DIRS = new Set([
+  'sources', 'output', 'clips', 'frames', 'voice', 'subtitles', 'cache', 'product',
+]);
+
+/**
+ * 감시 제외 판정. **작업공간 기준 상대경로**를 받는다 —
+ * 절대경로로 판정하면 작업공간을 `.../voice/` 같은 폴더에 둔 사용자의 감시가 통째로 꺼진다.
+ *
+ * 워처가 볼 것은 `requests/{packetId}/result/.done` 하나뿐인데, 기본 설정은
+ * 작업공간 전체를 훑는다. 그래서 두 가지가 걸린다:
+ *
+ * 1. `writeJsonAtomic`의 임시 파일(`job.json.tmp-…`)까지 감시 대상이 된다.
+ *    chokidar의 awaitWriteFinish가 이 파일을 붙잡고 있는 동안 rename을 하면
+ *    윈도우가 EPERM으로 거절한다 (조립 중 job.json 갱신이 실제로 이걸로 실패했다).
+ * 2. 영상·프레임 폴더까지 감시하면 파일 수가 폭증해 감시 비용만 커진다.
+ */
+export function isWatchIgnored(relPath: string): boolean {
+  if (/\.tmp-[\d-]+$/.test(relPath)) return true;
+  return relPath.split(/[\\/]/).some((seg) => HEAVY_DIRS.has(seg));
+}
+
 /**
  * requests/{packetId}/result/.done 파일 생성을 감지 → 결과 검증 → 반영.
  * Claude Code는 result/에만 쓰고, 상태 파일(packet.json/job.json)은 서버만 쓴다.
@@ -24,6 +47,7 @@ export function startResultWatcher(): void {
   watcher = chokidar.watch(WORKSPACE_ROOT, {
     ignoreInitial: true,
     depth: 10,
+    ignored: (p) => isWatchIgnored(path.relative(WORKSPACE_ROOT, p)),
     awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 100 },
   });
   watcher.on('add', (filePath) => {
@@ -98,6 +122,9 @@ export async function ingestPacketResult(packetId: string): Promise<void> {
           `스키마 불일치 result/${spec.file}: ` +
             parsed.error.issues.slice(0, 5).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         );
+      } else if (spec.schema === 'script') {
+        // 스키마는 맞지만 메뉴 규칙을 어긴 경우 (제품정보리뷰의 단점 씬 등)
+        errors.push(...scriptRuleErrors(parsed.data as Script, packetMenu(packet)));
       }
     }
   }

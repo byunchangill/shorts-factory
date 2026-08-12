@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import { z } from 'zod';
 import { API_KEY_NAMES, API_KEY_INFO, type ApiKeyName } from '@shared/constants';
 import { loadSecrets, saveSecrets, maskKey, getKey } from '../store/secrets.js';
 import { testKey } from '../ai/keyTest.js';
 
-const router = Router();
+const router = asyncRouter();
 
 const KeyNameSchema = z.enum(API_KEY_NAMES);
 
@@ -24,6 +24,24 @@ router.get('/keys', async (_req, res) => {
       connected: !!secrets.googleOauth.refreshToken,
     },
   });
+});
+
+/**
+ * 구글 OAuth 클라이언트 정보 (내 채널 분석용).
+ *
+ * **`/keys/:name` 보다 먼저 선언해야 한다.** 뒤에 두면 `:name` 이 먼저 잡아
+ * 'google-oauth'를 키 이름 enum으로 검증하다 400으로 튕긴다.
+ */
+router.put('/keys/google-oauth', async (req, res) => {
+  const body = z.object({
+    clientId: z.string(),
+    clientSecret: z.string(),
+  }).parse(req.body);
+  const secrets = await loadSecrets();
+  secrets.googleOauth.clientId = body.clientId.trim();
+  secrets.googleOauth.clientSecret = body.clientSecret.trim();
+  await saveSecrets(secrets);
+  res.json({ ok: true });
 });
 
 router.put('/keys/:name', async (req, res) => {
@@ -50,19 +68,6 @@ router.post('/keys/:name/test', async (req, res) => {
   if (!key) return res.status(400).json({ ok: false, error: '키가 등록되지 않았습니다' });
   const result = await testKey(name, key);
   res.json(result);
-});
-
-/** 구글 OAuth 클라이언트 정보 (내 채널 분석용) */
-router.put('/keys/google-oauth', async (req, res) => {
-  const body = z.object({
-    clientId: z.string(),
-    clientSecret: z.string(),
-  }).parse(req.body);
-  const secrets = await loadSecrets();
-  secrets.googleOauth.clientId = body.clientId.trim();
-  secrets.googleOauth.clientSecret = body.clientSecret.trim();
-  await saveSecrets(secrets);
-  res.json({ ok: true });
 });
 
 export default router;

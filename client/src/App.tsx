@@ -1,6 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound, TrendingUp } from 'lucide-react';
 import { useServerEvents } from '@/api/sse';
 import ApiHealthBanner from '@/components/ApiHealthBanner';
 import Dashboard from '@/pages/Dashboard';
@@ -11,11 +11,13 @@ import FormatsPage from '@/pages/FormatsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import KeysPage from '@/pages/KeysPage';
 import YouTubePage from '@/pages/YouTubePage';
+import ViralPage from '@/pages/ViralPage';
 
 const NAV = [
   { to: '/', label: '대시보드', icon: LayoutDashboard },
   { to: '/menu-a', label: '해외영상 짜집기', icon: Globe },
   { to: '/menu-b', label: '제품정보리뷰', icon: Package },
+  { to: '/viral', label: '바이럴 제품', icon: TrendingUp },
   { to: '/youtube', label: '유튜브 리서치', icon: Youtube },
   { to: '/formats', label: '고유 포맷', icon: Palette },
   { to: '/keys', label: 'API 키', icon: KeyRound },
@@ -27,7 +29,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white">
+      {/* 스크롤을 내려도 메뉴는 제자리에 — 잡 화면은 세로로 길어서 매번 위로 올라가야 했다 */}
+      <aside className="sticky top-0 h-screen w-56 shrink-0 overflow-y-auto border-r border-slate-200 bg-white">
         <div className="px-5 py-5">
           <h1 className="text-lg font-bold">🏭 쇼핑쇼츠 팩토리</h1>
           <p className="mt-0.5 text-xs text-slate-400">리서치 → 제작 → 패키징</p>
@@ -61,6 +64,7 @@ export default function App() {
             <Route path="/project/:menu/:pid" element={<ProjectPage />} />
             <Route path="/job/:jid" element={<JobPage />} />
             <Route path="/formats" element={<FormatsPage />} />
+            <Route path="/viral" element={<ViralPage />} />
             <Route path="/youtube" element={<YouTubePage />} />
             <Route path="/keys" element={<KeysPage />} />
             <Route path="/settings" element={<SettingsPage />} />

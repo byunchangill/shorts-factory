@@ -13,6 +13,7 @@ import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,6 +76,12 @@ async function softStep(name: string, fn: () => Promise<string>): Promise<boolea
 
 class HarnessFailure extends Error {}
 
+/**
+ * 폴링을 즉시 중단시키는 오류.
+ * 서버가 이미 실패를 기록했다면 더 기다려봐야 타임아웃까지 버티는 시간만 낭비된다.
+ */
+class ProbeAbort extends Error {}
+
 /** 서버가 죽었을 때 원인을 바로 보여주기 위한 로그 꼬리 */
 async function tailServerLog(lines = 12): Promise<string> {
   if (!serverLog) return '(로그 없음)';
@@ -82,8 +89,44 @@ async function tailServerLog(lines = 12): Promise<string> {
   return text.trim().split('\n').slice(-lines).join('\n      ') || '(로그 비어 있음)';
 }
 
+/**
+ * 잡 이벤트 로그(events.ndjson)에서 실패 기록을 찾는다.
+ * 파이프라인 실패는 잡 상태를 바꾸지 않고 이벤트로만 남으므로,
+ * 이걸 보지 않으면 "완료 대기"가 타임아웃까지 계속 돈다.
+ */
+async function jobFailure(...types: string[]): Promise<string | null> {
+  if (!jobDir) return null;
+  const text = await fsp.readFile(path.join(jobDir, 'events.ndjson'), 'utf8').catch(() => '');
+  const lines = text.trim().split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]) continue;
+    try {
+      const e = JSON.parse(lines[i]) as { type?: string; error?: string };
+      if (e.type && types.includes(e.type)) return e.error || '(사유 미기록)';
+    } catch { /* 기록 중이라 잘린 줄 — 무시 */ }
+  }
+  return null;
+}
+
+/** 실패 이벤트가 있으면 폴링을 즉시 끊는다 */
+async function abortIfFailed(...types: string[]): Promise<void> {
+  const err = await jobFailure(...types);
+  if (err) throw new ProbeAbort(`${types[0]} — ${err}\n      서버 로그:\n      ${await tailServerLog(20)}`);
+}
+
 function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(message);
+}
+
+/** 샘플 원본의 지문 — "샘플 사용하기"가 원본을 옮기거나 지우지 않는지 확인용 */
+async function sampleHashes(): Promise<Map<string, string>> {
+  const dir = path.join(REPO_ROOT, 'samples', 'kitchen-shelf');
+  const out = new Map<string, string>();
+  for (const name of await fsp.readdir(dir).catch(() => [] as string[])) {
+    const buf = await fsp.readFile(path.join(dir, name));
+    out.set(name, createHash('sha1').update(buf).digest('hex'));
+  }
+  return out;
 }
 
 // ── HTTP 헬퍼 ─────────────────────────────────────────────────────
@@ -109,6 +152,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const get = <T>(url: string) => req<T>('GET', url);
 const post = <T>(url: string, body?: unknown) => req<T>('POST', url, body);
 const put = <T>(url: string, body: unknown) => req<T>('PUT', url, body);
+const del = <T>(url: string) => req<T>('DELETE', url);
 
 /** 조건이 참이 될 때까지 폴링. 비동기 파이프라인 단계 대기용 */
 async function waitFor<T>(
@@ -125,6 +169,7 @@ async function waitFor<T>(
       const v = await probe();
       if (v !== null && v !== undefined) return v;
     } catch (e) {
+      if (e instanceof ProbeAbort) throw e; // 재시도해도 소용없는 실패
       lastErr = e instanceof Error ? e.message : String(e);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -144,6 +189,12 @@ function runCmd(bin: string, args: string[]): Promise<void> {
 }
 
 // ── 합성 소재 생성 ────────────────────────────────────────────────
+
+/** 제품자료 압축 첨부 검증용 — 파이썬 zipfile로 만든 진짜 zip (상세페이지/가격.txt, 사양표.txt) */
+const PRODUCT_ZIP = Buffer.from(
+  'UEsDBBQAAAgIANO9Cl3b59KDDwAAALQAAAAaAAAA7IOB7IS47Y6Y7J207KeAL+qwgOqyqS50eHQzttSxNDB4M3uC8dBhAABQSwMEFAAACAAA070KXf1Q3SILAAAACwAAAB0AAADsg4HshLjtjpjsnbTsp4Av7IKs7JaR7ZGcLnR4dFcyNXhENDB4SDgwUEsDBBQAAAAAANO9Cl05nPsGBAAAAAQAAAAPAAAAX19NQUNPU1gvLl9qdW5ranVua1BLAwQUAAAIAADTvQpdAAAAAAAAAAAAAAAACgAAAOu5iO2PtOuNlC9QSwECFAMUAAAICADTvQpd2+fSgw8AAAC0AAAAGgAAAAAAAAAAAAAAgAEAAAAA7IOB7IS47Y6Y7J207KeAL+qwgOqyqS50eHRQSwECFAMUAAAIAADTvQpd/VDdIgsAAAALAAAAHQAAAAAAAAAAAAAAgAFHAAAA7IOB7IS47Y6Y7J207KeAL+yCrOyWke2RnC50eHRQSwECFAMUAAAAAADTvQpdOZz7BgQAAAAEAAAADwAAAAAAAAAAAAAAgAGNAAAAX19NQUNPU1gvLl9qdW5rUEsBAhQDFAAACAAA070KXQAAAAAAAAAAAAAAAAoAAAAAAAAAAAAQAP1BvgAAAOu5iO2PtOuNlC9QSwUGAAAAAAQABAAIAQAA5gAAAAAA',
+  'base64',
+);
 
 const W = 640;
 const H = 360;
@@ -186,7 +237,10 @@ async function makeSilentAudio(outPath: string, seconds: number): Promise<void> 
 
 interface JobView {
   id: string; state: string; progress: number; downloading: boolean;
-  sources: Array<{ id: string; status: string; error?: string; filePath?: string }>;
+  sources: Array<{
+    id: string; url: string; origin: 'url' | 'file';
+    status: string; error?: string; filePath?: string;
+  }>;
   script: { currentVersion: number; approved: boolean };
   sceneVoiceFiles: Record<string, string>;
   output: { currentVersion?: number };
@@ -195,14 +249,14 @@ interface JobView {
 interface ClipView {
   id: string; sourceId: string;
   probe?: { width: number; height: number; duration: number };
-  frames: string[];
+  frames: Array<{ file: string; t: number; recommended: boolean }>;
   zones: unknown[];
+  segments: Array<{ id: string; in: number; out: number; note: string; used: boolean }>;
   cleanVersions: Array<{ v: number; tier: number; filePath: string }>;
   currentCleanVersion?: number;
-  segments: unknown[];
 }
 interface PacketView {
-  id: string; status: string; executionMode?: string; validationErrors: string[];
+  id: string; kind: string; status: string; executionMode?: string; validationErrors: string[];
   requestMd: string; resultSpec: Array<{ file: string; schema: string }>;
 }
 
@@ -214,7 +268,9 @@ let workspace = '';
 let exportRoot = '';
 let serverLog = '';
 let serverDied = '';
+let jobDir = ''; // 잡 폴더 절대경로 — 실패 이벤트 조기 감지에 쓴다
 let timingsTotal = 0; // 나레이션 총 길이 — 카드 삽입 검증 기준
+let keptFrameTimes: number[] = []; // 지우고 남긴 장면 시각 — 요청서·컷 구간 검증에 쓴다
 
 async function main(): Promise<void> {
   console.log(C.bold('\n🏭 쇼핑쇼츠 팩토리 — 엔드투엔드 하네스\n'));
@@ -289,6 +345,20 @@ async function main(): Promise<void> {
     return 'http://127.0.0.1:4310';
   });
 
+  await step('doctor — 필수 도구를 실제로 인식하는지', async () => {
+    // 도구가 설치돼 있어도 버전 확인 인자가 틀리면 미설치로 오판된다
+    // (ffmpeg는 -version, yt-dlp는 --version). 실제로 발생했던 버그다.
+    const report = await get<{
+      ok: boolean;
+      tools: Array<{ name: string; required: boolean; available: boolean; version?: string }>;
+    }>('/system/doctor');
+    const missing = report.tools.filter((t) => t.required && !t.available).map((t) => t.name);
+    assert(missing.length === 0, `필수 도구 미인식: ${missing.join(', ')}`);
+    assert(report.ok, 'doctor가 ok=false를 반환');
+    const named = report.tools.filter((t) => t.required && t.version).length;
+    return `필수 ${report.tools.filter((t) => t.required).length}종 인식 (버전 확인 ${named}종)`;
+  });
+
   await step('설정 — 내보내기 경로 · 프레임 레이아웃 · 카드 삽입', async () => {
     const s = await get<Record<string, unknown>>('/settings');
     await put('/settings', {
@@ -327,6 +397,7 @@ async function main(): Promise<void> {
     return [j, `${j.id} (draft)`];
   });
   const jid = job.id;
+  jobDir = path.join(workspace, 'menu-a', productName, 'jobs', jid);
 
   // ── 다운로드 ──
   await step('소스 URL 등록 (draft → collecting)', async () => {
@@ -344,13 +415,69 @@ async function main(): Promise<void> {
   await step('yt-dlp 다운로드 실행', async () => {
     await post(`/jobs/${jid}/download/start`);
     const v = await waitFor('다운로드 완료', async () => {
+      await abortIfFailed('download.failed');
       const j = await get<JobView>(`/jobs/${jid}`);
       const failed = j.sources.filter((s) => s.status === 'failed');
-      if (failed.length) throw new Error(`다운로드 실패: ${failed[0].error}`);
+      if (failed.length) throw new ProbeAbort(`다운로드 실패: ${failed[0].error}`);
       return j.sources.every((s) => s.status === 'downloaded') ? j : null;
     });
     assert(v.sources.every((s) => s.filePath), '다운로드 파일 경로가 기록되지 않음');
     return '2건 다운로드 완료';
+  });
+
+  await step('실패한 소스 삭제', async () => {
+    // 영상이 아닌 주소(쇼핑몰 상세페이지 등)를 넣으면 yt-dlp가 실패한다 — 지울 수 있어야 한다
+    const bad = `http://127.0.0.1:${MEDIA_PORT}/not-a-video.html`;
+    const added = await put<JobView>(`/jobs/${jid}/sources`, { urls: [bad] });
+    const badId = added.sources.find((s) => s.url === bad)!.id;
+    // 앞 다운로드가 아직 돌고 있으면 시작 요청이 무시된다 (이중 실행 방지)
+    await waitFor('다운로드 큐 idle', async () => {
+      const j = await get<JobView>(`/jobs/${jid}`);
+      return j.downloading ? null : true;
+    }, 30_000);
+    await post(`/jobs/${jid}/download/start`);
+    await waitFor('실패 확정', async () => {
+      const j = await get<JobView>(`/jobs/${jid}`);
+      return j.sources.find((s) => s.id === badId)?.status === 'failed' ? true : null;
+    }, 60_000);
+
+    const after = await del<JobView>(`/jobs/${jid}/sources/${badId}`);
+    assert(!after.sources.some((s) => s.id === badId), '삭제 후에도 소스가 남아 있음');
+    assert(after.sources.length === 2, `남은 소스 수가 다름: ${after.sources.length}`);
+    // 남은 소스가 다 받아졌으면 다음 단계로 넘어가야 한다 (안 그러면 화면에 갇힌다)
+    assert(after.state === 'cleaning', `삭제 후 단계가 전진하지 않음: ${after.state}`);
+    return `실패 → 삭제 → 목록에서 제거 · ${after.state}로 전진`;
+  });
+
+  await step('이미 받아둔 영상 파일 첨부', async () => {
+    const fd = new FormData();
+    const buf = await fsp.readFile(path.join(mediaDir, 'clip1.mp4'));
+    fd.append('files', new Blob([buf], { type: 'video/mp4' }), '내가받은영상.mp4');
+    const r = await fetch(`${API}/jobs/${jid}/sources/upload`, { method: 'POST', body: fd });
+    const text = await r.text(); // 본문은 한 번만 읽을 수 있다
+    assert(r.ok, `첨부 실패: ${r.status} ${text}`);
+    const j = JSON.parse(text) as JobView;
+
+    const attached = j.sources.find((s) => s.origin === 'file');
+    assert(!!attached, '첨부 소스가 등록되지 않음');
+    assert(attached!.status === 'downloaded', `첨부 소스 상태가 다름: ${attached!.status}`);
+    assert(attached!.url === '내가받은영상.mp4', `한글 파일명이 깨짐: ${attached!.url}`);
+    assert(!!attached!.filePath, '첨부 파일 경로가 기록되지 않음');
+
+    // 다운로드 소스와 똑같이 probe·프레임·클립이 만들어져야 한다
+    const clipId = attached!.id.replace(/^s/, 'c');
+    const withClip = await waitFor('첨부 클립 생성', async () => {
+      const c = await get<ClipView[]>(`/jobs/${jid}/clips`);
+      const mine = c.find((x) => x.id === clipId);
+      return mine?.probe && mine.frames.length > 0 ? mine : null;
+    }, 60_000);
+    assert(withClip.probe!.width === W, `첨부 클립 해상도 이상: ${withClip.probe!.width}`);
+
+    // 첨부를 취소하면 소스·파일·클립이 함께 사라져야 한다
+    await del<JobView>(`/jobs/${jid}/sources/${attached!.id}`);
+    const clipsAfter = await get<ClipView[]>(`/jobs/${jid}/clips`);
+    assert(clipsAfter.length === 2, `삭제 후 클립 수가 다름: ${clipsAfter.length}`);
+    return `첨부 → 클립 생성(${withClip.frames.length}프레임) → 삭제 시 클립까지 정리`;
   });
 
   const clips = await step2<ClipView[]>('클립 자동 생성 · 분석(ffprobe) · 프레임 추출', async () => {
@@ -362,7 +489,67 @@ async function main(): Promise<void> {
     assert(c0.probe!.width === W && c0.probe!.height === H,
       `해상도 불일치: ${c0.probe!.width}x${c0.probe!.height}`);
     assert(c0.probe!.duration > 5, `길이 이상: ${c0.probe!.duration}`);
-    return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장`];
+    // 영상 전 구간을 훑을 수 있어야 한다 — 8초 클립이면 1초 간격으로 8장 안팎
+    assert(c0.frames.length >= Math.floor(c0.probe!.duration) - 1,
+      `프레임이 영상 길이를 못 덮음: ${c0.frames.length}장 / ${c0.probe!.duration}초`);
+    assert(c0.frames.every((f) => f.t >= 0 && f.t <= c0.probe!.duration),
+      '프레임 시각이 영상 길이를 벗어남');
+    // 시각이 순서대로 증가해야 화면 순서와 영상 순서가 일치한다
+    assert(c0.frames.every((f, i) => i === 0 || f.t > c0.frames[i - 1].t), '프레임 시각이 순서대로가 아님');
+    return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장(${c0.probe!.duration.toFixed(0)}초)`];
+  });
+
+  await step('전체 프레임 불러오기 — 프레임 적은 클립 갱신', async () => {
+    // 프레임이 몇 장 없는 예전 클립을 흉내 내기 위해 먼저 여러 장 지운다
+    const cid = clips[1].id;
+    const stale = clips[1].frames.slice(0, 2).map((f) => f.file);
+    const thinned = await del<ClipView>(
+      `/jobs/${jid}/clips/${cid}/frames?${stale.map((f) => `file=${encodeURIComponent(f)}`).join('&')}`);
+    assert(thinned.frames.length === clips[1].frames.length - 2,
+      `다중 삭제 반영 안 됨: ${thinned.frames.length}`);
+
+    await post(`/jobs/${jid}/clips/${cid}/frames/reextract`);
+    const back = await waitFor('프레임 재추출', async () => {
+      await abortIfFailed('clip.frames_failed');
+      const c = (await get<ClipView[]>(`/jobs/${jid}/clips`)).find((x) => x.id === cid)!;
+      return c.frames.length > thinned.frames.length ? c : null;
+    }, 120_000);
+
+    assert(back.frames.length >= clips[1].frames.length, `되살아난 장수가 부족: ${back.frames.length}`);
+    assert(back.frames.every((f) => f.t >= 0), '재추출 프레임에 시각이 없음');
+    // 실제 이미지 파일이 디스크에 있어야 존 편집기가 그림을 띄운다
+    for (const f of back.frames.slice(0, 3)) {
+      const st = await fsp.stat(path.join(workspace, f.file));
+      assert(st.size > 500, `프레임 파일이 비었음: ${f.file}`);
+    }
+    return `2장 삭제 → 전체 ${back.frames.length}장 복원`;
+  });
+
+  await step('안 쓸 프레임 삭제 — 남은 것이 대본 소재', async () => {
+    const cid = clips[0].id;
+    const before = clips[0].frames.length;
+
+    // 앞 2장만 남기고 나머지를 한 번에 지운다 (여러 장 정리를 왕복 없이)
+    const victims = clips[0].frames.slice(2);
+    const after = await del<ClipView>(
+      `/jobs/${jid}/clips/${cid}/frames?${victims.map((f) => `file=${encodeURIComponent(f.file)}`).join('&')}`);
+    assert(after.frames.length === 2, `삭제 반영 안 됨: ${after.frames.length}`);
+
+    // 지운 프레임은 디스크에서도 사라져야 한다 (용량과 요청서 소재 둘 다에 영향)
+    for (const v of victims.slice(0, 3)) {
+      const alive = await fsp.stat(path.join(workspace, v.file)).then(() => true, () => false);
+      assert(!alive, `프레임 파일이 디스크에 남아 있음: ${v.file}`);
+    }
+
+    // 전부 지우려 하면 막아야 한다 — 존을 그릴 화면이 없어진다
+    const wipe = await fetch(
+      `${API}/jobs/${jid}/clips/${cid}/frames?${after.frames.map((f) => `file=${encodeURIComponent(f.file)}`).join('&')}`,
+      { method: 'DELETE' },
+    );
+    assert(wipe.status === 400, `전체 삭제가 막히지 않음: ${wipe.status}`);
+
+    keptFrameTimes = after.frames.map((f) => f.t);
+    return `${before}장 → ${after.frames.length}장 남김 (${keptFrameTimes.map((t) => t.toFixed(1)).join('·')}초) · 전체 삭제는 차단`;
   });
 
   // ── 자막/워터마크 제거 ──
@@ -383,6 +570,7 @@ async function main(): Promise<void> {
   await step('1차 제거 실행 (ffmpeg filtergraph)', async () => {
     for (const clip of clips) await post(`/jobs/${jid}/clips/${clip.id}/clean`, { tier: 1 });
     const done = await waitFor('정리본 생성', async () => {
+      await abortIfFailed('clip.clean_failed');
       const c = await get<ClipView[]>(`/jobs/${jid}/clips`);
       return c.every((x) => x.currentCleanVersion) ? c : null;
     }, 180_000);
@@ -398,13 +586,67 @@ async function main(): Promise<void> {
   });
 
   // ── 대본 (요청서 왕복: 수동 붙여넣기 = 키 없이 검증 가능) ──
+  await step('제품자료 없이 제품정보 추출 요청 시 차단', async () => {
+    // 자료가 없으면 AI가 할 수 있는 일은 지어내는 것뿐이다 — 발행 자체를 막아야 한다
+    const r = await fetch(`${API}/jobs/${jid}/packets`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'product-extract' }),
+    });
+    assert(r.status === 400, `차단되지 않음 (status ${r.status})`);
+    const body = await r.json();
+    assert(String(body.error).includes('제품자료'), `안내 문구가 다름: ${body.error}`);
+    return '400 + 첨부 위치 안내';
+  });
+
+  await step('제품자료 압축파일 첨부 → 자동 해제 → 요청서 발행', async () => {
+    // 파이썬 zipfile로 만든 진짜 zip (한글 경로 + deflate/stored 혼합)
+    const fd = new FormData();
+    fd.append('files', new Blob([PRODUCT_ZIP], { type: 'application/zip' }), '상세페이지.zip');
+    const up = await fetch(
+      `${API}/projects/menu-a/${encodeURIComponent(productName)}/product/files`,
+      { method: 'POST', body: fd },
+    );
+    const upBody = await up.text();
+    assert(up.ok, `업로드 실패: ${up.status} ${upBody}`);
+    const { errors } = JSON.parse(upBody) as { uploaded: string[]; errors: string[] };
+    assert(errors.length === 0, `압축 해제 오류: ${errors.join(', ')}`);
+
+    // 하위 폴더까지 훑어야 요청서에 경로가 실린다
+    const listed = await get<{ files: Array<{ name: string }> }>(
+      `/projects/menu-a/${encodeURIComponent(productName)}/product`);
+    const names = listed.files.map((f) => f.name);
+    assert(names.includes('상세페이지/가격.txt'), `해제된 파일이 목록에 없음: ${names.join(', ')}`);
+    assert(!names.some((n) => n.endsWith('.zip')), '압축 파일이 그대로 남아 있음');
+
+    // 자료가 생겼으니 이제 발행돼야 하고, 요청서에 그 경로가 실려야 한다
+    const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'product-extract' });
+    const d = await get<PacketView>(`/packets/${p.id}`);
+    assert(d.requestMd.includes('상세페이지/가격.txt'), '요청서에 첨부 경로가 없음');
+    return `zip → ${names.length}개 파일 · ${p.id} 발행`;
+  });
+
   const packetId = await step2<string>('대본 요청서 발행', async () => {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'script' });
     const d = await get<PacketView>(`/packets/${p.id}`);
     assert(d.requestMd.includes('하네스 검증용'), '요청서에 지침이 포함되지 않음');
     assert(d.requestMd.includes(clips[0].id), '요청서에 소재 현황이 포함되지 않음');
     assert(d.requestMd.includes('어떤 AI로도'), '요청서가 AI 중립 문구가 아님');
-    return [p.id, `${p.id} · 지침·소재 포함 확인`];
+    // 남긴 장면이 그대로 소재로 넘어가야 한다 (지운 장면으로 대본이 써지면 안 된다)
+    for (const t of keptFrameTimes) {
+      assert(d.requestMd.includes(`${t.toFixed(1)}초`),
+        `요청서에 남은 프레임 ${t.toFixed(1)}초가 없음`);
+    }
+    assert(d.requestMd.includes('남겨둔 장면'), '요청서에 소재 안내가 없음');
+
+    // 다시 발행하면 대기 중이던 것은 치워져야 한다 (안 그러면 화면이 대기 카드로 도배된다)
+    const again = await post<{ id: string; discarded: number }>(`/jobs/${jid}/packets`, { kind: 'script' });
+    assert(again.discarded === 1, `이전 대기 요청서가 정리되지 않음: ${again.discarded}`);
+    const waiting = (await get<PacketView[]>('/packets'))
+      .filter((x) => x.status === 'waiting' && x.kind === 'script');
+    // 치운 번호는 다시 쓰이므로 id가 아니라 "대기 중 몇 건인가"로 확인한다
+    assert(waiting.length === 1, `대기 중 대본 요청서가 ${waiting.length}건 (1건이어야 함)`);
+
+    return [again.id, `${again.id} · 지침·남은 소재 ${keptFrameTimes.length}장 · 재발행 시 이전 대기건 정리`];
   });
 
   const scenes = [
@@ -440,6 +682,20 @@ async function main(): Promise<void> {
   });
 
   // ── 컷 선택 ──
+  await step('남은 프레임 → 컷 구간 후보 생성', async () => {
+    const cid = clips[0].id;
+    const r = await post<ClipView>(`/jobs/${jid}/clips/${cid}/segments/from-frames`);
+    assert(r.segments.length > 0, '구간이 만들어지지 않음');
+    // 남긴 시각이 어느 구간엔가 들어 있어야 한다
+    for (const t of keptFrameTimes) {
+      assert(r.segments.some((s) => t >= s.in && t <= s.out),
+        `남은 시각 ${t}초가 어느 구간에도 포함되지 않음`);
+    }
+    assert(r.segments.every((s) => s.in < s.out), '구간이 뒤집힘');
+    assert(r.segments.every((s) => s.in >= 0), '구간 시작이 음수');
+    return `${keptFrameTimes.length}장 → ${r.segments.length}구간`;
+  });
+
   await step('컷 구간 저장', async () => {
     for (const [i, clip] of clips.entries()) {
       const seg = scenes[i].clipRef.suggestedSegment;
@@ -511,7 +767,10 @@ async function main(): Promise<void> {
 
     await step('첨부 파일로 타이밍 생성', async () => {
       await post(`/jobs/${jid}/tts`, {});
-      const timings = await waitFor('타이밍 생성', readTiming, 60_000);
+      const timings = await waitFor('타이밍 생성', async () => {
+        await abortIfFailed('tts.failed');
+        return readTiming();
+      }, 60_000);
       assert(Array.isArray(timings) && timings.length === scenes.length,
         `타이밍 씬 수 불일치: ${timings.length}`);
       assert(timings.every((t: { source: string }) => t.source === 'file'),
@@ -537,12 +796,12 @@ async function main(): Promise<void> {
   await step('최종 조립 (9:16 · 자막 번인 · 공시문구)', async () => {
     await post(`/jobs/${jid}/assemble`, {});
     const j = await waitFor('조립 완료', async () => {
+      await abortIfFailed('assemble.failed');
       const v = await get<JobView>(`/jobs/${jid}`);
-      if (v.state === 'failed') throw new Error('조립 실패 상태');
+      if (v.state === 'failed') throw new ProbeAbort('조립 실패 상태');
       return v.output.currentVersion ? v : null;
     }, 300_000);
-    const finalPath = path.join(
-      workspace, 'menu-a', productName, 'jobs', jid, 'output', `final_v${j.output.currentVersion}.mp4`);
+    const finalPath = path.join(jobDir, 'output', `final_v${j.output.currentVersion}.mp4`);
     const stat = await fsp.stat(finalPath);
     assert(stat.size > 10_000, `최종 영상이 너무 작음: ${stat.size} bytes`);
 
@@ -569,11 +828,188 @@ async function main(): Promise<void> {
     return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
   });
 
+  await step('바이럴 발굴 — 키 없으면 차단 · 보관함 왕복', async () => {
+    // 키가 없는데 조용히 빈 목록을 주면 사용자는 "터진 영상이 없구나"로 오해한다
+    const r = await fetch(`${API}/viral/discover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords: ['주방 수납'] }),
+    });
+    assert(r.status === 400, `키 없이 발굴이 차단되지 않음 (status ${r.status})`);
+    assert(String((await r.json()).error).includes('API 키'), '안내 문구에 키 언급이 없음');
+
+    // 보관함은 유튜브 키 없이도 동작해야 한다 (저장된 항목을 보는 기능이므로)
+    const item = {
+      video: {
+        videoId: 'vh1', title: '주방 틈새 정리', channelId: 'ch1', channelTitle: '살림채널',
+        publishedAt: new Date(Date.now() - 3 * 86400_000).toISOString(), thumbnail: '',
+        viewCount: 2_260_000, likeCount: 0, commentCount: 0, durationSec: 42,
+        url: 'https://www.youtube.com/watch?v=vh1',
+      },
+      source: 'youtube', keywords: ['주방 수납'], subscriberCount: 4200,
+      viewsPerDay: 753_333, outlierRatio: 538.1, ageDays: 3,
+      discoveredAt: new Date().toISOString(), note: '',
+    };
+    await post('/viral/board', item);
+    await post('/viral/board', item); // 같은 영상을 두 번 담아도 하나여야 한다
+    const board = await get<Array<{ video: { videoId: string } }>>('/viral/board');
+    assert(board.length === 1, `보관함 중복: ${board.length}건`);
+
+    const after = await del<unknown[]>(`/viral/board/${item.video.videoId}`);
+    assert(after.length === 0, '보관 해제가 반영되지 않음');
+    return '키 없음 400 · 보관 중복 방지 · 해제 확인';
+  });
+
+  // ── 샘플 소재로 시작 (새 PC에서 처음 눌러보는 경로) ──
+  await step('샘플 사용하기 — 분석 단계까지 · 원본 보존', async () => {
+    const before = await sampleHashes();
+    assert(before.size > 0, 'samples/kitchen-shelf에 소재가 없음');
+
+    const info = await get<{ available: boolean }>('/projects/sample');
+    assert(info.available, '샘플 소재를 인식하지 못함');
+
+    // 폴더는 카테고리, 샘플은 그 안의 영상 작업 하나다
+    const category = '샘플카테고리';
+    await post('/projects', { menu: 'menu-a', title: category });
+    const r = await post<{ job: JobView; attached: number }>(
+      `/projects/menu-a/${encodeURIComponent(category)}/jobs/sample`, {});
+    assert(r.attached >= 4, `첨부된 소재가 부족함: ${r.attached}`);
+
+    // 분석은 배경에서 돈다 — 요청은 바로 끝나고 클립이 나중에 채워진다
+    assert(r.job.state !== 'cleaning', `분석을 기다리느라 요청이 늦게 끝남: ${r.job.state}`);
+
+    // 분석까지만 가야 한다 — 대본이 미리 채워져 있으면 처음부터 시험할 수 없다
+    const sj = await waitFor('샘플 클립 분석', async () => {
+      const clips = await get<ClipView[]>(`/jobs/${r.job.id}/clips`);
+      if (clips.length !== r.attached || !clips.every((c) => c.probe && c.frames.length)) return null;
+      const v = await get<JobView>(`/jobs/${r.job.id}`);
+      return v.state === 'cleaning' ? v : null;
+    }, 180_000);
+    assert(sj.script.currentVersion === 0, '샘플에 대본이 미리 채워져 있음');
+
+    // 원본을 옮겨버리면 다음 사람이 샘플을 못 쓴다
+    const after = await sampleHashes();
+    for (const [name, hash] of before) {
+      assert(after.get(name) === hash, `샘플 원본이 변경됨: ${name}`);
+    }
+
+    // 같은 카테고리에 또 만들어도 앞의 작업을 덮지 않는다
+    const again = await post<{ job: JobView }>(
+      `/projects/menu-a/${encodeURIComponent(category)}/jobs/sample`, {});
+    assert(again.job.id !== r.job.id, `샘플 작업 id가 겹침: ${again.job.id}`);
+
+    // 없는 카테고리에는 만들 수 없어야 한다 (엉뚱한 폴더가 생기면 안 된다)
+    const orphan = await fetch(`${API}/projects/menu-a/없는카테고리/jobs/sample`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    assert(orphan.status === 404, `없는 카테고리에 만들어짐: ${orphan.status}`);
+
+    return `${r.attached}개 소재 · ${sj.state}까지 · 원본 ${before.size}개 무결 · 카테고리 안에 여러 편`;
+  });
+
+  // ── 제품정보리뷰(menu-b) 전용 규칙 ──
+  // 메뉴 A는 별도 지침을 따로 세우기로 해서, 이 규칙들이 A로 새지 않는지도 같이 본다
+  await step('제품정보리뷰 — 짧은 분량 · 단점 씬 게이트 · 시리즈 예고', async () => {
+    const bProduct = '테스트세제통';
+    await post('/projects', { menu: 'menu-b', title: bProduct });
+    const bJob = await post<JobView>(
+      `/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '1편' });
+
+    // ① 요청서가 menu-b 기준(22초·162자)과 단점 씬 규칙을 담아야 한다
+    const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
+    const req = await get<PacketView>(`/packets/${p1.id}`);
+    assert(req.requestMd.includes('26초 이내'), 'menu-b 목표 시간이 요청서에 없음');
+    assert(req.requestMd.includes('162자'), `menu-b 분량 상한이 반영되지 않음`);
+    assert(!req.requestMd.includes('187자'), 'menu-a 분량 상한이 새어 들어옴');
+    assert(req.requestMd.includes('isDownside'), '단점 씬 규칙이 요청서에 없음');
+
+    // ② 단점 씬이 없으면 반려 — 대본이 반영되면 안 된다
+    const noDownside = {
+      title: '세제통 정리',
+      scenes: [
+        { sceneId: 's01', narration: '싱크대 세제통 아직도 그냥 두세요?', subtitle: '아직도?', imagePrompt: 'sink' },
+        { sceneId: 's02', narration: '여기 꽂기만 하면 한 손으로 됩니다.', subtitle: '한 손', imagePrompt: 'pump' },
+      ],
+    };
+    await post<{ errors: string[] }>(`/packets/${p1.id}/paste`,
+      { raw: `\`\`\`json\n${JSON.stringify(noDownside)}\n\`\`\`` });
+    const rejected = await waitFor('단점 씬 누락 검증', async () => {
+      const d = await get<PacketView>(`/packets/${p1.id}`);
+      return d.status === 'received' ? d : null;
+    }, 30_000);
+    assert(rejected.validationErrors.some((e) => e.includes('단점 씬')),
+      `단점 씬 누락이 걸러지지 않음: ${rejected.validationErrors.join(', ')}`);
+    const stillEmpty = await get<JobView>(`/jobs/${bJob.id}`);
+    assert(stillEmpty.script.currentVersion === 0,
+      `반려된 대본이 반영됨: v${stillEmpty.script.currentVersion}`);
+
+    // ③ 단점 씬을 넣으면 통과
+    const p2 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
+    const withDownside = {
+      ...noDownside,
+      scenes: [
+        ...noDownside.scenes,
+        { sceneId: 's03', narration: '대신 스테인리스라 지문은 묻습니다.', subtitle: '지문은 묻어요', imagePrompt: 'steel', isDownside: true },
+      ],
+    };
+    const r2 = await post<{ errors: string[] }>(`/packets/${p2.id}/paste`,
+      { raw: `\`\`\`json\n${JSON.stringify(withDownside)}\n\`\`\`` });
+    assert(r2.errors.length === 0, `단점 씬이 있는데 반려됨: ${r2.errors.join(', ')}`);
+    const applied = await waitFor('menu-b 대본 반영', async () => {
+      const j = await get<JobView>(`/jobs/${bJob.id}`);
+      return j.script.currentVersion === 1 ? j : null;
+    }, 30_000);
+    assert(applied.script.currentVersion === 1, '단점 씬을 넣은 대본이 반영되지 않음');
+
+    // ④ 업로드 킷 요청서에 시리즈 회차와 해시태그 상한이 들어가야 한다
+    await post<JobView>(`/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '2편' });
+    const kit = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'upload-kit' });
+    const kitReq = await get<PacketView>(`/packets/${kit.id}`);
+    assert(kitReq.requestMd.includes('1번째 편'), '시리즈 회차가 요청서에 없음');
+    assert(kitReq.requestMd.includes('3~5개'), '해시태그 상한이 요청서에 없음');
+    assert(kitReq.requestMd.includes('다음 편 예고'), '다음 편 예고 지시가 요청서에 없음');
+
+    // ⑤ 같은 규칙이 menu-a로 새지 않아야 한다 (메뉴 A는 별도 지침 예정)
+    const aPacket = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'script' });
+    const aReq = await get<PacketView>(`/packets/${aPacket.id}`);
+    // 규칙 문장으로 본다 — 이전 대본이 문맥으로 실리면 isDownside 키 자체는 등장할 수 있다
+    assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
+    assert(aReq.requestMd.includes('187자'), 'menu-a 분량 기준이 바뀜');
+    assert(aReq.requestMd.includes('30초 이내'), 'menu-a 목표 시간이 바뀜');
+
+    return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
+  });
+
+  // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
+  await step('요청서 파일 감시 — result/.done 감지 → 자동 반영', async () => {
+    const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'upload-kit' });
+    const resultDir = path.join(jobDir, 'requests', p.id, 'result');
+    await fsp.mkdir(resultDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(resultDir, 'upload-kit.md'),
+      '# 업로드 킷\n\n## 제목 후보 (5개)\n1. 3만원 충전기 실화\n\n## 설명\n' +
+      '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n' +
+      '## 해시태그\n#충전기\n\n## 썸네일 문구\n3만원의 실력\n',
+      'utf8',
+    );
+    // AI는 산출물을 다 쓴 뒤 마지막에 .done을 만든다 — 서버는 이걸 보고 검증·반영한다
+    const t0 = Date.now();
+    await fsp.writeFile(path.join(resultDir, '.done'), '', 'utf8');
+    const d = await waitFor('결과 감지', async () => {
+      const v = await get<PacketView>(`/packets/${p.id}`);
+      return v.status === 'received' ? v : null;
+    }, 12_000, 200);
+    const sec = (Date.now() - t0) / 1000;
+    assert(d.validationErrors.length === 0, `검증 오류: ${d.validationErrors.join(', ')}`);
+    // 5초 스윕이 안전망으로 잡아주긴 하지만, 그건 워처가 놓쳤다는 뜻이다
+    return `${sec.toFixed(1)}초 만에 반영 ${sec < 4 ? '(파일 워처)' : '⚠ 스윕 폴백 — 워처가 놓침'}`;
+  });
+
   // ── 완료 + 내보내기 ──
   await step('완료 처리 → 제품 폴더 자동 내보내기', async () => {
     await post(`/jobs/${jid}/transition`, { to: 'done' });
     const dir = path.join(exportRoot, productName);
     await waitFor('내보내기 완료', async () => {
+      await abortIfFailed('export.failed');
       const j = await get<JobView>(`/jobs/${jid}`);
       return j.exportedAt ? j : null;
     }, 120_000);
@@ -599,7 +1035,6 @@ async function main(): Promise<void> {
 
   // ── 상태 파일 무결성 ──
   await step('상태 파일 · 감사 로그 무결성', async () => {
-    const jobDir = path.join(workspace, 'menu-a', productName, 'jobs', jid);
     const jobJson = JSON.parse(await fsp.readFile(path.join(jobDir, 'job.json'), 'utf8'));
     assert(jobJson.state === 'done', `최종 상태가 done이 아님: ${jobJson.state}`);
     const history: string[] = jobJson.stateHistory.map((h: { state: string }) => h.state);
@@ -665,7 +1100,8 @@ async function countFiles(dir: string): Promise<number> {
   return n;
 }
 
-async function cleanup(): Promise<void> {
+/** @param keepFiles 실패 시 true — 서버 로그·중간 산출물을 남겨 원인을 볼 수 있게 한다 */
+async function cleanup(keepFiles: boolean): Promise<void> {
   // 서버를 확실히 정리한다. 남아 있으면 다음 실행이 낡은 작업공간을 가리키는
   // 이 서버에 붙어버려 원인 파악이 어려운 실패가 난다.
   if (server?.pid) {
@@ -678,12 +1114,12 @@ async function cleanup(): Promise<void> {
   }
   mediaServer?.close();
   await new Promise((r) => setTimeout(r, 200));
-  if (!KEEP && workspace) {
+  if (!KEEP && !keepFiles && workspace) {
     await fsp.rm(path.dirname(workspace), { recursive: true, force: true }).catch(() => {});
   }
 }
 
-function report(): boolean {
+async function report(): Promise<boolean> {
   const failed = results.filter((r) => !r.ok);
   const skipped = results.filter((r) => r.skipped);
   const total = results.reduce((s, r) => s + r.ms, 0);
@@ -693,23 +1129,31 @@ function report(): boolean {
   if (failed.length) {
     console.log(C.red('\n실패한 단계:'));
     for (const f of failed) console.log(`  ✘ ${f.name}\n    ${f.detail}`);
-    if (serverLog) console.log(C.dim(`\n  서버 로그: ${serverLog}`));
+    // 실패 원인은 대개 서버 쪽 스택에 있다. 파일을 열어보라고 안내만 하지 말고 바로 보여준다
+    if (serverLog) {
+      console.log(C.dim('\n  서버 로그 (마지막 25줄):'));
+      console.log(C.dim(`      ${await tailServerLog(25)}`));
+      console.log(C.dim(`\n  전체 로그: ${serverLog}`));
+    }
   }
-  if (KEEP) console.log(C.dim(`\n산출물 보존됨: ${path.dirname(workspace)}`));
+  if (KEEP || failed.length) {
+    console.log(C.dim(`\n산출물 보존됨: ${path.dirname(workspace)}`));
+  }
   console.log();
   return failed.length === 0;
 }
 
 main()
   .then(async () => {
-    await cleanup();
-    process.exit(report() ? 0 : 1);
+    const ok = await report();
+    await cleanup(!ok);
+    process.exit(ok ? 0 : 1);
   })
   .catch(async (e) => {
     if (!(e instanceof HarnessFailure)) {
       console.error(C.red(`\n하네스 오류: ${e instanceof Error ? e.stack : String(e)}`));
     }
-    await cleanup();
-    report();
+    await report();
+    await cleanup(true);
     process.exit(1);
   });

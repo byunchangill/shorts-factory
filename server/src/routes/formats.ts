@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import { FormatSchema } from '@shared/types';
 import * as formats from '../store/formats.js';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get('/formats', async (_req, res) => {
   res.json(await formats.listFormats());

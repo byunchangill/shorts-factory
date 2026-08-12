@@ -4,13 +4,42 @@ import path from 'node:path';
 
 let tmpCounter = 0;
 
+/** 윈도우에서 rename이 일시적으로 막히는 오류들 (다른 프로세스가 대상 파일을 잡고 있을 때) */
+const TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * rename 재시도.
+ *
+ * 윈도우는 대상 파일이 다른 핸들(백신 실시간 검사, 파일 탐색기, 인덱서, 동시 읽기)에
+ * 열려 있으면 rename을 EPERM으로 거절한다. 리눅스·macOS에는 없는 제약이고
+ * 대부분 수십 ms 안에 풀리므로, 짧게 물러났다 다시 시도한다.
+ * 끝내 실패하면 임시 파일을 치우고 원래 오류를 그대로 올린다.
+ */
+async function renameWithRetry(tmp: string, dest: string): Promise<void> {
+  // 총 약 3.3초 — 여기서 실패하면 파이프라인 한 판이 통째로 날아가므로 넉넉히 기다린다
+  const delays = [10, 20, 40, 80, 160, 320, 640, 1000, 1000];
+  for (let i = 0; ; i++) {
+    try {
+      await fsp.rename(tmp, dest);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (i >= delays.length || !TRANSIENT_RENAME_ERRORS.has(code)) {
+        await fsp.rm(tmp, { force: true }).catch(() => {});
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, delays[i]));
+    }
+  }
+}
+
 /** temp 파일에 쓴 뒤 rename — 부분 쓰기로 인한 JSON 파손 방지 */
 export async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
   // 같은 밀리초에 동시 호출돼도 임시 파일이 겹치지 않도록 카운터를 섞는다
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${tmpCounter++}`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-  await fsp.rename(tmp, filePath);
+  await renameWithRetry(tmp, filePath);
 }
 
 /**

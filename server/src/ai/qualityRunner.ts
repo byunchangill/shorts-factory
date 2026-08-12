@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { RESULT_SCHEMAS } from '@shared/types';
-import { charBudget, type AiProvider } from '@shared/constants';
+import { RESULT_SCHEMAS, type Script } from '@shared/types';
+import { charBudget, TARGET_SEC_BY_MENU, type AiProvider, type Menu } from '@shared/constants';
+import { packetMenu, scriptRuleErrors } from '../claude/scriptRules.js';
 import { REPO_ROOT, loadSettings } from '../store/workspace.js';
 import { readPacket, writePacket, resolvePacketDir } from '../claude/packets.js';
 import { runProvider } from './providers.js';
@@ -133,7 +134,11 @@ JSON만 출력하라. 설명 금지.
 }
 
 /** 산출물 스키마 검증 — 반영 전에 미리 잡는다 */
-function validate(files: Record<string, string>, resultSpec: Array<{ file: string; schema: string }>): string[] {
+function validate(
+  files: Record<string, string>,
+  resultSpec: Array<{ file: string; schema: string }>,
+  menu: Menu,
+): string[] {
   const errors: string[] = [];
   for (const spec of resultSpec) {
     if (spec.schema === 'markdown') continue;
@@ -144,6 +149,8 @@ function validate(files: Record<string, string>, resultSpec: Array<{ file: strin
     const parsed = schema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
       errors.push(`${spec.file}: ${parsed.error.issues.slice(0, 4).map((i) => `${i.path.join('.')} — ${i.message}`).join('; ')}`);
+    } else if (spec.schema === 'script') {
+      errors.push(...scriptRuleErrors(parsed.data as Script, menu));
     }
   }
   return errors;
@@ -158,7 +165,9 @@ export async function runPacketQuality(packetId: string, provider: AiProvider): 
   const settings = await loadSettings();
   const requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   const knowledge = await loadStructureKnowledge();
-  const budget = charBudget(settings.speechRate);
+  const menu = packetMenu(packet);
+  const budget = charBudget(settings.speechRate, menu);
+  const target = TARGET_SEC_BY_MENU[menu];
 
   const outputSpec = packet.resultSpec
     .map((s) => `- \`${s.file}\`: ${s.schema === 'markdown' ? '마크다운 본문' : '유효한 JSON'}`)
@@ -186,9 +195,12 @@ ${knowledge}
 - 짧은 문장 → 감탄 → 반전 → 리액션 → 추가 정보 리듬
 - 광고처럼 느껴지면 실패다. "해당 제품은/장점은/추천드립니다/결론적으로" 사용 금지
 - 감정 표현(미친, 환장하는, 레전드)은 허용. 단 효능·성능 허위 과장(무조건, 100%, 기적, 완치)은 금지
-- **30초 이내로 끝낸다.** 나레이션 총 ${budget.min}~${budget.max}자 (권장 ${budget.recommended}자, ${settings.speechRate}배속 기준)
+- **${target.max}초 이내로 끝낸다.** 나레이션 총 ${budget.min}~${budget.max}자 (권장 ${budget.recommended}자, ${settings.speechRate}배속 기준)
 - 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중하고 배경 설명은 넣지 않는다 — 훅 → 핵심 → 반전 → CTA
-- 저장·댓글·공유·구매욕 포인트를 각각 넣는다
+- 저장·댓글·공유·구매욕 포인트를 각각 넣는다${menu === 'menu-b' ? `
+- **단점 씬 1개 필수.** 제품의 단점·주의사항을 말하는 씬을 넣고 \`"isDownside": true\`를 표시한다.
+  지어내지 말고 제품 정보에서 근거를 찾는다. 단점 뒤에 그걸 덮는 마무리를 붙이지 않는다 —
+  이 한 줄이 광고와 리뷰를 가르고, 없으면 반려된다` : ''}
 
 [출력 형식]
 파일을 만들 수 없는 환경이므로 산출물 내용을 응답 본문에 그대로 출력하라.
@@ -203,7 +215,9 @@ JSON은 파싱 가능한 형태여야 하며 설명 문장은 붙이지 마라.`
   for (let attempt = 0; attempt <= MAX_REWRITES; attempt++) {
     const response = await runProvider(provider, { prompt, settings });
     const parsed = parseResultFiles(response, packet.resultSpec);
-    const schemaErrors = parsed.errors.length ? parsed.errors : validate(parsed.files, packet.resultSpec);
+    const schemaErrors = parsed.errors.length
+      ? parsed.errors
+      : validate(parsed.files, packet.resultSpec, menu);
 
     if (schemaErrors.length) {
       report(packetId, 'retry', `형식 오류 ${schemaErrors.length}건 — 재작성`);

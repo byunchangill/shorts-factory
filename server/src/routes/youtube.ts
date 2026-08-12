@@ -1,7 +1,14 @@
-import { Router } from 'express';
+import { asyncRouter } from '../util/asyncRouter.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { YOUTUBE_DAILY_QUOTA } from '@shared/constants';
+import { ViralItemSchema } from '@shared/types';
+import {
+  discoverViral, discoverByCategory, discoverByChannels, resolveChannel, sortViral,
+} from '../youtube/viral.js';
+import {
+  readBoard, saveToBoard, removeFromBoard, readChannels, addChannel, removeChannel,
+} from '../store/viralBoard.js';
 import { readQuota, remaining } from '../youtube/quota.js';
 import { clearCache } from '../youtube/client.js';
 import {
@@ -13,7 +20,7 @@ import { hasKey } from '../store/secrets.js';
 import { resolveJob, mutateJob } from '../store/jobs.js';
 import { nextSeqId } from '../util/ids.js';
 
-const router = Router();
+const router = asyncRouter();
 
 /** 상태 표시줄용 — 키 등록 여부 + 오늘 쿼터 */
 router.get('/youtube/status', async (_req, res) => {
@@ -27,6 +34,90 @@ router.get('/youtube/status', async (_req, res) => {
 
 router.post('/youtube/cache/clear', async (_req, res) => {
   res.json({ cleared: await clearCache() });
+});
+
+// ── 바이럴 제품 발굴 ──────────────────────────────────────────────
+
+const YT_KEY_MISSING = '유튜브 API 키가 없습니다. "API 키" 메뉴에서 먼저 등록하세요.';
+
+async function quotaView() {
+  const ledger = await readQuota();
+  return { used: ledger.used, total: YOUTUBE_DAILY_QUOTA, remaining: remaining(ledger) };
+}
+
+/**
+ * 키워드로 최근 급상승 영상을 모아 이상치 점수를 매긴다.
+ * 비용이 큰 동작(키워드당 100유닛)이라 키워드 수를 제한한다 —
+ * 실수로 20개를 넣으면 하루 쿼터의 5분의 1이 한 번에 나간다.
+ */
+router.post('/viral/discover', async (req, res) => {
+  if (!(await hasKey('youtube'))) return res.status(400).json({ error: YT_KEY_MISSING });
+  const body = z.object({
+    keywords: z.array(z.string().min(1)).min(1).max(10),
+    withinDays: z.number().int().min(1).max(90).default(7),
+    shortsOnly: z.boolean().default(true),
+    perKeyword: z.number().int().min(5).max(50).default(25),
+    sort: z.enum(['outlier', 'viewsPerDay', 'views', 'newest']).default('outlier'),
+  }).parse(req.body ?? {});
+
+  const items = await discoverViral(body);
+  res.json({ items: sortViral(items, body.sort), quota: await quotaView() });
+});
+
+/** 카테고리 인기 급상승 — 2유닛. 하루 수천 번 가능하니 제한을 두지 않는다 */
+router.post('/viral/category', async (req, res) => {
+  if (!(await hasKey('youtube'))) return res.status(400).json({ error: YT_KEY_MISSING });
+  const body = z.object({
+    categoryId: z.string().optional(),
+    shortsOnly: z.boolean().default(true),
+    sort: z.enum(['outlier', 'viewsPerDay', 'views', 'newest']).default('outlier'),
+  }).parse(req.body ?? {});
+  const items = await discoverByCategory(body);
+  res.json({ items: sortViral(items, body.sort), quota: await quotaView() });
+});
+
+/** 등록 채널 훑기 — 채널당 2유닛 */
+router.post('/viral/channels/scan', async (req, res) => {
+  if (!(await hasKey('youtube'))) return res.status(400).json({ error: YT_KEY_MISSING });
+  const body = z.object({
+    withinDays: z.number().int().min(1).max(90).default(14),
+    shortsOnly: z.boolean().default(true),
+    sort: z.enum(['outlier', 'viewsPerDay', 'views', 'newest']).default('outlier'),
+  }).parse(req.body ?? {});
+  const channels = await readChannels();
+  if (!channels.length) {
+    return res.status(400).json({ error: '추적 중인 채널이 없습니다. 채널 주소를 붙여넣어 등록하세요.' });
+  }
+  const items = await discoverByChannels({ ...body, channelIds: channels.map((c) => c.channelId) });
+  res.json({ items: sortViral(items, body.sort), quota: await quotaView() });
+});
+
+router.get('/viral/channels', async (_req, res) => {
+  res.json(await readChannels());
+});
+
+router.post('/viral/channels', async (req, res) => {
+  if (!(await hasKey('youtube'))) return res.status(400).json({ error: YT_KEY_MISSING });
+  const { input } = z.object({ input: z.string().min(1) }).parse(req.body);
+  const ch = await resolveChannel(input);
+  res.json(await addChannel(ch));
+});
+
+router.delete('/viral/channels/:channelId', async (req, res) => {
+  res.json(await removeChannel(req.params.channelId));
+});
+
+router.get('/viral/board', async (_req, res) => {
+  res.json(await readBoard());
+});
+
+router.post('/viral/board', async (req, res) => {
+  const item = ViralItemSchema.parse(req.body);
+  res.json(await saveToBoard(item));
+});
+
+router.delete('/viral/board/:videoId', async (req, res) => {
+  res.json(await removeFromBoard(req.params.videoId));
 });
 
 // ── 검색 / 인기 ───────────────────────────────────────────────────
@@ -85,6 +176,22 @@ router.get('/youtube/oauth/start', async (_req, res) => {
   res.json({ url: await buildAuthUrl(state), redirectUri: REDIRECT_URI });
 });
 
+/**
+ * 구글이 돌려준 오류 코드를 사람이 고칠 수 있는 말로 바꾼다.
+ * 코드만 보여주면 콘솔 어디를 만져야 하는지 알 수 없다.
+ */
+function oauthErrorHint(error: string): string {
+  if (error === 'access_denied') {
+    return '구글이 로그인을 거부했습니다. OAuth 동의 화면(Google 인증 플랫폼 → 대상)의 '
+      + '<b>테스트 사용자</b>에 로그인하려는 계정이 등록돼 있는지 확인하세요. '
+      + '권한 화면에서 직접 취소하신 경우에도 이 오류가 납니다. (tools/setup-youtube-oauth.md)';
+  }
+  if (error === 'admin_policy_enforced') {
+    return '조직(워크스페이스) 정책이 이 앱을 막았습니다. 개인 구글 계정으로 시도하세요.';
+  }
+  return `구글이 돌려준 오류: ${error}`;
+}
+
 /** 구글이 리디렉트로 돌아오는 지점 — 브라우저에 결과 페이지를 직접 렌더한다 */
 router.get('/youtube/oauth/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
@@ -95,6 +202,11 @@ router.get('/youtube/oauth/callback', async (req, res) => {
      h1{font-size:20px}p{color:#64748b}</style></head>
      <body><h1>${title}</h1><p>${body}</p></body></html>`;
 
+  // 구글이 거절하고 돌려보낸 경우 — 원인을 그대로 보여줘야 사용자가 고칠 수 있다
+  const error = typeof req.query.error === 'string' ? req.query.error : '';
+  if (error) {
+    return res.status(400).send(page('연결 실패', oauthErrorHint(error)));
+  }
   if (!code || !pendingStates.has(state)) {
     return res.status(400).send(page('연결 실패', '인증 요청이 유효하지 않습니다. 앱에서 다시 시도하세요.'));
   }
@@ -142,7 +254,7 @@ router.post('/youtube/to-job', async (req, res) => {
     for (const url of body.urls) {
       if (existing.has(url)) continue;
       const id = nextSeqId('s', j.sources.map((s) => s.id));
-      j.sources.push({ id, url, status: 'queued', attempts: 0, progress: 0 });
+      j.sources.push({ id, url, origin: 'url', status: 'queued', attempts: 0, progress: 0 });
       existing.add(url);
     }
   });

@@ -15,8 +15,15 @@ import { readFileSync } from 'node:fs';
  * 배속은 workspace/settings.json에서 읽고, --rate 로 덮어쓸 수 있다.
  */
 const CHARS_PER_MIN = 300;
-const MIN_SEC = 20;
-const MAX_SEC = 30;
+
+/**
+ * 메뉴별 목표 길이 — shared/constants.ts의 TARGET_SEC_BY_MENU와 같은 값을 유지한다.
+ * 제품정보리뷰는 완주율 우선이라 더 짧게 끊는다.
+ */
+const TARGETS = {
+  'menu-a': { min: 20, max: 30 },
+  'menu-b': { min: 18, max: 26 },
+};
 
 /** 과장·단정 표현. 적발 시 점수와 무관하게 반려 */
 const BANNED = [
@@ -51,6 +58,18 @@ function resolveRate() {
 }
 const RATE = resolveRate();
 const charsPerSec = (CHARS_PER_MIN * RATE) / 60;
+
+/** 메뉴 결정: --menu > 경로에서 유추 (workspace/menu-b/... 형태) > menu-a */
+function resolveMenu() {
+  const flagIdx = args.indexOf('--menu');
+  if (flagIdx >= 0 && TARGETS[args[flagIdx + 1]]) return args[flagIdx + 1];
+  const norm = path.replace(/\\/g, '/');
+  if (/(^|\/)menu-b(\/|$)/.test(norm)) return 'menu-b';
+  if (/(^|\/)menu-a(\/|$)/.test(norm)) return 'menu-a';
+  return 'menu-a';
+}
+const MENU = resolveMenu();
+const { min: MIN_SEC, max: MAX_SEC } = TARGETS[MENU];
 
 let script;
 try {
@@ -111,7 +130,26 @@ const last = `${scenes.at(-1).narration ?? ''} ${scenes.at(-1).subtitle ?? ''}`;
 const hasCta = /링크|구매|고정댓글|더보기|확인해|프로필/.test(last);
 if (!hasCta) problems.push('마지막 씬에 구매 유도(CTA)가 없습니다');
 
-// 6. 소재 참조 형식 (존재 여부는 요청서와 대조 필요 — 여기선 형식만)
+// 6. 단점 씬 (제품정보리뷰 전용)
+// 여기서 볼 수 있는 건 "표시가 있느냐"까지다. 그 씬이 진짜 단점을 말하는지는 검수자가 읽고 판정한다.
+if (MENU === 'menu-b') {
+  const downsides = scenes.filter((s) => s.isDownside);
+  if (downsides.length === 0) {
+    problems.push('단점 씬이 없습니다 — 제품의 단점·주의사항 씬 1개에 "isDownside": true를 붙여야 합니다');
+  } else {
+    for (const s of downsides) {
+      if ((s.narration ?? '').trim().length < 8) {
+        problems.push(`${s.sceneId}: 단점 씬으로 표시됐지만 나레이션이 비어 있다시피 합니다`);
+      }
+    }
+    warnings.push(
+      `단점 씬 ${downsides.map((s) => s.sceneId).join(', ')} — 내용이 실제 단점인지 직접 읽고 판정하세요 ` +
+      '(장점을 단점처럼 쓴 것·지어낸 단점·뒤에 덮는 문장은 반려)',
+    );
+  }
+}
+
+// 7. 소재 참조 형식 (존재 여부는 요청서와 대조 필요 — 여기선 형식만)
 for (const scene of scenes) {
   const seg = scene.clipRef?.suggestedSegment;
   if (seg && seg.in >= seg.out) {
@@ -127,6 +165,7 @@ const line = '─'.repeat(52);
 console.log(`\n${line}`);
 console.log(`대본 기계 검사: ${script.title || '(제목 없음)'}`);
 console.log(line);
+console.log(`메뉴           ${MENU}${MENU === 'menu-b' ? ' (제품정보리뷰)' : ' (해외영상 짜집기)'}`);
 console.log(`씬 수          ${scenes.length}개`);
 console.log(`나레이션 총량  ${narrationTotal}자`);
 // 상한은 내림·하한은 올림 — 반올림하면 경계에서 목표 시간을 넘긴다 (shared/constants.ts와 동일 규칙)

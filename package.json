@@ -15,6 +15,7 @@
     "build": "npm run build -w server && npm run build -w client",
     "test": "npm run test -w server",
     "harness": "tsx tools/harness.ts",
+    "seed": "tsx tools/seed.ts",
     "logs": "tsx tools/logs.ts",
     "doctor": "npm run doctor -w server"
   },
