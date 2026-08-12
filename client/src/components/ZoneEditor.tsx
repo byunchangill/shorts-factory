@@ -26,12 +26,18 @@ const METHOD_COLOR = {
  */
 export function ZoneEditor({
   frameUrl,
+  frameTime,
+  duration,
   videoWidth,
   videoHeight,
   zones,
   onChange,
 }: {
   frameUrl: string;
+  /** 지금 보고 있는 프레임의 시각(초) — 구간 지정의 기준점 */
+  frameTime: number;
+  /** 클립 전체 길이(초) */
+  duration: number;
   videoWidth: number;
   videoHeight: number;
   zones: ZoneDraft[];
@@ -160,6 +166,14 @@ export function ZoneEditor({
               <span className="text-xs text-slate-500">
                 ({z.x}, {z.y}) {z.w}×{z.h}
               </span>
+              <TimeRange
+                zone={z}
+                frameTime={frameTime}
+                duration={duration}
+                onChange={(patch) =>
+                  onChange(zones.map((x) => (x.id === z.id ? { ...x, ...patch } : x)))
+                }
+              />
               <span className="ml-auto" />
               <Button
                 variant="ghost"
@@ -176,5 +190,76 @@ export function ZoneEditor({
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * 존을 클립 전체에 걸지, 특정 구간에만 걸지 정한다.
+ *
+ * 자막·워터마크가 영상 내내 떠 있지 않은 경우가 많은데, 전체에 걸면 멀쩡한 화면까지
+ * 뭉갠다. 서버는 처음부터 구간 한정(`enable=between`)을 지원했지만 화면에 그걸 정할
+ * 자리가 없어 늘 전체로 나갔다.
+ *
+ * 크롭은 화면 크기를 바꾸는 방식이라 시간대별로 다르게 적용할 수 없다 — 전체 고정이다.
+ */
+function TimeRange({
+  zone,
+  frameTime,
+  duration,
+  onChange,
+}: {
+  zone: ZoneDraft;
+  frameTime: number;
+  duration: number;
+  onChange: (patch: Partial<ZoneDraft>) => void;
+}) {
+  const limited = zone.t0 !== undefined && zone.t1 !== undefined;
+  const round = (v: number) => Math.max(0, Math.round(v * 10) / 10);
+
+  if (zone.method === 'crop') {
+    return <span className="text-xs text-slate-400">전체 구간 (크롭은 구간 지정 불가)</span>;
+  }
+
+  return (
+    <span className="flex items-center gap-1 text-xs" onClick={(e) => e.stopPropagation()}>
+      <select
+        className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+        value={limited ? 'range' : 'all'}
+        onChange={(e) =>
+          onChange(e.target.value === 'all'
+            ? { t0: undefined, t1: undefined }
+            // 지금 보고 있는 프레임을 시작으로, 1초짜리 구간을 기본값으로 준다
+            : { t0: round(frameTime), t1: round(Math.min(duration, frameTime + 1)) })
+        }
+      >
+        <option value="all">전체 구간</option>
+        <option value="range">구간 지정</option>
+      </select>
+      {limited && (
+        <>
+          <input
+            type="number" step="0.1" min={0} max={duration}
+            className="w-16 rounded border border-slate-300 px-1 py-1 text-xs"
+            value={zone.t0}
+            onChange={(e) => onChange({ t0: round(Number(e.target.value)) })}
+          />
+          <span className="text-slate-400">~</span>
+          <input
+            type="number" step="0.1" min={0} max={duration}
+            className="w-16 rounded border border-slate-300 px-1 py-1 text-xs"
+            value={zone.t1}
+            onChange={(e) => onChange({ t1: round(Number(e.target.value)) })}
+          />
+          <span className="text-slate-400">초</span>
+          <button
+            className="rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+            title="지금 보고 있는 프레임 시각을 끝으로 잡습니다"
+            onClick={() => onChange({ t1: round(Math.max(zone.t0! + 0.1, frameTime)) })}
+          >
+            여기까지 ({frameTime.toFixed(1)}초)
+          </button>
+        </>
+      )}
+    </span>
   );
 }

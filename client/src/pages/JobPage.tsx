@@ -413,6 +413,8 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           </div>
           <ZoneEditor
             frameUrl={shownFrame.url}
+            frameTime={shownFrame.t}
+            duration={current.probe.duration}
             videoWidth={current.probe.width}
             videoHeight={current.probe.height}
             zones={current.zones}
