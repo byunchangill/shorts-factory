@@ -1,0 +1,21 @@
+{
+  "_주석": "2026-08-13 project-kickoff 적용. 이 두 플러그인은 전역에서 꺼져 있고 이 저장소에서만 켠다. extraKnownMarketplaces가 같이 있어야 클라우드(깃허브) 세션이 플러그인을 어디서 받을지 안다 — 전역 설정은 클라우드에 따라가지 않는다.",
+  "extraKnownMarketplaces": {
+    "ecc": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/affaan-m/ECC.git"
+      }
+    },
+    "ui-ux-pro-max-skill": {
+      "source": {
+        "source": "github",
+        "repo": "nextlevelbuilder/ui-ux-pro-max-skill"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "ecc@ecc": true,
+    "ui-ux-pro-max@ui-ux-pro-max-skill": true
+  }
+}

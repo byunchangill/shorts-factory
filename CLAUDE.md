@@ -125,3 +125,29 @@
 - API 키는 `workspace/secrets.json`에만 저장, 응답에는 마스킹된 값만 (`store/secrets.ts`)
 - 유튜브 API는 반드시 `youtube/client.ts`의 `ytFetch` 경유 — 쿼터 확인·차감·캐시가 여기 있다. 무료 한도(10,000유닛/일) 밖의 기능은 구현하지 않는다
 - 커밋: feat/fix/refactor/docs/test 접두어
+
+---
+
+## 클로드 설정 (2026-08-13)
+
+### 켜는 플러그인 — `.claude/settings.json`
+
+| 플러그인 | 상시 토큰 | 왜 |
+|---|---:|---|
+| `ecc@ecc` | 40,459 | react·node·TS·보안·테스트 패턴 378개. client/server 개발용 |
+| `ui-ux-pro-max@ui-ux-pro-max-skill` | 1,167 | 진행 상황 중심 UI를 다듬을 때 |
+
+**둘 다 전역에서는 꺼져 있고 이 저장소에서만 켠다.** 전역에 켜 두면 어떤 폴더를 열든
+41,626 토큰이 깔린다. 판단 근거와 다른 플러그인 목록은
+`~/.claude/skills/project-kickoff/CATALOG.md`에 있다.
+
+🔴 `settings.json`에 `extraKnownMarketplaces`가 같이 들어 있다. **지우지 말 것** —
+클라우드(깃허브) 세션은 내 PC의 전역 설정을 못 가져오므로, 이게 없으면
+플러그인을 어디서 받을지 몰라 안 켜진다.
+
+### 스킬 — `.claude/skills/` (이미 커밋돼 있음)
+
+`answer-job` · `create-format` · `shorts-content-team` · `shorts-dev-team` ·
+`shorts-script-qc` · `shorts-viral-script` + 에이전트 7개.
+
+이 위치라야 클로드가 읽고, 클라우드 세션에서도 쓰인다. 저장소 루트의 `skills/`는 안 읽힌다.
