@@ -6,7 +6,7 @@ import {
   Image as ImageIcon, Globe,
 } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Input, Modal, Spinner } from '@/components/ui';
+import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Spinner } from '@/components/ui';
 
 interface YtVideo {
   videoId: string; title: string; channelId: string; channelTitle: string;
@@ -120,16 +120,16 @@ export default function ViralPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <TrendingUp size={19} /> 바이럴 제품
-        </h2>
-        {result && (
-          <span className="text-xs text-slate-500">
-            쿼터 {result.quota.used.toLocaleString()} / {result.quota.total.toLocaleString()}
-          </span>
-        )}
-      </div>
+      <PageHeader
+        title={<span className="flex items-center gap-2"><TrendingUp size={20} /> 바이럴 제품</span>}
+        actions={
+          result && (
+            <span className="text-xs text-slate-600">
+              쿼터 {result.quota.used.toLocaleString()} / {result.quota.total.toLocaleString()}
+            </span>
+          )
+        }
+      />
 
       <Card>
         <p className="mb-3 text-sm text-slate-500">
@@ -145,14 +145,14 @@ export default function ViralPage() {
               title={hint}
               className={clsx(
                 'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5',
-                mode === k ? 'bg-white font-medium shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                mode === k ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900',
               )}
             >
               <Icon size={14} /> {label}
             </button>
           ))}
         </div>
-        <p className="mb-3 text-xs text-slate-400">{MODES.find(([k]) => k === mode)?.[3]}</p>
+        <p className="mb-3 text-xs text-slate-500">{MODES.find(([k]) => k === mode)?.[3]}</p>
 
         {mode === 'channels' && (
           <>
@@ -179,15 +179,15 @@ export default function ViralPage() {
                   <li key={c.channelId} className="flex items-center gap-1.5 rounded-full border border-slate-200 py-1 pl-1 pr-2 text-xs">
                     {c.thumbnail && <img src={c.thumbnail} alt="" className="h-5 w-5 rounded-full" />}
                     <span>{c.title}</span>
-                    <span className="text-slate-400">{fmt(c.subscriberCount)}</span>
-                    <button className="text-slate-400 hover:text-red-500" onClick={() => dropChannel.mutate(c.channelId)}>
+                    <span className="text-slate-500">{fmt(c.subscriberCount)}</span>
+                    <button className="text-slate-500 hover:text-red-500" onClick={() => dropChannel.mutate(c.channelId)}>
                       <X size={12} />
                     </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="mb-3 text-xs text-slate-400">
+              <p className="mb-3 text-xs text-slate-500">
                 쇼핑 쇼츠 채널을 등록해두면, 검색 1회(100유닛) 값으로 채널 50개를 훑습니다.
               </p>
             )}
@@ -196,7 +196,7 @@ export default function ViralPage() {
                 {scanChannels.isPending ? <>훑는 중… <Spinner /></> : <><Radio size={15} /> 최신 영상 훑기</>}
               </Button>
               <DaysSelect value={withinDays} onChange={setWithinDays} />
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-slate-500">
                 채널 {(channels.data ?? []).length}개 · 약 {((channels.data ?? []).length * 2 + 2).toLocaleString()}유닛
               </span>
             </div>
@@ -206,7 +206,7 @@ export default function ViralPage() {
 
         {mode === 'category' && (
           <>
-            <p className="mb-2 text-xs text-slate-400">
+            <p className="mb-2 text-xs text-slate-500">
               유튜브 전체 인기 급상승입니다. 카테고리가 제품군이 아니라서(유튜브에는 "주방용품" 같은 분류가 없습니다)
               넓게 훑는 용도로만 쓰세요.
             </p>
@@ -214,7 +214,7 @@ export default function ViralPage() {
               <Button onClick={() => scanCategory.mutate()} disabled={scanCategory.isPending}>
                 {scanCategory.isPending ? <>불러오는 중… <Spinner /></> : <><Flame size={15} /> 급상승 쇼츠 보기</>}
               </Button>
-              <span className="text-xs text-slate-400">약 2유닛 · 하루 수천 번 가능</span>
+              <span className="text-xs text-slate-500">약 2유닛 · 하루 수천 번 가능</span>
             </div>
             {scanCategory.error && <p className="mt-2 text-sm text-red-600">{scanCategory.error.message}</p>}
           </>
@@ -246,7 +246,7 @@ export default function ViralPage() {
                 {discover.isPending ? <>찾는 중… <Spinner /></> : <><Search size={15} /> 발굴하기</>}
               </Button>
               <DaysSelect value={withinDays} onChange={setWithinDays} />
-              <span className={clsx('text-xs', parsed.length > 3 ? 'text-amber-600' : 'text-slate-400')}>
+              <span className={clsx('text-xs', parsed.length > 3 ? 'text-amber-600' : 'text-slate-500')}>
                 키워드 {parsed.length}개 · 약 {(parsed.length * 100 + 2).toLocaleString()}유닛
                 {parsed.length > 10 && ' · 최대 10개'}
               </span>
@@ -400,7 +400,7 @@ function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void
             <Button variant="secondary" onClick={() => suggest.mutate()} disabled={suggest.isPending}>
               {suggest.isPending ? <>만드는 중… <Spinner /></> : 'AI로 검색어 만들기'}
             </Button>
-            <span className="text-xs text-slate-400">제목: {item.video.title}</span>
+            <span className="text-xs text-slate-500">제목: {item.video.title}</span>
           </div>
           {suggest.error && <p className="mb-2 text-sm text-red-600">{suggest.error.message}</p>}
           <div className="flex gap-2">
@@ -428,7 +428,7 @@ function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void
             <p className="mb-1 text-sm font-medium">4. 검색 페이지 직접 열기</p>
             {(result.productKo || result.productZh) && (
               <p className="mb-2 text-sm text-slate-600">
-                {result.productKo} {result.productZh && <span className="text-slate-400">/ {result.productZh}</span>}
+                {result.productKo} {result.productZh && <span className="text-slate-500">/ {result.productZh}</span>}
               </p>
             )}
             {result.note && <p className="mb-2 text-xs text-amber-700">{result.note}</p>}
@@ -450,7 +450,7 @@ function SourcingModal({ item, onClose }: { item: ViralItem; onClose: () => void
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="mt-3 text-xs text-slate-500">
               찾은 영상 주소는 작업 화면의 "소스 영상 URL"에 붙여넣으세요 — 도우인·샤오홍슈·틱톡 모두 다운로드됩니다.
             </p>
           </div>
@@ -526,7 +526,7 @@ function PlatformSearch({ keyword }: { keyword: string }) {
           >
             {s.label} {s.loggedIn ? '연결됨' : s.guestSearch ? '비로그인' : '로그인 필요'}
             {s.loggedIn ? (
-              <button className="text-slate-400 hover:text-red-500" onClick={() => logout.mutate(s.platform)}>
+              <button className="text-slate-500 hover:text-red-500" onClick={() => logout.mutate(s.platform)}>
                 <X size={11} />
               </button>
             ) : (
@@ -552,7 +552,7 @@ function PlatformSearch({ keyword }: { keyword: string }) {
         <Button variant="secondary" onClick={() => search.mutate()} disabled={!keyword.trim() || search.isPending}>
           {search.isPending ? <>찾는 중… <Spinner /></> : <><Search size={15} /> 세 곳에서 검색</>}
         </Button>
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-slate-500">
           {keyword ? `"${keyword}"로 검색합니다` : '검색어를 먼저 만드세요'}
         </span>
       </div>
@@ -587,7 +587,7 @@ function PlatformSearch({ keyword }: { keyword: string }) {
                     >
                       {h.thumbnail
                         ? <img src={h.thumbnail} alt="" className="h-24 w-full rounded object-cover" />
-                        : <div className="flex h-24 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">미리보기 없음</div>}
+                        : <div className="flex h-24 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-500">미리보기 없음</div>}
                       <p className="mt-1 truncate text-[11px] text-slate-600">{h.title || h.videoId}</p>
                     </a>
                   ))}
@@ -669,7 +669,7 @@ function VideoCard({
           {v.channelTitle} · 구독자 {fmt(item.subscriberCount)}
         </p>
         {item.keywords.length > 0 && (
-          <p className="truncate text-xs text-slate-400">{item.keywords.join(' · ')}</p>
+          <p className="truncate text-xs text-slate-500">{item.keywords.join(' · ')}</p>
         )}
         <div className="flex items-center gap-1 pt-1">
           {saved ? (

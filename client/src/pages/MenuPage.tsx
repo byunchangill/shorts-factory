@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
+import { clsx } from 'clsx';
 import { FolderPlus, Folder, Trash2 } from 'lucide-react';
 import { MENU_LABELS, type Menu } from '@shared/constants';
 import { api } from '@/api/client';
-import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal } from '@/components/ui';
+import {
+  Badge, Button, Card, ConfirmDialog, EmptyState, IconButton, Input, Modal, PageHeader, focusRing,
+} from '@/components/ui';
+import { FlowOverview } from '@/components/pipeline';
 
 interface ProjectWithCounts {
   id: string;
@@ -76,17 +80,24 @@ export default function MenuPage({ menu }: { menu: Menu }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{MENU_LABELS[menu]} — 카테고리</h2>
-        <div className="flex gap-2">
-          {menu === 'menu-b' && (
-            <Link to="/formats"><Button variant="secondary">고유 포맷 관리</Button></Link>
-          )}
-          <Button onClick={openModal} disabled={!!noFormats}>
-            <FolderPlus size={16} /> 새 카테고리
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={MENU_LABELS[menu]}
+        title="카테고리"
+        actions={
+          <>
+            {menu === 'menu-b' && (
+              <Link to="/formats" className={clsx('rounded-lg', focusRing)}>
+                <Button variant="secondary" tabIndex={-1}>고유 포맷 관리</Button>
+              </Link>
+            )}
+            <Button onClick={openModal} disabled={!!noFormats}>
+              <FolderPlus size={16} /> 새 카테고리
+            </Button>
+          </>
+        }
+      />
+
+      <FlowOverview menu={menu} />
 
       {noFormats && (
         <Card className="border-violet-200 bg-violet-50">
@@ -109,13 +120,13 @@ export default function MenuPage({ menu }: { menu: Menu }) {
         {(projects.data ?? []).map((p) => (
           // 삭제 버튼은 링크 밖에 둔다 — 안에 넣으면 눌렀을 때 카테고리로 들어가 버린다
           <div key={p.id} className="group relative">
-            <Link to={`/project/${menu}/${p.id}`}>
-              <Card className="transition-shadow hover:shadow-md">
-                <div className="flex items-center gap-2.5">
-                  <Folder size={18} className="text-slate-400" />
-                  <span className="font-medium">{p.title}</span>
+            <Link to={`/project/${menu}/${p.id}`} className={clsx('block rounded-xl', focusRing)}>
+              <Card className="h-full transition-all hover:border-slate-300 hover:shadow-md">
+                <div className="flex items-center gap-2.5 pr-8">
+                  <Folder size={18} className="shrink-0 text-slate-500" />
+                  <span className="min-w-0 truncate font-medium">{p.title}</span>
                 </div>
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   {p.jobCounts.active > 0 && <Badge color="blue">진행 {p.jobCounts.active}</Badge>}
                   {p.jobCounts.done > 0 && <Badge color="green">완료 {p.jobCounts.done}</Badge>}
                   {p.jobCounts.total === 0 && <Badge>작업 없음</Badge>}
@@ -123,13 +134,14 @@ export default function MenuPage({ menu }: { menu: Menu }) {
                 </div>
               </Card>
             </Link>
-            <button
-              className="absolute right-2 top-2 rounded-lg p-1.5 text-slate-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
-              title="카테고리 삭제"
+            <IconButton
+              tone="danger"
+              label={`${p.title} 카테고리 삭제`}
+              className="absolute right-1.5 top-1.5"
               onClick={() => openDelete(p)}
             >
               <Trash2 size={15} />
-            </button>
+            </IconButton>
           </div>
         ))}
       </div>

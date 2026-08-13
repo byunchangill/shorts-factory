@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles } from 'lucide-react';
+import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles, ArrowRight } from 'lucide-react';
 import {
-  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS,
+  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS, STATE_NEXT_ACTION,
   type GuidelineFile, type Menu,
 } from '@shared/constants';
 import { api, ApiBootingError } from '@/api/client';
-import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, Modal, Textarea } from '@/components/ui';
+import {
+  Badge, Button, Card, ConfirmDialog, EmptyState, IconButton, Input, Modal, PageHeader, Textarea, focusRing,
+} from '@/components/ui';
 import { StepIndicator } from '@/components/pipeline';
 
 interface JobSummary {
@@ -25,26 +27,32 @@ export default function ProjectPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs text-slate-400">{MENU_LABELS[menu]}</p>
-          <h2 className="text-lg font-semibold">{pid}</h2>
-        </div>
-        <nav className="flex gap-1 rounded-lg bg-slate-100 p-1">
-          {([['jobs', '작업'], ['guidelines', '지침'], ['product', '제품자료']] as const).map(([k, label]) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              className={clsx(
-                'rounded-md px-3.5 py-1.5 text-sm font-medium',
-                tab === k ? 'bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <PageHeader
+        backTo={`/${menu}`}
+        backLabel={`${MENU_LABELS[menu]} 카테고리 목록으로`}
+        eyebrow={MENU_LABELS[menu]}
+        title={pid}
+        actions={
+          <nav className="flex gap-1 rounded-lg bg-slate-100 p-1">
+            {([['jobs', '작업'], ['guidelines', '지침'], ['product', '제품자료']] as const).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setTab(k)}
+                aria-current={tab === k ? 'page' : undefined}
+                className={clsx(
+                  'rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors',
+                  focusRing,
+                  tab === k
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        }
+      />
 
       {tab === 'jobs' && <JobsTab menu={menu} pid={pid} />}
       {tab === 'guidelines' && <GuidelinesTab menu={menu} pid={pid} />}
@@ -115,28 +123,34 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
       {(jobs.data ?? []).map((j) => (
         // 삭제 버튼은 링크 밖에 둔다 — 안에 넣으면 눌렀을 때 작업 화면으로 넘어가 버린다
         <div key={j.id} className="group relative">
-          <Link to={`/job/${j.id}`} className="block">
-            <Card className="transition-shadow hover:shadow-md">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="font-medium">{j.title}</span>
-                <div className="flex items-center gap-2">
+          <Link to={`/job/${j.id}`} className={clsx('block rounded-xl', focusRing)}>
+            <Card className="transition-all hover:border-slate-300 hover:shadow-md">
+              <div className="mb-2.5 flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate font-medium">{j.title}</span>
+                <div className="flex shrink-0 items-center gap-2">
                   <Badge color={j.state === 'done' ? 'green' : j.state === 'failed' ? 'red' : 'blue'}>
                     {STATE_LABELS[j.state] ?? j.state}
                   </Badge>
-                  {/* 배지 자리를 미리 비워둔다 — 버튼이 나타날 때 배지가 밀리지 않게 */}
-                  <span className="w-5" />
+                  {/* 삭제 버튼이 겹쳐 앉는 자리를 미리 비워둔다 */}
+                  <span className="w-7" />
                 </div>
               </div>
               <StepIndicator pipeline={j.pipeline} state={j.state} />
+              {/* 목록에서도 다음에 뭘 해야 하는지 보이게 — 열어봐야 아는 것을 줄인다.
+                  현재 단계는 위 배지에 이미 있으므로 여기서는 할 일만 적는다 */}
+              <p className="mt-2.5 flex items-center justify-end gap-1 text-sm font-medium text-brand-700">
+                {STATE_NEXT_ACTION[j.state] ?? '계속하기'} <ArrowRight size={14} />
+              </p>
             </Card>
           </Link>
-          <button
-            className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
-            title="이 영상 작업 삭제"
+          <IconButton
+            tone="danger"
+            label="이 영상 작업 삭제"
+            className="absolute right-2.5 top-2.5"
             onClick={() => { remove.reset(); setTarget(j); }}
           >
             <Trash2 size={15} />
-          </button>
+          </IconButton>
         </div>
       ))}
 
@@ -313,7 +327,7 @@ function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
         <p className="mb-3 text-sm text-slate-500">
           상세페이지 캡처·텍스트를 올리면 "제품정보 추출" 요청서로 AI가 product.json을 만듭니다.
           <br />
-          <span className="text-slate-400">
+          <span className="text-slate-500">
             압축파일(zip)은 자동으로 풀고, 폴더는 구조를 그대로 살려 저장합니다. 끌어다 놓아도 됩니다.
           </span>
         </p>
@@ -371,7 +385,7 @@ function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
         )}
         {(data.data?.files ?? []).length > 0 && (
           <>
-            <p className="mt-3 text-xs text-slate-400">첨부 {data.data!.files.length}개</p>
+            <p className="mt-3 text-xs text-slate-500">첨부 {data.data!.files.length}개</p>
             <ul className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {data.data!.files.map((f) => (
                 <li key={f.name} className="group relative rounded-lg border border-slate-200 p-1.5 text-xs">
@@ -380,7 +394,7 @@ function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
                   ) : null}
                   <p className="truncate text-slate-600" title={f.name}>{f.name}</p>
                   <button
-                    className="absolute right-1 top-1 rounded bg-white/90 p-1 text-slate-400 opacity-0 hover:text-red-500 group-hover:opacity-100"
+                    className="absolute right-1 top-1 rounded bg-white/90 p-1 text-slate-500 opacity-0 hover:text-red-500 group-hover:opacity-100"
                     title="이 자료 삭제"
                     disabled={removeFile.isPending}
                     onClick={() => removeFile.mutate(f.name)}
@@ -404,7 +418,7 @@ function ProductTab({ menu, pid }: { menu: Menu; pid: string }) {
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-slate-500">구매 포인트</dt><dd>{product.sellingPoints.join(', ')}</dd></div>
           </dl>
         ) : (
-          <p className="text-sm text-slate-400">아직 추출되지 않았습니다. 작업 화면에서 "제품정보 추출" 요청서를 발행하세요.</p>
+          <p className="text-sm text-slate-500">아직 추출되지 않았습니다. 작업 화면에서 "제품정보 추출" 요청서를 발행하세요.</p>
         )}
       </Card>
     </div>

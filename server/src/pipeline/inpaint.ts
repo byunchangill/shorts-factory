@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Clip, Zone } from '@shared/types';
-import { run } from '../util/exec.js';
+import { run, PYTHON_CLI_ENV } from '../util/exec.js';
 import { checkToolAny, IOPAINT_VERSION_ARGS } from '../util/toolCheck.js';
 import { loadSettings } from '../store/workspace.js';
 import { ensureDir } from '../util/fsx.js';
@@ -96,6 +96,8 @@ export const iopaintProvider: InpaintProvider = {
         `--output=${outFramesDir}`,
       ], {
         timeoutMs: 3_600_000,
+        // iopaint는 파이썬 CLI라 한국어 윈도우(cp949)에서 진행률 스피너를 찍다 죽는다
+        env: PYTHON_CLI_ENV,
         onStdout: onProgress,
         onStderr: (line) => {
           stderr.push(line);
@@ -105,12 +107,7 @@ export const iopaintProvider: InpaintProvider = {
         },
       });
     } catch (e) {
-      const tail = stderr.slice(-8).join('\n');
-      throw new Error(
-        `IOPaint 실행 실패${tail ? `:\n${tail}` : ` (${e instanceof Error ? e.message.split('\n')[0] : String(e)})`}\n`
-        + '처음 실행이면 모델(LaMa)을 내려받는 중일 수 있습니다 — 사내망이면 여기서 막힙니다. '
-        + '전체 로그는 workspace/logs/server.log (npm run logs)에 있습니다.',
-      );
+      throw new Error(iopaintFailureMessage(stderr, e));
     }
 
     onProgress?.('재인코딩 중…');
@@ -134,6 +131,41 @@ export const iopaintProvider: InpaintProvider = {
 };
 
 export const inpaintProviders: InpaintProvider[] = [iopaintProvider];
+
+/**
+ * iopaint 실패 메시지. 종료 코드만으로는 아무것도 알 수 없어 표준 오류의 마지막 줄을 붙이고,
+ * 알아볼 수 있는 원인은 짚어준다.
+ *
+ * 예전에는 무조건 "모델을 내려받는 중일 수 있습니다"라고 안내했는데, 실제로는 모델을 다 읽고
+ * 진행률 스피너를 찍다 죽은 경우에도 같은 문구가 떠서 엉뚱한 곳을 뒤지게 만들었다.
+ */
+export function iopaintFailureMessage(stderr: string[], cause?: unknown): string {
+  const tail = stderr.slice(-8).join('\n');
+  const all = stderr.join('\n');
+  const head = `IOPaint 실행 실패${
+    tail
+      ? `:\n${tail}`
+      : ` (${cause instanceof Error ? cause.message.split('\n')[0] : String(cause)})`
+  }`;
+
+  // cp949 콘솔에 유니코드 스피너를 찍다 터진 경우 — 도구도 모델도 멀쩡하다
+  if (/UnicodeEncodeError|codec can't encode character/i.test(all)) {
+    return `${head}\n`
+      + '윈도우 콘솔 인코딩(cp949) 때문에 진행률 표시를 찍다 멈춘 것으로 보입니다. '
+      + '도구나 모델 문제가 아닙니다 — 서버를 다시 시작하면 UTF-8로 실행합니다. '
+      + '그래도 같은 오류가 나면 workspace/logs/server.log (npm run logs)를 확인하세요.';
+  }
+
+  if (/big-lama|download|urlopen|ConnectionError|SSLError|timed? ?out/i.test(all)) {
+    return `${head}\n`
+      + '모델(LaMa)을 내려받다 막힌 것으로 보입니다 — 사내망이면 여기서 걸립니다. '
+      + '전체 로그는 workspace/logs/server.log (npm run logs)에 있습니다.';
+  }
+
+  return `${head}\n`
+    + '처음 실행이면 모델(LaMa)을 내려받는 중일 수 있습니다. '
+    + '전체 로그는 workspace/logs/server.log (npm run logs)에 있습니다.';
+}
 
 export async function getAvailableInpaintProvider(): Promise<InpaintProvider | null> {
   for (const p of inpaintProviders) {

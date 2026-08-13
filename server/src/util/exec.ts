@@ -5,7 +5,27 @@ export interface RunOptions {
   onStderr?: (line: string) => void;
   cwd?: string;
   timeoutMs?: number;
+  /** 부모 환경에 얹을 환경변수 (덮어쓰기만, 나머지는 그대로 상속) */
+  env?: NodeJS.ProcessEnv;
 }
+
+/**
+ * 파이썬 CLI를 부를 때 얹는 환경변수.
+ *
+ * 한국어 윈도우의 콘솔 코드페이지는 cp949다. 파이썬은 표준출력 인코딩을 여기에 맞추므로,
+ * 진행률 스피너 같은 유니코드 문자(`⠋` U+280B)를 찍는 순간 UnicodeEncodeError로 죽는다.
+ * 도구가 멀쩡한데 출력 한 글자 때문에 실패하는 것이라 원인을 찾기가 매우 어렵다.
+ *
+ * - `PYTHONIOENCODING`/`PYTHONUTF8` — 출력 인코딩을 UTF-8로 고정한다
+ * - `TERM=dumb`/`NO_COLOR` — rich 같은 라이브러리가 커서를 옮기는 화면 갱신을 아예 끄게 한다.
+ *   파이프로 받는 출력에 스피너는 필요 없고, 윈도우 레거시 콘솔 렌더 경로도 함께 피한다
+ */
+export const PYTHON_CLI_ENV: NodeJS.ProcessEnv = {
+  PYTHONIOENCODING: 'utf-8',
+  PYTHONUTF8: '1',
+  TERM: 'dumb',
+  NO_COLOR: '1',
+};
 
 /** 서브프로세스 실행 — 인자는 배열로만 전달 (셸 미사용, 인젝션 원천 차단) */
 export function run(
@@ -19,6 +39,8 @@ export function run(
     buffer: true,
     stripFinalNewline: true,
     reject: true,
+    // execa는 기본으로 부모 환경을 상속한다 — 여기 준 값만 덮어쓴다
+    env: opts.env,
   });
   if (opts.onStdout && child.stdout) {
     let buf = '';

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Search, Flame, Users, BarChart3, Plus, ExternalLink } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Input, Modal, Spinner } from '@/components/ui';
+import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Spinner } from '@/components/ui';
 
 interface YtVideo {
   videoId: string; title: string; channelId: string; channelTitle: string;
@@ -35,17 +35,19 @@ export default function YouTubePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">유튜브 리서치</h2>
-        {q && (
-          <div className="flex items-center gap-2 text-sm">
-            <span className={clsx(lowQuota ? 'text-red-600' : 'text-slate-500')}>
-              오늘 사용량 {q.used.toLocaleString()} / {q.total.toLocaleString()} 유닛
-            </span>
-            <Badge color={lowQuota ? 'red' : 'green'}>{lowQuota ? '한도 임박' : '무료 한도 내'}</Badge>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="유튜브 리서치"
+        actions={
+          q && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className={clsx(lowQuota ? 'font-medium text-red-600' : 'text-slate-600')}>
+                오늘 사용량 {q.used.toLocaleString()} / {q.total.toLocaleString()} 유닛
+              </span>
+              <Badge color={lowQuota ? 'red' : 'green'}>{lowQuota ? '한도 임박' : '무료 한도 내'}</Badge>
+            </div>
+          )
+        }
+      />
 
       {status.data && !status.data.keyConfigured && (
         <Card className="border-amber-200 bg-amber-50">
@@ -64,7 +66,7 @@ export default function YouTubePage() {
             onClick={() => setTab(key)}
             className={clsx(
               'flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-sm font-medium',
-              tab === key ? 'bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700',
+              tab === key ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900',
             )}
           >
             <Icon size={15} /> {label}
@@ -492,7 +494,7 @@ function MineTab({ connected }: { connected: boolean }) {
           <Card>
             <h3 className="mb-3 font-semibold">트래픽 소스</h3>
             {mine.data.traffic.length === 0 ? (
-              <p className="text-sm text-slate-400">데이터가 없습니다.</p>
+              <p className="text-sm text-slate-500">데이터가 없습니다.</p>
             ) : (
               <ul className="space-y-1.5">
                 {mine.data.traffic.slice(0, 8).map((t) => {
@@ -519,7 +521,7 @@ function MineTab({ connected }: { connected: boolean }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-xs text-slate-400">
+                  <tr className="border-b text-left text-xs text-slate-500">
                     <th className="pb-1.5 pr-2">영상</th>
                     <th className="pb-1.5 pr-2">조회수</th>
                     <th className="pb-1.5 pr-2">시청(분)</th>

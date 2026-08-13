@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, X, ExternalLink, KeyRound, Trash2 } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, Input } from '@/components/ui';
+import { Badge, Button, Card, Input, PageHeader } from '@/components/ui';
 
 interface KeyRow {
   name: string;
@@ -24,9 +24,9 @@ export default function KeysPage() {
   return (
     <div className="max-w-3xl space-y-4">
       <div>
-        <h2 className="text-lg font-semibold">API 키</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          키는 이 컴퓨터의 <code className="rounded bg-slate-100 px-1">workspace/secrets.json</code>에만 저장되며
+        <PageHeader title="API 키" />
+        <p className="mt-1 text-sm text-slate-600">
+          키는 이 컴퓨터의 <code className="rounded bg-slate-100 px-1 text-slate-800">workspace/secrets.json</code>에만 저장되며
           깃에 커밋되지 않습니다. 필요한 기능의 키만 등록하면 됩니다.
         </p>
       </div>
@@ -75,7 +75,7 @@ function KeyCard({ row, onChanged }: { row: KeyRow; onChanged: () => void }) {
     <Card>
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <KeyRound size={16} className="text-slate-400" />
+          <KeyRound size={16} className="text-slate-500" />
           <span className="font-medium">{row.label}</span>
           <Badge color={row.configured ? 'green' : 'slate'}>{row.configured ? '등록됨' : '미등록'}</Badge>
         </div>
@@ -157,7 +157,7 @@ function GoogleOauthCard({
   return (
     <Card>
       <div className="mb-1 flex items-center gap-2">
-        <KeyRound size={16} className="text-slate-400" />
+        <KeyRound size={16} className="text-slate-500" />
         <span className="font-medium">구글 계정 연결 (내 채널 분석)</span>
         <Badge color={state?.connected ? 'green' : ready ? 'amber' : 'slate'}>
           {state?.connected ? '연결됨' : ready ? '연결 대기' : '클라이언트 미등록'}
@@ -166,7 +166,7 @@ function GoogleOauthCard({
       <p className="mb-3 text-sm text-slate-500">
         내 채널의 비공개 통계(시청 지속시간·트래픽 소스 등)를 보려면 필요합니다. 읽기 전용 권한만 요청하며 무료입니다.
         Google Cloud 콘솔에서 OAuth 클라이언트(데스크톱 앱)를 만들어 아래에 등록하세요 —
-        자세한 절차는 <code className="rounded bg-slate-100 px-1">tools/setup-youtube-oauth.md</code>.
+        자세한 절차는 <code className="rounded bg-slate-100 px-1 text-slate-800">tools/setup-youtube-oauth.md</code>.
       </p>
 
       <div className="space-y-2">
