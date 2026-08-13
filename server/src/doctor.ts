@@ -28,6 +28,7 @@ type ToolEntry = DoctorReport['tools'][number];
 let cached: ToolEntry[] | null = null;
 let cachedAt = 0;
 let inFlight: Promise<ToolEntry[]> | null = null;
+let generation = 0;
 
 /**
  * 실패한 점검 결과의 수명.
@@ -45,24 +46,47 @@ function cacheUsable(): boolean {
   return allFound || Date.now() - cachedAt < FAILED_CACHE_MS;
 }
 
-export async function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
-  if (opts.force || !cacheUsable()) {
-    // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
-    inFlight ??= probeTools().then(
-      (r) => {
+/**
+ * 점검을 새로 시작한다.
+ *
+ * 늦게 끝난 점검이 그 뒤에 시작된 점검의 결과를 덮어쓰지 않도록 세대 번호로 거른다 —
+ * 부팅 때 실패한 점검이 뒤늦게 도착해 방금 성공한 결과를 "없음"으로 되돌리면
+ * 고치려던 증상이 그대로 재현된다.
+ */
+function startProbe(): Promise<ToolEntry[]> {
+  const gen = ++generation;
+  const p = probeTools().then(
+    (r) => {
+      if (gen === generation) {
         cached = r;
         cachedAt = Date.now();
         inFlight = null;
-        return r;
-      },
-      (e) => {
-        inFlight = null;
-        throw e;
-      },
-    );
-    await inFlight;
+      }
+      return r;
+    },
+    (e) => {
+      if (gen === generation) inFlight = null;
+      throw e;
+    },
+  );
+  inFlight = p;
+  return p;
+}
+
+export async function runDoctor(opts: { force?: boolean } = {}): Promise<DoctorReport> {
+  let entries: ToolEntry[];
+  if (opts.force) {
+    // force는 "지금 다시 봐달라"는 뜻이다. 진행 중인 점검에 편승하면 그 점검이
+    // 시작된 시점의 상태를 돌려주게 된다 — 부팅 직후 한 번 실패한 결과를 받고
+    // 도구가 없는 줄 알던 문제가 여기서 나왔다 (npm run seed)
+    entries = await startProbe();
+  } else if (cacheUsable()) {
+    entries = cached!;
+  } else {
+    // 동시에 여러 요청이 들어와도 실제 점검은 한 번만
+    entries = await (inFlight ?? startProbe());
   }
-  const tools = [...cached!, ...(await keyTools())];
+  const tools = [...entries, ...(await keyTools())];
   return { tools, ok: tools.filter((t) => t.required).every((t) => t.available) };
 }
 
@@ -82,6 +106,7 @@ export function resetDoctorCache(): void {
   cached = null;
   cachedAt = 0;
   inFlight = null;
+  generation++;
 }
 
 /**
