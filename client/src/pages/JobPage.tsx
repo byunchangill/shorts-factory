@@ -11,7 +11,7 @@ import { api } from '@/api/client';
 import {
   Badge, Breadcrumb, Button, Card, ConfirmDialog, PageHeader, Spinner, Textarea,
 } from '@/components/ui';
-import { ProgressRail } from '@/components/pipeline';
+import { ProgressRail, StepGuide } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
 import { SegmentPicker, type SegmentDraft } from '@/components/SegmentPicker';
@@ -121,6 +121,8 @@ export default function JobPage() {
 
         {/* 중앙 패널 — 바깥 레이아웃이 이미 <main>이라 여기서는 section을 쓴다 */}
         <section className="min-w-0 flex-1 space-y-4">
+          {/* 무엇을 하는 단계이고 지금 뭘 해야 하는지 — 패널보다 먼저 읽히도록 맨 위에 둔다 */}
+          <StepGuide pipeline={j.pipeline} state={j.state} viewing={viewState ?? undefined} />
           {['draft', 'collecting', 'downloading'].includes(panelState) && <SourcesPanel job={j} />}
           {['analyzing', 'cleaning'].includes(panelState) && <ClipsPanel job={j} />}
           {['scripting', 'script_approved', 'format_selected'].includes(panelState) && (
@@ -212,7 +214,7 @@ function SourcesPanel({ job }: { job: JobDetail }) {
 
   return (
     <Card>
-      <h3 className="mb-1 flex items-center gap-2 font-semibold"><Download size={17} /> 소스 영상 URL</h3>
+      <h3 className="mb-1 flex items-center gap-2 font-semibold"><Download size={17} /> 영상 주소</h3>
       <p className="mb-3 text-sm text-slate-500">
         한 줄에 하나씩, 개수 제한 없이 붙여넣으세요. yt-dlp가 지원하는 모든 사이트를 사용할 수 있습니다.
       </p>
@@ -261,7 +263,7 @@ function SourcesPanel({ job }: { job: JobDetail }) {
 
       {allSourcesReady && !job.downloading && (
         <p className="mt-2 text-sm text-slate-500">
-          소스를 모두 받았습니다. <strong>다음 단계로</strong>를 누르면 자막/워터마크 제거로 넘어갑니다.
+          영상을 모두 받았습니다. <strong>다음 단계로</strong>를 누르면 자막·워터마크 지우기로 넘어갑니다.
         </p>
       )}
 
@@ -405,9 +407,9 @@ function ClipsPanel({ job }: { job: JobDetail }) {
     <div className="space-y-4">
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-semibold"><Wand2 size={17} /> 자막/워터마크 제거</h3>
+          <h3 className="flex items-center gap-2 font-semibold"><Wand2 size={17} /> 자막·워터마크 지우기</h3>
           <Button onClick={() => toScript.mutate()} disabled={toScript.isPending}>
-            정리 완료 → 대본 요청서 발행
+            정리 완료 → AI에게 대본 맡기기
           </Button>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -620,10 +622,10 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
               onClick={() => issue.mutate('product-extract')}
               disabled={issue.isPending}
             >
-              제품정보 추출 요청서
+              AI에게 제품정보 정리 맡기기
             </Button>
             <Button onClick={() => issue.mutate('script')} disabled={issue.isPending}>
-              대본 요청서 발행
+              AI에게 대본 맡기기
             </Button>
           </div>
         </div>
@@ -795,7 +797,7 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
           <h3 className="font-semibold">씬 이미지</h3>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => issue.mutate()} disabled={issue.isPending}>
-              씬 이미지 요청서 발행
+              AI에게 씬 이미지 맡기기
             </Button>
             <Button onClick={() => next.mutate()} disabled={next.isPending}>이미지 준비 완료 → 음성 생성</Button>
           </div>
@@ -1083,7 +1085,7 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
           <div className="flex items-start gap-3">
             <ShieldCheck size={20} className={job.rightsConfirmed ? 'text-green-600' : 'text-amber-600'} />
             <div className="flex-1">
-              <p className="font-medium">소스 영상 사용 권리 확인</p>
+              <p className="font-medium">영상 사용 권리 확인</p>
               <p className="mt-0.5 text-sm text-slate-600">
                 다운로드한 해외 영상의 재사용은 원저작자 허락 또는 라이선스 확인이 필요합니다.
                 워터마크를 제거했더라도 저작권은 사라지지 않으며, 확인 책임은 사용자에게 있습니다.
@@ -1113,7 +1115,7 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             </Button>
             {job.output.currentVersion && (
               <Button variant="secondary" onClick={() => uploadKit.mutate()} disabled={uploadKit.isPending}>
-                업로드 킷 요청서
+                AI에게 업로드 문구 맡기기
               </Button>
             )}
           </div>

@@ -154,7 +154,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
           {(packet.status === 'waiting' || packet.status === 'draft') && (
             <button
               className="text-xs text-slate-500 hover:text-red-500"
-              title="이 요청서 취소 (아직 처리 전이라 버려도 잃을 것이 없습니다)"
+              title="맡긴 일 취소 (아직 처리 전이라 버려도 잃을 것이 없습니다)"
               disabled={cancel.isPending}
               onClick={() => cancel.mutate()}
             >

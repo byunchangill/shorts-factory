@@ -114,7 +114,7 @@ export default function FormatsPage() {
             onClick={() => issue.mutate()}
             disabled={WIZARD_QUESTIONS.some((q) => !answers[q.key]?.trim()) || issue.isPending}
           >
-            요청서 발행
+            AI에게 포맷 설계 맡기기
           </Button>
         </div>
       </Modal>

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles } from 'lucide-react';
+import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles, ArrowRight } from 'lucide-react';
 import {
-  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS,
+  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS, STATE_NEXT_ACTION,
   type GuidelineFile, type Menu,
 } from '@shared/constants';
 import { api, ApiBootingError } from '@/api/client';
@@ -136,6 +136,11 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
                 </div>
               </div>
               <StepIndicator pipeline={j.pipeline} state={j.state} />
+              {/* 목록에서도 다음에 뭘 해야 하는지 보이게 — 열어봐야 아는 것을 줄인다.
+                  현재 단계는 위 배지에 이미 있으므로 여기서는 할 일만 적는다 */}
+              <p className="mt-2.5 flex items-center justify-end gap-1 text-sm font-medium text-brand-700">
+                {STATE_NEXT_ACTION[j.state] ?? '계속하기'} <ArrowRight size={14} />
+              </p>
             </Card>
           </Link>
           <IconButton

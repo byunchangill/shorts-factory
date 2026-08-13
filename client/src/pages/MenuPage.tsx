@@ -8,6 +8,7 @@ import { api } from '@/api/client';
 import {
   Badge, Button, Card, ConfirmDialog, EmptyState, IconButton, Input, Modal, PageHeader, focusRing,
 } from '@/components/ui';
+import { FlowOverview } from '@/components/pipeline';
 
 interface ProjectWithCounts {
   id: string;
@@ -95,6 +96,8 @@ export default function MenuPage({ menu }: { menu: Menu }) {
           </>
         }
       />
+
+      <FlowOverview menu={menu} />
 
       {noFormats && (
         <Card className="border-violet-200 bg-violet-50">
