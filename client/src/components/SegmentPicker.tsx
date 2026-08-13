@@ -66,7 +66,7 @@ export function SegmentPicker({
               <button className="font-mono text-brand-600 hover:underline" onClick={() => seek(s.in)}>
                 {s.in.toFixed(1)}s → {s.out.toFixed(1)}s
               </button>
-              <span className="text-xs text-slate-400">({(s.out - s.in).toFixed(1)}초)</span>
+              <span className="text-xs text-slate-500">({(s.out - s.in).toFixed(1)}초)</span>
               <input
                 className="flex-1 rounded border border-slate-200 px-2 py-1 text-xs"
                 placeholder={`메모 (예: 씬 ${i + 1}용)`}

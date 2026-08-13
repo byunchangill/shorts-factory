@@ -8,7 +8,9 @@ import {
 } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
-import { BackLink, Badge, Button, Card, ConfirmDialog, Spinner, Textarea } from '@/components/ui';
+import {
+  Badge, Breadcrumb, Button, Card, ConfirmDialog, PageHeader, Spinner, Textarea,
+} from '@/components/ui';
 import { ProgressRail } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
@@ -85,28 +87,53 @@ export default function JobPage() {
   if (!j) return <div className="flex justify-center py-20"><Spinner /></div>;
 
   return (
-    <div className="flex gap-5">
-      {/* 좌측 진행 레일 */}
-      <aside className="w-52 shrink-0">
-        <Card className="sticky top-4 p-2.5">
-          <div className="mb-1 px-2">
-            <BackLink to={`/project/${j.menu}/${j.projectId}`}>
-              {MENU_LABELS[j.menu]} / {j.projectId}
-            </BackLink>
-          </div>
-          <p className="mb-2.5 px-2 font-semibold">{j.title}</p>
-          <ProgressRail pipeline={j.pipeline} state={j.state} onNavigate={setViewState} />
-          {(j.state === 'failed' || j.state === 'paused') && (
-            <p className="mt-2 px-2 text-xs text-red-500">{STATE_LABELS[j.state]}</p>
+    <div className="space-y-4">
+      <PageHeader
+        backTo={`/project/${j.menu}/${j.projectId}`}
+        backLabel={`${j.projectId} 카테고리로 돌아가기`}
+        eyebrow={
+          <Breadcrumb
+            items={[
+              { label: MENU_LABELS[j.menu], to: `/${j.menu}` },
+              { label: j.projectId, to: `/project/${j.menu}/${j.projectId}` },
+              { label: j.title },
+            ]}
+          />
+        }
+        title={j.title}
+        actions={
+          <Button variant="ghost" onClick={() => { remove.reset(); setConfirmDelete(true); }}>
+            <Trash2 size={15} /> 작업 삭제
+          </Button>
+        }
+      />
+
+      <div className="flex gap-5">
+        {/* 좌측 진행 레일 */}
+        <aside className="w-52 shrink-0">
+          <Card className="sticky top-4 p-2.5">
+            <ProgressRail pipeline={j.pipeline} state={j.state} onNavigate={setViewState} />
+            {(j.state === 'failed' || j.state === 'paused') && (
+              <p className="mt-2 px-2 text-xs font-medium text-red-600">{STATE_LABELS[j.state]}</p>
+            )}
+          </Card>
+        </aside>
+
+        {/* 중앙 패널 — 바깥 레이아웃이 이미 <main>이라 여기서는 section을 쓴다 */}
+        <section className="min-w-0 flex-1 space-y-4">
+          {['draft', 'collecting', 'downloading'].includes(panelState) && <SourcesPanel job={j} />}
+          {['analyzing', 'cleaning'].includes(panelState) && <ClipsPanel job={j} />}
+          {['scripting', 'script_approved', 'format_selected'].includes(panelState) && (
+            <ScriptPanel job={j} packets={jobPackets} />
           )}
-          <button
-            className="mt-2 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
-            onClick={() => { remove.reset(); setConfirmDelete(true); }}
-          >
-            <Trash2 size={13} /> 이 작업 삭제
-          </button>
-        </Card>
-      </aside>
+          {panelState === 'trimming' && <TrimPanel job={j} />}
+          {panelState === 'scening' && <ScenesPanel job={j} packets={jobPackets} />}
+          {panelState === 'voicing' && <VoicePanel job={j} />}
+          {['assembling', 'review', 'done'].includes(panelState) && (
+            <ReviewPanel job={j} packets={jobPackets} />
+          )}
+        </section>
+      </div>
 
       <ConfirmDialog
         open={confirmDelete}
@@ -128,21 +155,6 @@ export default function JobPage() {
           </>
         }
       />
-
-      {/* 중앙 패널 */}
-      <main className="min-w-0 flex-1 space-y-4">
-        {['draft', 'collecting', 'downloading'].includes(panelState) && <SourcesPanel job={j} />}
-        {['analyzing', 'cleaning'].includes(panelState) && <ClipsPanel job={j} />}
-        {['scripting', 'script_approved', 'format_selected'].includes(panelState) && (
-          <ScriptPanel job={j} packets={jobPackets} />
-        )}
-        {panelState === 'trimming' && <TrimPanel job={j} />}
-        {panelState === 'scening' && <ScenesPanel job={j} packets={jobPackets} />}
-        {panelState === 'voicing' && <VoicePanel job={j} />}
-        {['assembling', 'review', 'done'].includes(panelState) && (
-          <ReviewPanel job={j} packets={jobPackets} />
-        )}
-      </main>
     </div>
   );
 }
@@ -240,7 +252,7 @@ function SourcesPanel({ job }: { job: JobDetail }) {
           />
         </label>
       </div>
-      <p className="mt-1.5 text-xs text-slate-400">
+      <p className="mt-1.5 text-xs text-slate-500">
         yt-dlp가 받지 못하는 사이트(쇼핑몰 상세페이지 등)는 직접 받은 영상 파일을 첨부하세요.
       </p>
       {(attach.error || remove.error) && (
@@ -256,7 +268,7 @@ function SourcesPanel({ job }: { job: JobDetail }) {
       {job.sources.length > 0 && (
         <table className="mt-4 w-full text-sm">
           <thead>
-            <tr className="border-b text-left text-xs text-slate-400">
+            <tr className="border-b text-left text-xs text-slate-500">
               <th className="pb-1.5">URL</th><th className="pb-1.5">상태</th><th className="pb-1.5">업로더</th><th />
             </tr>
           </thead>
@@ -409,7 +421,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
               {c.currentCleanVersion && <Badge color="green">v{c.currentCleanVersion}</Badge>}
             </button>
           ))}
-          {list.length === 0 && <p className="text-sm text-slate-400">클립이 없습니다 — 다운로드가 끝나면 자동 생성됩니다.</p>}
+          {list.length === 0 && <p className="text-sm text-slate-500">클립이 없습니다 — 다운로드가 끝나면 자동 생성됩니다.</p>}
         </div>
       </Card>
 
@@ -466,7 +478,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
                   <span>{f.t.toFixed(1)}초</span>
                   {f.recommended && <span className="text-brand-600" title="장면이 바뀌는 지점">▸</span>}
                   <button
-                    className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-400 hover:text-red-500')}
+                    className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-500 hover:text-red-500')}
                     title={marked.has(f.file) ? '삭제 취소' : '삭제할 프레임으로 찍기'}
                     onClick={() => toggleMark(f.file)}
                   >
@@ -646,7 +658,7 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
           </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-xs text-slate-400">
+              <tr className="border-b text-left text-xs text-slate-500">
                 <th className="pb-1.5 pr-2">씬</th><th className="pb-1.5 pr-2">나레이션</th>
                 <th className="pb-1.5 pr-2">자막</th><th className="pb-1.5">소재</th>
               </tr>
@@ -654,7 +666,7 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             <tbody>
               {script.data.scenes.map((s) => (
                 <tr key={s.sceneId} className="border-b border-slate-100 align-top">
-                  <td className="py-2 pr-2 font-mono text-xs text-slate-400">{s.sceneId}</td>
+                  <td className="py-2 pr-2 font-mono text-xs text-slate-500">{s.sceneId}</td>
                   <td className="py-2 pr-2">{s.narration}</td>
                   <td className="py-2 pr-2 text-slate-600">{s.subtitle}</td>
                   <td className="py-2 text-xs text-slate-500">
@@ -975,14 +987,14 @@ function VoicePanel({ job }: { job: JobDetail }) {
           <span className="text-sm text-slate-500">첨부 {uploadedCount} / {scenes.length}씬</span>
         </div>
         {scenes.length === 0 ? (
-          <p className="text-sm text-slate-400">대본이 없습니다.</p>
+          <p className="text-sm text-slate-500">대본이 없습니다.</p>
         ) : (
           <ul className="space-y-1.5">
             {scenes.map((s, i) => {
               const uploaded = job.sceneVoiceFiles?.[s.sceneId];
               return (
                 <li key={s.sceneId} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 p-2 text-sm">
-                  <span className="w-10 shrink-0 font-mono text-xs text-slate-400">{i + 1}</span>
+                  <span className="w-10 shrink-0 font-mono text-xs text-slate-500">{i + 1}</span>
                   <span className="min-w-0 flex-1 truncate" title={s.narration}>{s.narration}</span>
                   {uploaded ? (
                     <>
@@ -1141,12 +1153,12 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
               <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{exportInfo.data.targetDir}</code>
             </p>
             {exportInfo.data.exportedAt && (
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 마지막 내보내기: {new Date(exportInfo.data.exportedAt).toLocaleString('ko-KR')}
               </p>
             )}
             {!exportInfo.data.includeSources && (
-              <p className="text-xs text-slate-400">다운로드 원본은 제외됩니다 (설정에서 포함 가능)</p>
+              <p className="text-xs text-slate-500">다운로드 원본은 제외됩니다 (설정에서 포함 가능)</p>
             )}
           </div>
         )}

@@ -4,6 +4,13 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
 
+/**
+ * 키보드 포커스 표시. 마우스 클릭에는 뜨지 않고 Tab으로 옮겨왔을 때만 보인다
+ * (`focus`가 아니라 `focus-visible`). 이게 없으면 키보드로 지금 어디에 있는지 알 수 없다
+ */
+export const focusRing =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2';
+
 export function Button({
   variant = 'primary',
   className,
@@ -13,10 +20,41 @@ export function Button({
     <button
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-        variant === 'primary' && 'bg-brand-600 text-white hover:bg-brand-700',
-        variant === 'secondary' && 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
-        variant === 'danger' && 'bg-red-600 text-white hover:bg-red-700',
-        variant === 'ghost' && 'text-slate-600 hover:bg-slate-100',
+        focusRing,
+        variant === 'primary' && 'bg-brand-600 text-white shadow-sm hover:bg-brand-700',
+        variant === 'secondary' && 'border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-slate-400 hover:bg-slate-50',
+        variant === 'danger' && 'bg-red-600 text-white shadow-sm hover:bg-red-700',
+        variant === 'ghost' && 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/**
+ * 아이콘만 있는 보조 동작 버튼 (삭제 등).
+ *
+ * 마우스를 올려야 나타나는 방식은 쓰지 않는다 — 있는 줄 모르면 없는 기능이고,
+ * 터치 화면에서는 hover 자체가 없다. 늘 보이되 색을 낮춰 주 동작을 가리지 않는다.
+ */
+export function IconButton({
+  tone = 'default',
+  label,
+  className,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'default' | 'danger'; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={clsx(
+        // 아이콘은 작아도 누를 수 있는 면적은 확보한다 (데스크톱 전용이라 44px 대신 36px)
+        'inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors duration-200',
+        focusRing,
+        tone === 'default' && 'hover:bg-slate-100 hover:text-slate-900',
+        tone === 'danger' && 'hover:bg-red-50 hover:text-red-600',
         className,
       )}
       {...props}
@@ -48,34 +86,35 @@ export function Badge({
     violet: 'bg-violet-100 text-violet-700',
   };
   return (
-    <span className={clsx('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium', colors[color])}>
+    <span
+      className={clsx(
+        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset',
+        colors[color],
+        // 흰 카드 위에서 배지 경계가 뭉개지지 않게 같은 계열의 옅은 테두리를 준다
+        color === 'slate' && 'ring-slate-200',
+        color === 'blue' && 'ring-blue-200',
+        color === 'green' && 'ring-green-200',
+        color === 'amber' && 'ring-amber-200',
+        color === 'red' && 'ring-red-200',
+        color === 'violet' && 'ring-violet-200',
+      )}
+    >
       {children}
     </span>
   );
 }
 
+const fieldBase =
+  'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 ' +
+  'transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 ' +
+  'disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500';
+
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={clsx(
-        'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500',
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <input className={clsx(fieldBase, className)} {...props} />;
 }
 
 export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      className={clsx(
-        'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500',
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <textarea className={clsx(fieldBase, 'font-mono', className)} {...props} />;
 }
 
 export function Modal({
@@ -89,14 +128,28 @@ export function Modal({
   title: string;
   children: ReactNode;
 }) {
+  // Esc로 닫기 — 배경을 정확히 클릭해야만 닫히면 좁은 화면에서 빠져나갈 길이 없다
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-4 text-lg font-semibold">{title}</h3>
+        <h3 className="mb-4 text-lg font-semibold tracking-tight">{title}</h3>
         {children}
       </div>
     </div>
@@ -169,29 +222,83 @@ export function Spinner() {
 }
 
 /**
- * 상위 화면으로 올라가는 링크. 브라우저 뒤로가기와 달리 어디서 들어왔든 늘 같은 곳으로 간다 —
- * 대시보드에서 잡으로 바로 들어오거나 URL을 새로 열었을 때도 갈 곳이 있어야 한다
+ * 화면 맨 위 제목줄. 뒤로가기·현재 위치·제목·동작 버튼이 모든 화면에서 같은 자리에 온다.
+ *
+ * 뒤로가기는 히스토리를 되감지 않고 상위 화면을 직접 가리킨다 — 대시보드에서 바로 들어오거나
+ * URL을 새로 열었을 때도 갈 곳이 있어야 한다. 제목 왼쪽의 네모 버튼이라 눈에 걸리고,
+ * 어느 화면에서든 같은 위치라 찾을 필요가 없다.
  */
-export function BackLink({ to, children }: { to: string; children: ReactNode }) {
+/**
+ * 계층 위치 표시. 메뉴 > 카테고리 > 영상 작업으로 3단이라 현재 위치를 글로도 보여준다.
+ * 마지막 칸은 현재 화면이므로 링크하지 않는다
+ */
+export function Breadcrumb({ items }: { items: Array<{ label: string; to?: string }> }) {
   return (
-    <Link
-      to={to}
-      className="inline-flex items-start gap-1 text-xs text-slate-400 transition-colors hover:text-slate-700"
-    >
-      {/*
-        좁은 사이드바에서 카테고리 이름이 잘리지 않고 접히도록 아이콘만 고정폭으로 둔다.
-        break-keep이 없으면 한글이 "생활용/품"처럼 낱글자로 끊긴다
-      */}
-      <ArrowLeft size={13} className="mt-0.5 shrink-0" />
-      <span className="break-keep">{children}</span>
-    </Link>
+    <nav aria-label="현재 위치" className="flex flex-wrap items-center gap-1 text-xs text-slate-500">
+      {items.map((it, i) => (
+        <span key={`${it.label}-${i}`} className="flex items-center gap-1">
+          {i > 0 && <span className="text-slate-500" aria-hidden>/</span>}
+          {it.to ? (
+            <Link
+              to={it.to}
+              className={clsx('rounded break-keep hover:text-brand-700 hover:underline', focusRing)}
+            >
+              {it.label}
+            </Link>
+          ) : (
+            <span className="break-keep">{it.label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+export function PageHeader({
+  backTo,
+  backLabel,
+  eyebrow,
+  title,
+  actions,
+}: {
+  backTo?: string;
+  backLabel?: string;
+  eyebrow?: ReactNode;
+  title: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        {backTo && (
+          <Link
+            to={backTo}
+            aria-label={backLabel ?? '뒤로'}
+            title={backLabel ?? '뒤로'}
+            className={clsx(
+              'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300',
+              'bg-white text-slate-600 shadow-sm transition-colors duration-200',
+              'hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900',
+              focusRing,
+            )}
+          >
+            <ArrowLeft size={18} />
+          </Link>
+        )}
+        <div className="min-w-0">
+          {eyebrow && <p className="text-xs font-medium text-slate-500">{eyebrow}</p>}
+          <h2 className="truncate text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
+        </div>
+      </div>
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+    </header>
   );
 }
 
 export function EmptyState({ message, action }: { message: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 py-14 text-slate-500">
-      <p>{message}</p>
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white/60 px-6 py-14">
+      <p className="max-w-md break-keep text-center text-sm text-slate-600">{message}</p>
       {action}
     </div>
   );

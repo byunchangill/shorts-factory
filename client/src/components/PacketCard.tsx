@@ -153,7 +153,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
         <div className="flex items-center gap-2">
           {(packet.status === 'waiting' || packet.status === 'draft') && (
             <button
-              className="text-xs text-slate-400 hover:text-red-500"
+              className="text-xs text-slate-500 hover:text-red-500"
               title="이 요청서 취소 (아직 처리 전이라 버려도 잃을 것이 없습니다)"
               disabled={cancel.isPending}
               onClick={() => cancel.mutate()}
@@ -161,7 +161,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
               취소
             </button>
           )}
-          <span className="text-xs text-slate-400">{packet.id}</span>
+          <span className="text-xs text-slate-500">{packet.id}</span>
         </div>
       </div>
       {!compact && (
@@ -181,7 +181,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                 onClick={() => setTab(key)}
                 className={clsx(
                   'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5',
-                  tab === key ? 'bg-white font-medium shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                  tab === key ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900',
                 )}
               >
                 <Icon size={14} /> {label}
@@ -197,9 +197,9 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
 
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
-                  <Zap size={13} className="text-slate-400" />
+                  <Zap size={13} className="text-slate-500" />
                   <span className="text-xs font-medium">빠르게 — 혼자 처리</span>
-                  <span className="text-xs text-slate-400">토큰 적게, 수십 초</span>
+                  <span className="text-xs text-slate-500">토큰 적게, 수십 초</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
@@ -219,7 +219,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                 <div className="flex items-center gap-1.5">
                   <Users size={13} className="text-violet-500" />
                   <span className="text-xs font-medium">고품질 — 팀 처리</span>
-                  <span className="text-xs text-slate-400">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
+                  <span className="text-xs text-slate-500">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-violet-300">
@@ -235,7 +235,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                 </div>
               </div>
 
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 반복 양산은 빠르게, 채널 대표 영상이나 새 포맷 첫 편은 고품질을 권합니다.
               </p>
             </div>
@@ -265,7 +265,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                     )}
                   >
                     <span className="flex items-center gap-1.5 text-sm font-medium">
-                      <Icon size={14} className={key === 'quality' ? 'text-violet-500' : 'text-slate-400'} />
+                      <Icon size={14} className={key === 'quality' ? 'text-violet-500' : 'text-slate-500'} />
                       {label}
                       {mode === key && <Check size={13} className="text-brand-600" />}
                     </span>
@@ -294,7 +294,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                 </p>
               )}
               {mode === 'quality' && !running && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   고품질은 실측 69편 기반 조회수 구조를 적용하고, 85점 미만이면 최대 2회 다시 씁니다.
                 </p>
               )}

@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { Globe, Package, ArrowRight } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, STATE_NEXT_ACTION } from '@shared/constants';
 import { api } from '@/api/client';
-import { Badge, Card, EmptyState } from '@/components/ui';
+import { clsx } from 'clsx';
+import { Badge, Card, EmptyState, focusRing } from '@/components/ui';
 import { StepIndicator } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 
@@ -68,14 +69,14 @@ export default function Dashboard() {
             <EmptyState message="진행 중인 작업이 없습니다. 아래 메뉴에서 시작하세요." />
           )}
           {(active.data ?? []).map((job) => (
-            <Link key={job.id} to={`/job/${job.id}`} className="block">
-              <Card className="transition-shadow hover:shadow-md">
+            <Link key={job.id} to={`/job/${job.id}`} className={clsx('block rounded-xl', focusRing)}>
+              <Card className="transition-all hover:border-slate-300 hover:shadow-md">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Badge color={job.menu === 'menu-a' ? 'blue' : 'violet'}>{MENU_LABELS[job.menu]}</Badge>
                     <span className="font-medium">{job.title}</span>
                   </div>
-                  <span className="text-xs text-slate-400">{job.projectId}</span>
+                  <span className="text-xs text-slate-500">{job.projectId}</span>
                 </div>
                 <StepIndicator pipeline={job.pipeline} state={job.state} />
                 <div className="mt-2.5 flex items-center justify-between">
@@ -93,7 +94,7 @@ export default function Dashboard() {
           {/* 메뉴 타일 */}
           <div className="grid grid-cols-2 gap-3 pt-2">
             <Link to="/menu-a">
-              <Card className="flex items-center gap-3 transition-shadow hover:shadow-md">
+              <Card className="flex items-center gap-3 transition-all hover:border-slate-300 hover:shadow-md">
                 <div className="rounded-lg bg-blue-100 p-2.5 text-blue-600"><Globe size={22} /></div>
                 <div>
                   <p className="font-semibold">해외영상 짜집기</p>
@@ -102,7 +103,7 @@ export default function Dashboard() {
               </Card>
             </Link>
             <Link to="/menu-b">
-              <Card className="flex items-center gap-3 transition-shadow hover:shadow-md">
+              <Card className="flex items-center gap-3 transition-all hover:border-slate-300 hover:shadow-md">
                 <div className="rounded-lg bg-violet-100 p-2.5 text-violet-600"><Package size={22} /></div>
                 <div>
                   <p className="font-semibold">제품정보리뷰</p>
@@ -117,7 +118,7 @@ export default function Dashboard() {
         <div className="space-y-3">
           <h2 className="text-lg font-semibold">Claude 요청서</h2>
           {inbox.length === 0 && (
-            <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">
+            <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
               대기 중인 요청서가 없습니다
             </p>
           )}

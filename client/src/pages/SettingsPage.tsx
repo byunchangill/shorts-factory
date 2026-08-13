@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, Input } from '@/components/ui';
+import { Badge, Button, Card, Input, PageHeader } from '@/components/ui';
 
 interface Settings {
   parallelDownloads: number;
@@ -56,7 +56,7 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-2xl space-y-4">
-      <h2 className="text-lg font-semibold">설정</h2>
+      <PageHeader title="설정" />
 
       <Card>
         <h3 className="mb-3 font-medium">도구 상태</h3>
@@ -68,7 +68,7 @@ export default function SettingsPage() {
               </Badge>
               <div>
                 <span className="font-medium">{t.name}</span>
-                {t.version && <span className="ml-2 text-xs text-slate-400">{t.version}</span>}
+                {t.version && <span className="ml-2 text-xs text-slate-500">{t.version}</span>}
                 {!t.available && <p className="text-xs text-slate-500">{t.installHint}</p>}
               </div>
             </li>
@@ -212,7 +212,7 @@ export default function SettingsPage() {
                 value={form.cardDurationSec}
                 onChange={(e) => set({ cardDurationSec: Number(e.target.value) })}
               />
-              <span className="text-xs text-slate-400">초</span>
+              <span className="text-xs text-slate-500">초</span>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -223,7 +223,7 @@ export default function SettingsPage() {
               value={form.maxClipExposureSec}
               onChange={(e) => set({ maxClipExposureSec: Number(e.target.value) })}
             />
-            <span className="text-xs text-slate-400">초 — 초과 시 컷 선택에서 경고</span>
+            <span className="text-xs text-slate-500">초 — 초과 시 컷 선택에서 경고</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-28 shrink-0 text-slate-500">한글 폰트</span>
@@ -255,7 +255,7 @@ export default function SettingsPage() {
             value={form.speechRate}
             onChange={(e) => set({ speechRate: Number(e.target.value) })}
           />
-          <span className="text-xs text-slate-400">배 (합성 음성에만 적용)</span>
+          <span className="text-xs text-slate-500">배 (합성 음성에만 적용)</span>
         </div>
         <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
           이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 30초 영상에

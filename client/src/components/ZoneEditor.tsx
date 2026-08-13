@@ -279,7 +279,7 @@ function TimeRange({
     times.reduce((best, t) => (Math.abs(t - t0) < Math.abs(best - t0) ? t : best), times[0]);
 
   if (zone.method === 'crop') {
-    return <span className="text-xs text-slate-400">전체 구간 (크롭은 구간 지정 불가)</span>;
+    return <span className="text-xs text-slate-500">전체 구간 (크롭은 구간 지정 불가)</span>;
   }
 
   const frameSelect = (value: number, onPick: (t: number) => void, label: string) => (
@@ -311,9 +311,9 @@ function TimeRange({
       {limited && (
         <>
           {frameSelect(startFrame(zone.t0!), (t) => onChange({ t0: t, t1: Math.max(zone.t1!, endOf(t)) }), '시작 프레임')}
-          <span className="text-slate-400">~</span>
+          <span className="text-slate-500">~</span>
           {frameSelect(endFrame(zone.t1!), (t) => onChange({ t1: endOf(t) }), '끝 프레임')}
-          <span className="text-slate-400">프레임</span>
+          <span className="text-slate-500">프레임</span>
           <button
             className="rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
             title="지금 보고 있는 프레임을 끝으로 잡습니다"

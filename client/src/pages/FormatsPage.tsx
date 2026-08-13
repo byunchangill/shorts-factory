@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, EmptyState, Modal, Textarea } from '@/components/ui';
+import { Badge, Button, Card, EmptyState, Modal, PageHeader, Textarea } from '@/components/ui';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 
 interface FormatData {
@@ -50,10 +50,10 @@ export default function FormatsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">고유 포맷</h2>
-        <Button onClick={() => setWizardOpen(true)}><Sparkles size={16} /> 새 포맷 만들기</Button>
-      </div>
+      <PageHeader
+        title="고유 포맷"
+        actions={<Button onClick={() => setWizardOpen(true)}><Sparkles size={16} /> 새 포맷 만들기</Button>}
+      />
 
       <p className="text-sm text-slate-500">
         고유 포맷은 제품정보리뷰 채널의 뼈대입니다 — 훅 패턴, 씬 구성, 말투, 브랜딩을 한 번 정의하면
@@ -77,11 +77,11 @@ export default function FormatsPage() {
               <Badge color="violet">v{f.version}</Badge>
             </div>
             <dl className="space-y-1 text-sm">
-              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-400">채널</dt><dd>{f.branding.channelName}</dd></div>
-              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-400">훅</dt><dd className="line-clamp-2">{f.structure.hook}</dd></div>
-              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-400">톤</dt><dd>{f.tone.persona} · {f.tone.speechLevel}</dd></div>
+              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-500">채널</dt><dd>{f.branding.channelName}</dd></div>
+              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-500">훅</dt><dd className="line-clamp-2">{f.structure.hook}</dd></div>
+              <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-500">톤</dt><dd>{f.tone.persona} · {f.tone.speechLevel}</dd></div>
               <div className="flex gap-2">
-                <dt className="w-16 shrink-0 text-slate-400">구성</dt>
+                <dt className="w-16 shrink-0 text-slate-500">구성</dt>
                 <dd className="text-xs text-slate-500">
                   {f.structure.beats.map((b) => `${b.name}(${b.secondsHint}s)`).join(' → ')}
                 </dd>
