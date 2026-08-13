@@ -128,3 +128,38 @@
 - API 키는 `workspace/secrets.json`에만 저장, 응답에는 마스킹된 값만 (`store/secrets.ts`)
 - 유튜브 API는 반드시 `youtube/client.ts`의 `ytFetch` 경유 — 쿼터 확인·차감·캐시가 여기 있다. 무료 한도(10,000유닛/일) 밖의 기능은 구현하지 않는다
 - 커밋: feat/fix/refactor/docs/test 접두어
+
+---
+
+## 클로드 설정 (2026-08-13)
+
+### 스킬 — `.claude/skills/`
+
+| 묶음 | 개수 | 내용 |
+|---|---:|---|
+| 이 저장소 자체 | 6 | answer-job · create-format · shorts-content-team · shorts-dev-team · shorts-script-qc · shorts-viral-script |
+| ECC에서 복사 | 13 | 아래 표. 출처·이유는 `.claude/skills/NOTICE.md` |
+| 에이전트 | 7 | `.claude/agents/` |
+
+복사해 온 13개와 고른 이유:
+
+| 스킬 | 왜 |
+|---|---|
+| `contract-first` | `shared/types.ts`의 zod 스키마를 client·server가 같이 쓴다 |
+| `click-path-audit` | 잡 상태머신 + SSE. 버튼마다 상태 전이를 전수 추적한다 |
+| `cost-aware-llm-pipeline` | LLM API를 부르는 앱이다. 난이도별 모델 라우팅 |
+| `remotion-video-creation` | Remotion 규칙 29개 |
+| `react-patterns` `react-testing` `vite-patterns` | client/ |
+| `api-design` `error-handling` `coding-standards` | server/ |
+| `e2e-testing` `tdd-workflow` | `npm test` · `npm run harness` |
+| `security-review` | `workspace/`에 API 키가 있다 |
+
+🔴 **ECC를 플러그인으로 켜지 않는 이유** — 켜면 378개가 통째로 들어와
+매 세션 40,459 토큰이다. 13개만 복사하면 약 1,030 토큰이고, 무엇보다
+**클라우드(깃허브) 세션은 플러그인을 설치하지 않는다**(2026-08-13 실측).
+저장소에 커밋된 `.claude/skills/` 파일만 클라우드에서 동작한다.
+
+### 플러그인 — `.claude/settings.json`
+
+`ui-ux-pro-max` 하나(1,167토큰). **로컬 전용이다 — 클라우드에서는 안 켜진다.**
+전역에서는 꺼져 있고 이 저장소에서만 켠다.
