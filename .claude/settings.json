@@ -1,12 +1,6 @@
 {
-  "_주석": "2026-08-13 project-kickoff 적용. 이 두 플러그인은 전역에서 꺼져 있고 이 저장소에서만 켠다. extraKnownMarketplaces가 같이 있어야 클라우드(깃허브) 세션이 플러그인을 어디서 받을지 안다 — 전역 설정은 클라우드에 따라가지 않는다.",
+  "_주석": "2026-08-13. ecc 플러그인은 뺐다 — 필요한 스킬 13개를 .claude/skills/ 로 직접 복사했기 때문이다. 클라우드(깃허브) 세션은 extraKnownMarketplaces가 있어도 플러그인을 설치하지 않는 것을 실측으로 확인했다. 자세한 내용은 .claude/skills/NOTICE.md. ui-ux-pro-max는 로컬 전용이다 — 클라우드에서는 안 켜진다.",
   "extraKnownMarketplaces": {
-    "ecc": {
-      "source": {
-        "source": "git",
-        "url": "https://github.com/affaan-m/ECC.git"
-      }
-    },
     "ui-ux-pro-max-skill": {
       "source": {
         "source": "github",
@@ -15,7 +9,6 @@
     }
   },
   "enabledPlugins": {
-    "ecc@ecc": true,
     "ui-ux-pro-max@ui-ux-pro-max-skill": true
   }
 }

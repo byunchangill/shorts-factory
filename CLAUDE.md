@@ -130,24 +130,33 @@
 
 ## 클로드 설정 (2026-08-13)
 
-### 켜는 플러그인 — `.claude/settings.json`
+### 스킬 — `.claude/skills/`
 
-| 플러그인 | 상시 토큰 | 왜 |
+| 묶음 | 개수 | 내용 |
 |---|---:|---|
-| `ecc@ecc` | 40,459 | react·node·TS·보안·테스트 패턴 378개. client/server 개발용 |
-| `ui-ux-pro-max@ui-ux-pro-max-skill` | 1,167 | 진행 상황 중심 UI를 다듬을 때 |
+| 이 저장소 자체 | 6 | answer-job · create-format · shorts-content-team · shorts-dev-team · shorts-script-qc · shorts-viral-script |
+| ECC에서 복사 | 13 | 아래 표. 출처·이유는 `.claude/skills/NOTICE.md` |
+| 에이전트 | 7 | `.claude/agents/` |
 
-**둘 다 전역에서는 꺼져 있고 이 저장소에서만 켠다.** 전역에 켜 두면 어떤 폴더를 열든
-41,626 토큰이 깔린다. 판단 근거와 다른 플러그인 목록은
-`~/.claude/skills/project-kickoff/CATALOG.md`에 있다.
+복사해 온 13개와 고른 이유:
 
-🔴 `settings.json`에 `extraKnownMarketplaces`가 같이 들어 있다. **지우지 말 것** —
-클라우드(깃허브) 세션은 내 PC의 전역 설정을 못 가져오므로, 이게 없으면
-플러그인을 어디서 받을지 몰라 안 켜진다.
+| 스킬 | 왜 |
+|---|---|
+| `contract-first` | `shared/types.ts`의 zod 스키마를 client·server가 같이 쓴다 |
+| `click-path-audit` | 잡 상태머신 + SSE. 버튼마다 상태 전이를 전수 추적한다 |
+| `cost-aware-llm-pipeline` | LLM API를 부르는 앱이다. 난이도별 모델 라우팅 |
+| `remotion-video-creation` | Remotion 규칙 29개 |
+| `react-patterns` `react-testing` `vite-patterns` | client/ |
+| `api-design` `error-handling` `coding-standards` | server/ |
+| `e2e-testing` `tdd-workflow` | `npm test` · `npm run harness` |
+| `security-review` | `workspace/`에 API 키가 있다 |
 
-### 스킬 — `.claude/skills/` (이미 커밋돼 있음)
+🔴 **ECC를 플러그인으로 켜지 않는 이유** — 켜면 378개가 통째로 들어와
+매 세션 40,459 토큰이다. 13개만 복사하면 약 1,030 토큰이고, 무엇보다
+**클라우드(깃허브) 세션은 플러그인을 설치하지 않는다**(2026-08-13 실측).
+저장소에 커밋된 `.claude/skills/` 파일만 클라우드에서 동작한다.
 
-`answer-job` · `create-format` · `shorts-content-team` · `shorts-dev-team` ·
-`shorts-script-qc` · `shorts-viral-script` + 에이전트 7개.
+### 플러그인 — `.claude/settings.json`
 
-이 위치라야 클로드가 읽고, 클라우드 세션에서도 쓰인다. 저장소 루트의 `skills/`는 안 읽힌다.
+`ui-ux-pro-max` 하나(1,167토큰). **로컬 전용이다 — 클라우드에서는 안 켜진다.**
+전역에서는 꺼져 있고 이 저장소에서만 켠다.
