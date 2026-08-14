@@ -910,9 +910,34 @@ async function main(): Promise<void> {
   // 메뉴 A는 별도 지침을 따로 세우기로 해서, 이 규칙들이 A로 새지 않는지도 같이 본다
   await step('제품정보리뷰 — 짧은 분량 · 단점 씬 게이트 · 시리즈 예고', async () => {
     const bProduct = '테스트세제통';
-    await post('/projects', { menu: 'menu-b', title: bProduct });
+
+    // 제품정보리뷰의 포맷은 잡이 아니라 **카테고리**에 붙는다. 포맷 없는 카테고리는
+    // 잡을 만들 수 없어야 한다 — 만들어지면 draft에 갇히고 거기서 나갈 경로가 없다
+    await post('/projects', { menu: 'menu-b', title: '포맷없는카테고리' });
+    const noFormat = await fetch(`${API}/projects/menu-b/${encodeURIComponent('포맷없는카테고리')}/jobs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '1편' }),
+    });
+    assert(noFormat.status === 400, `포맷 없는 카테고리에 잡이 만들어짐: ${noFormat.status}`);
+
+    await put('/formats/harness-format', {
+      name: '하네스 포맷',
+      structure: {
+        hook: '질문으로 연다',
+        beats: [{ name: '문제', purpose: '공감', secondsHint: 4 }],
+        cta: '링크는 설명란에',
+      },
+      tone: { persona: '살림 잘하는 이웃', speechLevel: '해요체' },
+      sceneTemplate: {
+        layout: '제품 중앙', imageStylePrompt: '밝은 주방', subtitleStyle: '하단 굵게', transition: '컷',
+      },
+      branding: { channelName: '하네스 채널' },
+    });
+    await post('/projects', { menu: 'menu-b', title: bProduct, formatId: 'harness-format' });
     const bJob = await post<JobView>(
       `/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '1편' });
+    // 포맷이 카테고리에 있으니 draft에 머무르지 않고 바로 다음 단계로 간다
+    assert(bJob.state === 'format_selected', `menu-b 잡이 draft에 갇힘: ${bJob.state}`);
 
     // ① 요청서가 menu-b 기준(22초·162자)과 단점 씬 규칙을 담아야 한다
     const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });

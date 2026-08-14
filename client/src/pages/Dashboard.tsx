@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Globe, Package, ArrowRight } from 'lucide-react';
-import { MENU_LABELS, STATE_LABELS, STATE_NEXT_ACTION } from '@shared/constants';
+import { MENU_LABELS, STATE_LABELS, stateNextAction } from '@shared/constants';
 import { api } from '@/api/client';
 import { clsx } from 'clsx';
 import { Badge, Card, focusRing } from '@/components/ui';
@@ -71,7 +71,7 @@ export default function Dashboard() {
               <Card className="transition-all hover:border-slate-300 hover:shadow-md">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge color={job.menu === 'menu-a' ? 'blue' : 'violet'}>{MENU_LABELS[job.menu]}</Badge>
+                    <Badge color={job.menu === 'menu-a' ? 'brand' : 'slate'}>{MENU_LABELS[job.menu]}</Badge>
                     <span className="font-medium">{job.title}</span>
                   </div>
                   <span className="text-xs text-slate-500">{job.projectId}</span>
@@ -82,7 +82,7 @@ export default function Dashboard() {
                     현재: <b className="text-slate-700">{STATE_LABELS[job.state] ?? job.state}</b>
                   </span>
                   <span className="flex items-center gap-1 text-sm font-medium text-brand-600">
-                    {STATE_NEXT_ACTION[job.state] ?? '계속하기'} <ArrowRight size={14} />
+                    {stateNextAction(job.menu, job.state)} <ArrowRight size={14} />
                   </span>
                 </div>
               </Card>
@@ -93,7 +93,7 @@ export default function Dashboard() {
           <div className="grid gap-3 pt-2 sm:grid-cols-2">
             <Link to="/menu-a" className={clsx('block rounded-xl', focusRing)}>
               <Card className="flex h-full items-start gap-3 transition-all hover:border-slate-300 hover:shadow-md">
-                <div className="shrink-0 rounded-lg bg-blue-100 p-2.5 text-blue-600"><Globe size={22} /></div>
+                <div className="shrink-0 rounded-lg bg-brand-50 p-2.5 text-brand-700"><Globe size={22} /></div>
                 <div className="min-w-0">
                   <p className="font-semibold">해외영상 짜집기</p>
                   <p className="mt-0.5 break-keep text-xs text-slate-600">
@@ -106,7 +106,7 @@ export default function Dashboard() {
             </Link>
             <Link to="/menu-b" className={clsx('block rounded-xl', focusRing)}>
               <Card className="flex h-full items-start gap-3 transition-all hover:border-slate-300 hover:shadow-md">
-                <div className="shrink-0 rounded-lg bg-violet-100 p-2.5 text-violet-600"><Package size={22} /></div>
+                <div className="shrink-0 rounded-lg bg-slate-100 p-2.5 text-slate-600"><Package size={22} /></div>
                 <div className="min-w-0">
                   <p className="font-semibold">제품정보리뷰</p>
                   <p className="mt-0.5 break-keep text-xs text-slate-600">

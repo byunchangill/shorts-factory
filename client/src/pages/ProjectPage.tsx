@@ -4,7 +4,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Plus, Upload, Save, FolderOpen, Trash2, Sparkles, ArrowRight } from 'lucide-react';
 import {
-  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS, STATE_NEXT_ACTION,
+  GUIDELINE_FILES, GUIDELINE_LABELS, MENU_LABELS, STATE_LABELS, stateNextAction,
   type GuidelineFile, type Menu,
 } from '@shared/constants';
 import { api, ApiBootingError } from '@/api/client';
@@ -128,7 +128,7 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
               <div className="mb-2.5 flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate font-medium">{j.title}</span>
                 <div className="flex shrink-0 items-center gap-2">
-                  <Badge color={j.state === 'done' ? 'green' : j.state === 'failed' ? 'red' : 'blue'}>
+                  <Badge color={j.state === 'done' ? 'green' : j.state === 'failed' ? 'red' : 'brand'}>
                     {STATE_LABELS[j.state] ?? j.state}
                   </Badge>
                   {/* 삭제 버튼이 겹쳐 앉는 자리를 미리 비워둔다 */}
@@ -139,7 +139,7 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
               {/* 목록에서도 다음에 뭘 해야 하는지 보이게 — 열어봐야 아는 것을 줄인다.
                   현재 단계는 위 배지에 이미 있으므로 여기서는 할 일만 적는다 */}
               <p className="mt-2.5 flex items-center justify-end gap-1 text-sm font-medium text-brand-700">
-                {STATE_NEXT_ACTION[j.state] ?? '계속하기'} <ArrowRight size={14} />
+                {stateNextAction(menu, j.state)} <ArrowRight size={14} />
               </p>
             </Card>
           </Link>
@@ -183,8 +183,12 @@ function JobsTab({ menu, pid }: { menu: Menu; pid: string }) {
           </p>
         )}
 
-        {/* 리포에 들어 있는 실제 영상으로 바로 시작 — 새 PC에서 눌러볼 것을 만든다 */}
-        {sample.data?.available && (
+        {/*
+          리포에 들어 있는 실제 영상으로 바로 시작 — 새 PC에서 눌러볼 것을 만든다.
+          샘플은 소스 영상 4개라 해외영상 짜집기에서만 쓸 수 있다 —
+          제품정보리뷰에는 영상을 모으는 단계 자체가 없어 눌러도 서버가 400으로 막는다
+        */}
+        {menu === 'menu-a' && sample.data?.available && (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
             <p className="text-sm font-medium">샘플 소재로 시작</p>
             <p className="mt-1 text-xs text-slate-500">

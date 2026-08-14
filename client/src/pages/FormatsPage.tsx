@@ -74,7 +74,7 @@ export default function FormatsPage() {
           <Card key={f.id}>
             <div className="mb-2 flex items-center justify-between">
               <span className="font-semibold">{f.name}</span>
-              <Badge color="violet">v{f.version}</Badge>
+              <Badge color="slate">v{f.version}</Badge>
             </div>
             <dl className="space-y-1 text-sm">
               <div className="flex gap-2"><dt className="w-16 shrink-0 text-slate-500">채널</dt><dd>{f.branding.channelName}</dd></div>

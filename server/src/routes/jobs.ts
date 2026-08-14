@@ -7,6 +7,7 @@ import { MENUS, type JobState } from '@shared/constants';
 import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { trashJob } from '../store/remove.js';
+import { getProject } from '../store/projects.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
@@ -56,7 +57,27 @@ router.get('/projects/:menu/:pid/jobs', async (req, res) => {
 router.post('/projects/:menu/:pid/jobs', async (req, res) => {
   const menu = z.enum(MENUS).parse(req.params.menu);
   const body = z.object({ title: z.string().min(1) }).parse(req.body);
+
+  /*
+    제품정보리뷰는 포맷이 잡이 아니라 **카테고리**에 붙는다. 그래서 새 잡은 만들자마자
+    `format_selected`로 보낸다 — 안 그러면 `draft`에 갇힌다. 거기서 나가는 화면도 경로도
+    없어서, 화면에는 해외영상 짜집기용 "영상 주소를 넣으세요" 패널만 떴다(2026-08-13).
+  */
+  if (menu === 'menu-b') {
+    const project = await getProject(menu, req.params.pid);
+    if (!project?.formatId) {
+      throw Object.assign(
+        new Error(`카테고리 "${req.params.pid}"에 고유 포맷이 없습니다. 포맷을 먼저 지정하세요`),
+        { status: 400 },
+      );
+    }
+  }
+
   const job = await jobs.createJob(menu, req.params.pid, body.title);
+  if (menu === 'menu-b') {
+    const ref = { menu, projectId: req.params.pid, jobId: job.id };
+    return res.status(201).json(await jobs.advanceTo(ref, 'format_selected', 'server'));
+  }
   res.status(201).json(job);
 });
 
@@ -125,7 +146,11 @@ router.put('/jobs/:jid/sources', async (req, res) => {
       existing.add(url);
     }
   });
-  if (job.state === 'draft') await jobs.transition(ref, 'collecting', 'server');
+  // `collecting`은 해외영상 짜집기에만 있는 단계다 — 메뉴를 보지 않으면 제품정보리뷰에서
+  // "전이 불가: draft → collecting"으로 터진다 (소재는 이미 들어간 뒤라 반쯤 된 상태가 남는다)
+  if (ref.menu === 'menu-a' && job.state === 'draft') {
+    await jobs.transition(ref, 'collecting', 'server');
+  }
   res.json(await jobView(ref));
 });
 

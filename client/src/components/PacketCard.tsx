@@ -27,10 +27,10 @@ interface PacketDetail extends PacketInfo {
   resultSpec: Array<{ file: string; schema: string }>;
 }
 
-const STATUS_LABEL: Record<string, { label: string; color: 'slate' | 'blue' | 'green' | 'amber' | 'red' }> = {
+const STATUS_LABEL: Record<string, { label: string; color: 'slate' | 'brand' | 'green' | 'amber' | 'red' }> = {
   draft: { label: '작성 중', color: 'slate' },
   waiting: { label: 'AI 실행 대기', color: 'amber' },
-  received: { label: '결과 도착', color: 'blue' },
+  received: { label: '결과 도착', color: 'brand' },
   accepted: { label: '수락됨', color: 'green' },
   rejected: { label: '반려됨', color: 'red' },
 };
@@ -147,7 +147,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
           <span className="font-medium">{PACKET_KIND_LABELS[packet.kind]}</span>
           <Badge color={st.color}>{st.label}</Badge>
           {packet.executionMode === 'api' && packet.provider && (
-            <Badge color="violet">{AI_PROVIDER_LABELS[packet.provider]}</Badge>
+            <Badge color="brand">{AI_PROVIDER_LABELS[packet.provider]}</Badge>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -217,12 +217,12 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
 
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
-                  <Users size={13} className="text-violet-500" />
+                  <Users size={13} className="text-brand-600" />
                   <span className="text-xs font-medium">고품질 — 팀 처리</span>
                   <span className="text-xs text-slate-500">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-violet-300">
+                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-brand-200">
                     {detail.data.commands.quality}
                   </code>
                   <Button
@@ -265,7 +265,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
                     )}
                   >
                     <span className="flex items-center gap-1.5 text-sm font-medium">
-                      <Icon size={14} className={key === 'quality' ? 'text-violet-500' : 'text-slate-500'} />
+                      <Icon size={14} className={key === 'quality' ? 'text-brand-600' : 'text-slate-500'} />
                       {label}
                       {mode === key && <Check size={13} className="text-brand-600" />}
                     </span>

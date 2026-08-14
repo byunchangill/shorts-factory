@@ -433,9 +433,9 @@ function MineTab({ connected }: { connected: boolean }) {
 
   if (!connected) {
     return (
-      <Card className="border-violet-200 bg-violet-50">
-        <p className="font-medium text-violet-900">구글 계정 연결이 필요합니다</p>
-        <p className="mt-1 text-sm text-violet-800">
+      <Card className="border-amber-200 bg-amber-50">
+        <p className="font-medium text-amber-900">구글 계정 연결이 필요합니다</p>
+        <p className="mt-1 text-sm text-amber-800">
           내 채널의 비공개 통계(시청 지속시간, 트래픽 소스, 영상별 성과)를 보려면 구글 계정을 연결하세요.
           읽기 전용 권한만 요청하며 무료입니다.
         </p>

@@ -40,8 +40,7 @@ export default function App() {
       {/* 스크롤을 내려도 메뉴는 제자리에 — 잡 화면은 세로로 길어서 매번 위로 올라가야 했다 */}
       <aside className="sticky top-0 h-screen w-56 shrink-0 overflow-y-auto border-r border-slate-200 bg-white">
         <div className="px-5 py-5">
-          <h1 className="text-lg font-bold tracking-tight">🏭 쇼핑쇼츠 팩토리</h1>
-          <p className="mt-0.5 text-xs text-slate-500">리서치 → 제작 → 패키징</p>
+          <h1 className="text-[15px] font-semibold tracking-tight">쇼핑쇼츠 팩토리</h1>
         </div>
         <nav className="space-y-0.5 px-3 pb-6">
           {NAV.map(({ to, label, icon: Icon }) => (
