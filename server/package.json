@@ -12,7 +12,6 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "chokidar": "^4.0.3",
     "cors": "^2.8.5",
     "execa": "^9.5.2",
     "express": "^4.21.2",
