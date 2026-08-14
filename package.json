@@ -17,7 +17,9 @@
     "harness": "tsx tools/harness.ts",
     "seed": "tsx tools/seed.ts",
     "logs": "tsx tools/logs.ts",
-    "doctor": "npm run doctor -w server"
+    "doctor": "npm run doctor -w server",
+    "start": "npm run start -w server",
+    "app": "npm run build:fast -w client && npm run start -w server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
