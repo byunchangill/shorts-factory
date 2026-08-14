@@ -5,6 +5,10 @@ rem 무거운 첫 설치는 setup.cmd가 미리 끝내둔다.
 
 call "%~dp0refresh-path.cmd"
 
+rem 설치본은 작업 데이터를 앱 폴더 밖에 둔다 (SHORTS_WORKSPACE).
+rem 개발자의 깃 클론에는 이 파일이 없어 리포 안의 workspace/를 그대로 쓴다.
+if exist "%~dp0local-config.cmd" call "%~dp0local-config.cmd"
+
 cd /d "%~dp0..\.."
 
 if not exist "node_modules\" call npm install
