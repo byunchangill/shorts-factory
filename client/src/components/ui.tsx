@@ -64,7 +64,8 @@ export function IconButton({
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={clsx('rounded-xl border border-slate-200 bg-white p-4 shadow-sm', className)}>
+    // 그림자 없이 테두리만. 카드가 카드 안에 들어가는 화면이 많아 그림자가 겹치면 지저분해진다
+    <div className={clsx('rounded-xl border border-slate-200 bg-white p-4', className)}>
       {children}
     </div>
   );
@@ -74,16 +75,16 @@ export function Badge({
   color = 'slate',
   children,
 }: {
-  color?: 'slate' | 'blue' | 'green' | 'amber' | 'red' | 'violet';
+  // 초록·노랑·빨강은 상태(성공·주의·오류) 전용이다. 분류 표시에는 slate나 brand를 쓴다
+  color?: 'slate' | 'brand' | 'green' | 'amber' | 'red';
   children: ReactNode;
 }) {
   const colors = {
     slate: 'bg-slate-100 text-slate-700',
-    blue: 'bg-blue-100 text-blue-700',
+    brand: 'bg-brand-50 text-brand-700',
     green: 'bg-green-100 text-green-700',
     amber: 'bg-amber-100 text-amber-800',
     red: 'bg-red-100 text-red-700',
-    violet: 'bg-violet-100 text-violet-700',
   };
   return (
     <span
@@ -92,11 +93,10 @@ export function Badge({
         colors[color],
         // 흰 카드 위에서 배지 경계가 뭉개지지 않게 같은 계열의 옅은 테두리를 준다
         color === 'slate' && 'ring-slate-200',
-        color === 'blue' && 'ring-blue-200',
+        color === 'brand' && 'ring-brand-200',
         color === 'green' && 'ring-green-200',
         color === 'amber' && 'ring-amber-200',
         color === 'red' && 'ring-red-200',
-        color === 'violet' && 'ring-violet-200',
       )}
     >
       {children}

@@ -100,9 +100,9 @@ export default function MenuPage({ menu }: { menu: Menu }) {
       <FlowOverview menu={menu} />
 
       {noFormats && (
-        <Card className="border-violet-200 bg-violet-50">
-          <p className="font-medium text-violet-900">먼저 고유 포맷을 만들어야 합니다</p>
-          <p className="mt-1 text-sm text-violet-700">
+        <Card className="border-amber-200 bg-amber-50">
+          <p className="font-medium text-amber-900">먼저 고유 포맷을 만들어야 합니다</p>
+          <p className="mt-1 text-sm text-amber-800">
             제품정보리뷰는 채널 고유 포맷(구조·톤·씬 템플릿·브랜딩)을 정한 뒤, 그 포맷으로 반복 생산하는 메뉴입니다.
           </p>
           <Link to="/formats"><Button className="mt-3">고유 포맷 만들기</Button></Link>
@@ -127,10 +127,10 @@ export default function MenuPage({ menu }: { menu: Menu }) {
                   <span className="min-w-0 truncate font-medium">{p.title}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {p.jobCounts.active > 0 && <Badge color="blue">진행 {p.jobCounts.active}</Badge>}
+                  {p.jobCounts.active > 0 && <Badge color="brand">진행 {p.jobCounts.active}</Badge>}
                   {p.jobCounts.done > 0 && <Badge color="green">완료 {p.jobCounts.done}</Badge>}
                   {p.jobCounts.total === 0 && <Badge>작업 없음</Badge>}
-                  {p.formatId && <Badge color="violet">{p.formatId}</Badge>}
+                  {p.formatId && <Badge color="slate">{p.formatId}</Badge>}
                 </div>
               </Card>
             </Link>

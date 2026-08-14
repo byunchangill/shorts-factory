@@ -1,9 +1,15 @@
+/*
+  Pretendard를 npm 패키지의 로컬 woff2로 싣는다 (CDN 링크 아님 — 오프라인에서도 뜬다).
+  dynamic-subset은 한글 글리프를 잘게 쪼개 실제로 쓰인 글자만 받아온다
+*/
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-slate-50 font-sans text-slate-900 antialiased;
 }
 
 /*
