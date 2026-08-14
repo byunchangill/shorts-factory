@@ -18,7 +18,11 @@ describe('exporter 경로 빌더', () => {
 
   it('한글 폴더명 유지', () => {
     expect(safeFileName('무선 충전기')).toBe('무선 충전기');
-    expect(productDir(SettingsSchema.parse({ exportRoot: '/x' }), '충전기')).toBe('/x/충전기');
+    // 내보내기 폴더는 사용자가 파일 탐색기로 여는 실제 경로다 —
+    // 구분자는 플랫폼을 따라간다 (윈도우는 `\`). 기대값도 path.join으로 만든다
+    expect(productDir(SettingsSchema.parse({ exportRoot: '/x' }), '충전기')).toBe(
+      path.join('/x', '충전기'),
+    );
   });
 
   it('금지 문자만 제거', () => {

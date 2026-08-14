@@ -1,7 +1,9 @@
 // 반드시 첫 import — 콘솔을 파일로도 흘려보내야 이후 모든 출력이 기록된다
 import './util/log.js';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { API_PORT } from '@shared/constants';
-import { createApp } from './app.js';
+import { createApp, CLIENT_DIST } from './app.js';
 import { bootstrap } from './boot.js';
 import { runDoctor } from './doctor.js';
 
@@ -20,8 +22,12 @@ process.on('uncaughtException', (err) => {
  */
 const app = createApp();
 const server = app.listen(API_PORT, () => {
-  console.log(`\n🏭 쇼핑쇼츠 팩토리 API: http://localhost:${API_PORT}`);
-  console.log(`   웹 UI: npm run dev 로 함께 실행 시 http://localhost:5173\n`);
+  console.log(`\n🏭 쇼핑쇼츠 팩토리: http://localhost:${API_PORT}`);
+  if (existsSync(path.join(CLIENT_DIST, 'index.html'))) {
+    console.log(`   화면·API 모두 이 주소 하나로 열립니다 (빌드된 화면 사용)\n`);
+  } else {
+    console.log(`   화면은 아직 빌드 전입니다 — 개발 중이면 npm run dev 의 http://localhost:5173\n`);
+  }
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {
