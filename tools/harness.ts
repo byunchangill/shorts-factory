@@ -1025,8 +1025,10 @@ async function main(): Promise<void> {
     }, 12_000, 200);
     const sec = (Date.now() - t0) / 1000;
     assert(d.validationErrors.length === 0, `검증 오류: ${d.validationErrors.join(', ')}`);
-    // 5초 스윕이 안전망으로 잡아주긴 하지만, 그건 워처가 놓쳤다는 뜻이다
-    return `${sec.toFixed(1)}초 만에 반영 ${sec < 4 ? '(파일 워처)' : '⚠ 스윕 폴백 — 워처가 놓침'}`;
+    // 5초 스윕이 안전망으로 잡아주긴 하지만, 그건 워처가 죽었다는 뜻이다.
+    // 여기서 통과시키면 워처가 통째로 빠져도 아무도 모른다
+    assert(sec < 4, `스윕 폴백으로 반영됨 (${sec.toFixed(1)}초) — 파일 워처가 감지하지 못했다`);
+    return `${sec.toFixed(1)}초 만에 반영 (파일 워처)`;
   });
 
   // ── 완료 + 내보내기 ──

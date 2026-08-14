@@ -1,6 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import chokidar, { type FSWatcher } from 'chokidar';
 import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema, type Script } from '@shared/types';
 import { packetMenu, scriptRuleErrors } from './scriptRules.js';
 import { WORKSPACE_ROOT } from '../store/workspace.js';
@@ -11,7 +11,7 @@ import { writeProduct } from '../store/projects.js';
 import { saveFormat } from '../store/formats.js';
 import { broadcast } from '../sse.js';
 
-let watcher: FSWatcher | null = null;
+let watcher: fs.FSWatcher | null = null;
 let sweepTimer: NodeJS.Timeout | null = null;
 
 /** 워처가 이벤트를 놓쳐도 결과가 반드시 반영되도록 하는 안전망 주기 */
@@ -29,13 +29,10 @@ const HEAVY_DIRS = new Set([
  * 감시 제외 판정. **작업공간 기준 상대경로**를 받는다 —
  * 절대경로로 판정하면 작업공간을 `.../voice/` 같은 폴더에 둔 사용자의 감시가 통째로 꺼진다.
  *
- * 워처가 볼 것은 `requests/{packetId}/result/.done` 하나뿐인데, 기본 설정은
- * 작업공간 전체를 훑는다. 그래서 두 가지가 걸린다:
- *
- * 1. `writeJsonAtomic`의 임시 파일(`job.json.tmp-…`)까지 감시 대상이 된다.
- *    chokidar의 awaitWriteFinish가 이 파일을 붙잡고 있는 동안 rename을 하면
- *    윈도우가 EPERM으로 거절한다 (조립 중 job.json 갱신이 실제로 이걸로 실패했다).
- * 2. 영상·프레임 폴더까지 감시하면 파일 수가 폭증해 감시 비용만 커진다.
+ * 워처가 볼 것은 `requests/{packetId}/result/.done` 하나뿐인데 이벤트는 작업공간 전체에서
+ * 온다. `writeJsonAtomic`의 임시 파일(`job.json.tmp-…`)과 영상·프레임 같은 무거운 폴더는
+ * 여기서 걸러 이벤트 처리 비용을 없앤다. `.trash`는 비용이 아니라 **정확성** 문제다 —
+ * 지운 잡의 `result/.done`이 그대로 들어 있어, 보면 이미 지운 잡의 결과를 다시 물어온다.
  */
 export function isWatchIgnored(relPath: string): boolean {
   if (/\.tmp-[\d-]+$/.test(relPath)) return true;
@@ -45,29 +42,42 @@ export function isWatchIgnored(relPath: string): boolean {
 /**
  * requests/{packetId}/result/.done 파일 생성을 감지 → 결과 검증 → 반영.
  * Claude Code는 result/에만 쓰고, 상태 파일(packet.json/job.json)은 서버만 쓴다.
+ *
+ * **감시는 stdlib의 재귀 `fs.watch` 하나로 한다. 폴더마다 감시자를 다는 라이브러리를
+ * 쓰지 않는다** — 윈도우는 감시 중인 폴더의 **상위** 폴더 이름을 바꾸지 못한다.
+ * 그래서 요청서를 한 번이라도 만든 잡은 삭제(=`.trash`로 rename)가 EPERM으로 막혔다.
+ * 재귀 감시는 작업공간 루트 하나만 붙잡으므로 그 아래는 자유롭게 옮길 수 있다.
+ * (재귀 감시는 node 20.13+ 리눅스·윈도우·맥에서 된다. 없으면 5초 스윕이 대신 맡는다)
  */
 export function startResultWatcher(): void {
-  watcher = chokidar.watch(WORKSPACE_ROOT, {
-    ignoreInitial: true,
-    depth: 10,
-    ignored: (p) => isWatchIgnored(path.relative(WORKSPACE_ROOT, p)),
-    awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 100 },
-  });
-  watcher.on('add', (filePath) => {
-    // requests/{packetId}/result/.done 만 처리
-    if (path.basename(filePath) === '.done' && path.basename(path.dirname(filePath)) === 'result') {
-      const packetDir = path.dirname(path.dirname(filePath));
-      void ingestPacketResult(path.basename(packetDir)).catch((e) => {
+  try {
+    watcher = fs.watch(WORKSPACE_ROOT, { recursive: true }, (_event, filename) => {
+      if (!filename) return;
+      const rel = filename.toString();
+      if (isWatchIgnored(rel)) return;
+
+      // requests/{packetId}/result/.done 만 처리
+      const parts = rel.split(/[\\/]/);
+      if (parts.at(-1) !== '.done' || parts.at(-2) !== 'result') return;
+      const packetId = parts.at(-3);
+      // 삭제도 같은 이벤트로 온다 — 잡을 휴지통으로 옮기면 옮겨지기 **전** 경로로 이벤트가
+      // 뜬다. 없는 파일로 반영을 시작하면 "누락"으로 검증 실패 기록이 남는다
+      if (!packetId || !fs.existsSync(path.join(WORKSPACE_ROOT, rel))) return;
+
+      void ingestPacketResult(packetId).catch((e) => {
         console.error('[resultWatcher] ingest 실패:', e);
       });
-    }
-  });
+    });
+  } catch (e) {
+    console.warn('[resultWatcher] 파일 감시를 켤 수 없습니다 — 5초 스윕으로 반영합니다:',
+      e instanceof Error ? e.message : e);
+  }
 }
 
 export async function stopResultWatcher(): Promise<void> {
   if (sweepTimer) clearInterval(sweepTimer);
   sweepTimer = null;
-  await watcher?.close();
+  watcher?.close();
   watcher = null;
 }
 

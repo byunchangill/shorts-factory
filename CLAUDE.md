@@ -4,7 +4,7 @@
 
 ## 아키텍처
 
-- `server/` — Express API (:4310). yt-dlp/ffmpeg/TTS 서브프로세스 실행, 잡 상태머신, SSE 푸시, 요청서 결과 감지(chokidar), LLM·유튜브 API 호출
+- `server/` — Express API (:4310). yt-dlp/ffmpeg/TTS 서브프로세스 실행, 잡 상태머신, SSE 푸시, 요청서 결과 감지(재귀 `fs.watch`), LLM·유튜브 API 호출
 - `client/` — React + Vite (:5173). 진행 상황 중심 UI
 - `shared/` — zod 스키마 단일 소스 (`types.ts`), 상태/라벨 상수 (`constants.ts`)
 - `workspace/` — 모든 사용자 데이터 + API 키 (gitignore). 서버와 Claude Code가 공유
@@ -140,8 +140,11 @@ SPA 폴백은 `/api`·`/media`를 반드시 비켜간다 — 안 그러면 없�
   필터그래프의 콜론 이스케이프는 ffmpeg 빌드마다 해석이 달라 신뢰할 수 없다 (윈도우 `C:`에서 터진다).
   **concat 목록**에는 `toConcatPath()` 경유 — 데먹서가 백슬래시를 이스케이프로 읽는다.
   필터 밖 인자(`-i`, 출력 경로)는 절대경로 그대로 쓴다
-- 작업공간 파일 감시 대상은 `isWatchIgnored()`로 좁힌다 — 원자적 쓰기 임시 파일을 감시하면
-  윈도우에서 rename이 EPERM으로 막힌다
+- **작업공간 감시는 stdlib의 재귀 `fs.watch` 하나로 한다. 폴더마다 감시자를 다는 라이브러리를
+  쓰지 않는다** — 윈도우는 감시 중인 폴더의 **상위** 폴더를 rename하지 못한다(EPERM). 요청서를
+  한 번이라도 만든 잡은 삭제(`.trash`로 옮기기)가 통째로 막혔다. 재귀 감시는 루트 하나만
+  붙잡는다. 이벤트 걸러내기는 `isWatchIgnored()`로 좁히고, `.trash`는 비용이 아니라 정확성
+  문제라 반드시 뺀다 (지운 잡의 `.done`을 다시 물어온다)
 - **`app.listen()`보다 앞에 `await`를 두지 않는다.** 초기화는 `boot.ts`의 `bootstrap()`에서 돌리고,
   준비 전 요청은 503으로 답한다. 포트가 안 열리면 웹 UI 전체가 원인 없는 ECONNREFUSED로 죽는다
 - 외부 도구 실행에는 반드시 시간 상한을 둔다. execa의 `timeout`만으로는 부족하다 —
