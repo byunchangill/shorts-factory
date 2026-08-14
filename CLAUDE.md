@@ -10,6 +10,13 @@
 - `workspace/` — 모든 사용자 데이터 + API 키 (gitignore). 서버와 Claude Code가 공유
 
 실행: `npm run dev` (API+UI) / 점검: `npm run doctor` / 단위 테스트: `npm test` / E2E: `npm run harness`
+
+**실행 경로가 둘이다.** 개발은 `npm run dev` — vite(:5173)가 화면을, tsx 서버(:4310)가 API를 맡고
+`/api`·`/media`는 프록시된다. 쓰기만 할 때는 `npm start` — 서버가 `client/dist`를 직접 서빙해
+**:4310 하나로 화면까지** 낸다 (`mountClient`, `app.ts`). dist 유무는 등록 시점이 아니라 요청마다
+본다 — 서버를 띄운 뒤 빌드해도 동작해야 하고, 없으면 "빌드하세요" 안내를 낸다.
+SPA 폴백은 `/api`·`/media`를 반드시 비켜간다 — 안 그러면 없는 엔드포인트가 200 HTML로 답해
+프론트가 JSON 파싱에서 터진다. 윈도우는 `tools/win/`의 아이콘으로 터미널 없이 연다 (README 참고)
 샘플 심기: `npm run seed` (또는 새 영상 작업 모달의 "샘플 사용하기") — `samples/`의 실제 영상으로 잡 하나를
 **영상 분석 단계까지** 만든다. 그 뒤는 직접 밟아 시험하는 것이 목적이라 채우지 않는다
 (`--full`로 음성 단계까지 채울 수 있다). 원본은 항상 복사해 쓰고 옮기지 않는다.
