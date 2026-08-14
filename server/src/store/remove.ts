@@ -45,8 +45,18 @@ function assertChildOf(parent: string, target: string, label: string): void {
   }
 }
 
-/** 윈도우에서 폴더 안 파일을 다른 프로세스가 잡고 있으면 rename이 잠깐 막힌다 */
+/**
+ * 윈도우에서 폴더 안 파일을 다른 프로세스가 잡고 있으면 rename이 **잠깐** 막힌다 —
+ * 조립 중인 ffmpeg, 미리보기, 백신 검사가 그렇다. 몇백 ms면 풀리니 짧게 기다렸다 다시 건다.
+ *
+ * 서버 자신의 파일 감시 때문에 막히던 문제는 재시도로 덮을 수 없었다 — 감시자는 기다린다고
+ * 핸들을 놓지 않아서 몇 번을 걸어도 EPERM이었다. 그건 감시를 재귀 `fs.watch` 하나로 바꿔
+ * 루트만 붙잡게 해서 없앴다 (`claude/resultWatcher.ts`). 여기 재시도는 **바깥 프로세스**용이다.
+ */
 const RENAME_RETRY_MS = [50, 150, 400];
+
+/** 파일을 누가 잡고 있을 때 나는 코드 — 잠시 뒤 풀릴 수 있다 */
+const BUSY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 async function moveToTrash(src: string, menu: Menu, name: string): Promise<string> {
   const trashDir = path.join(paths.trash(), menu);
@@ -57,19 +67,17 @@ async function moveToTrash(src: string, menu: Menu, name: string): Promise<strin
   let dest = path.join(trashDir, `${name}--${stamp}`);
   for (let n = 2; await exists(dest); n++) dest = path.join(trashDir, `${name}--${stamp}-${n}`);
 
-  for (let i = 0; ; i++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       await fsp.rename(src, dest);
       return toWorkspaceRel(dest);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code ?? '';
-      if (i >= RENAME_RETRY_MS.length || !['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY'].includes(code)) {
-        if (['EPERM', 'EACCES', 'EBUSY'].includes(code)) {
-          throw httpError(409, '폴더 안의 파일이 사용 중입니다. 처리(다운로드·조립·미리보기)가 끝난 뒤 다시 시도하세요');
-        }
-        throw e;
+      if (!BUSY_CODES.has(code)) throw e;
+      if (attempt >= RENAME_RETRY_MS.length) {
+        throw httpError(409, '폴더 안의 파일이 사용 중입니다. 처리(다운로드·조립·미리보기)가 끝난 뒤 다시 시도하세요');
       }
-      await new Promise((r) => setTimeout(r, RENAME_RETRY_MS[i]));
+      await new Promise((r) => setTimeout(r, RENAME_RETRY_MS[attempt]));
     }
   }
 }

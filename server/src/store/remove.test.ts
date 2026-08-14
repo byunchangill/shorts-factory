@@ -103,6 +103,32 @@ describe('카테고리·작업 삭제', () => {
     await expect(remove.trashProject('menu-b', 'formats')).rejects.toMatchObject({ status: 400 });
   });
 
+  /*
+    윈도우에서만 의미가 있다 — 리눅스·맥은 파일이 열려 있어도 폴더 이름이 바뀐다.
+    막혔을 때 인덱스까지 정리해버리면 폴더는 남고 화면에서만 사라진 유령 잡이 된다.
+  */
+  it.skipIf(process.platform !== 'win32')(
+    '파일을 누가 잡고 있으면 409로 막고, 폴더도 인덱스도 건드리지 않는다', async () => {
+      const { project, job } = await seed('사용중-잡');
+      const ref = { menu: 'menu-a' as const, projectId: project.id, jobId: job.id };
+      const jobDir = workspace.paths.job('menu-a', project.id, job.id);
+      const held = path.join(jobDir, 'output', 'final.mp4');
+      await fsp.mkdir(path.dirname(held), { recursive: true });
+      await fsp.writeFile(held, 'x');
+
+      const fh = await fsp.open(held, 'r'); // 조립 중인 ffmpeg가 물고 있는 상황
+      try {
+        await expect(remove.trashJob(ref)).rejects.toMatchObject({ status: 409 });
+        expect(await exists(path.join(jobDir, 'job.json'))).toBe(true);
+        expect(jobs.resolveJob(job.id)).not.toBeNull();
+      } finally {
+        await fh.close();
+      }
+
+      // 놓아주면 그대로 지워진다 (재시도 창을 넘겨도 다시 누르면 된다)
+      await expect(remove.trashJob(ref)).resolves.toMatchObject({ trashed: expect.any(String) });
+    });
+
   it('같은 이름을 다시 만들어 지워도 휴지통에서 서로 덮어쓰지 않는다', async () => {
     const first = await seed('중복-이름');
     const a = await remove.trashProject('menu-a', first.project.id);
