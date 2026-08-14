@@ -112,7 +112,7 @@ export default function JobPage() {
         {/* 좌측 진행 레일 */}
         <aside className="w-52 shrink-0">
           <Card className="sticky top-4 p-2.5">
-            <ProgressRail pipeline={j.pipeline} state={j.state} onNavigate={setViewState} />
+            <ProgressRail menu={j.menu} pipeline={j.pipeline} state={j.state} onNavigate={setViewState} />
             {(j.state === 'failed' || j.state === 'paused') && (
               <p className="mt-2 px-2 text-xs font-medium text-red-600">{STATE_LABELS[j.state]}</p>
             )}
@@ -122,8 +122,14 @@ export default function JobPage() {
         {/* 중앙 패널 — 바깥 레이아웃이 이미 <main>이라 여기서는 section을 쓴다 */}
         <section className="min-w-0 flex-1 space-y-4">
           {/* 무엇을 하는 단계이고 지금 뭘 해야 하는지 — 패널보다 먼저 읽히도록 맨 위에 둔다 */}
-          <StepGuide pipeline={j.pipeline} state={j.state} viewing={viewState ?? undefined} />
-          {['draft', 'collecting', 'downloading'].includes(panelState) && <SourcesPanel job={j} />}
+          <StepGuide menu={j.menu} pipeline={j.pipeline} state={j.state} viewing={viewState ?? undefined} />
+          {/*
+            영상 소재는 해외영상 짜집기 전용이다. 메뉴로 가르지 않으면 제품정보리뷰의 `draft`에도
+            이 패널이 떠서 "영상 주소를 넣으세요"라고 시킨다 — 영상을 쓰지 않는 메뉴인데도
+          */}
+          {j.menu === 'menu-a' && ['draft', 'collecting', 'downloading'].includes(panelState) && (
+            <SourcesPanel job={j} />
+          )}
           {['analyzing', 'cleaning'].includes(panelState) && <ClipsPanel job={j} />}
           {['scripting', 'script_approved', 'format_selected'].includes(panelState) && (
             <ScriptPanel job={j} packets={jobPackets} />
@@ -201,9 +207,9 @@ function SourcesPanel({ job }: { job: JobDetail }) {
     job.sources.every((s) => s.status === 'downloaded' || s.status === 'skipped');
 
   const statusBadge = (s: SourceInfo) => {
-    const map: Record<string, { label: string; color: 'slate' | 'blue' | 'green' | 'red' | 'amber' }> = {
+    const map: Record<string, { label: string; color: 'slate' | 'brand' | 'green' | 'red' | 'amber' }> = {
       queued: { label: '대기', color: 'slate' },
-      downloading: { label: `다운로드 ${s.progress.toFixed(0)}%`, color: 'blue' },
+      downloading: { label: `다운로드 ${s.progress.toFixed(0)}%`, color: 'brand' },
       downloaded: { label: '완료', color: 'green' },
       failed: { label: '실패', color: 'red' },
       skipped: { label: '건너뜀', color: 'amber' },
@@ -282,7 +288,12 @@ function SourcesPanel({ job }: { job: JobDetail }) {
                 </td>
                 <td className="py-2 pr-2">
                   {statusBadge(s)}
-                  {s.error && <p className="mt-0.5 max-w-[200px] truncate text-xs text-red-500" title={s.error}>{s.error}</p>}
+                  {/* 한 줄로 자르면 원인이 안 보인다 — 실패 사유는 두 줄까지 그대로 보여준다 */}
+                  {s.error && (
+                    <p className="mt-0.5 line-clamp-2 max-w-[460px] text-xs leading-snug text-red-500" title={s.error}>
+                      {s.error}
+                    </p>
+                  )}
                 </td>
                 <td className="py-2 pr-2 text-xs text-slate-500">{s.uploader ?? '—'}</td>
                 <td className="whitespace-nowrap py-2 text-right">
@@ -736,7 +747,7 @@ function TrimPanel({ job }: { job: JobDetail }) {
               onClick={() => setActiveClip(c.id)}
               className={`rounded-lg border px-3 py-1.5 text-sm ${current?.id === c.id ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200'}`}
             >
-              {c.id} {c.segments.length > 0 && <Badge color="blue">{c.segments.length}구간</Badge>}
+              {c.id} {c.segments.length > 0 && <Badge color="brand">{c.segments.length}구간</Badge>}
             </button>
           ))}
         </div>

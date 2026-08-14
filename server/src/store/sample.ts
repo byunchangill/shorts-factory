@@ -59,6 +59,17 @@ export async function createSampleJob(
   projectId: string,
   title?: string,
 ): Promise<SampleResult> {
+  /*
+    샘플은 소스 영상 4개다. 그걸 받아 쓰는 파이프라인은 해외영상 짜집기뿐이고,
+    제품정보리뷰에는 영상을 모으는 단계(`collecting`) 자체가 없다.
+    막지 않으면 영상 4개를 복사한 뒤에야 "전이 불가: draft → collecting"으로 터진다
+  */
+  if (menu !== 'menu-a') {
+    throw Object.assign(
+      new Error('샘플 소재는 해외영상 짜집기 전용입니다 (제품정보리뷰는 영상을 쓰지 않습니다).'),
+      { status: 400 },
+    );
+  }
   if (!(await sampleAvailable())) {
     throw Object.assign(
       new Error(`샘플 소재가 없습니다 (${SAMPLE_DIR}). 리포를 다시 받아주세요.`),
@@ -89,9 +100,12 @@ export async function createSampleJob(
     }
     await jobs.transition(ref, 'collecting', 'server');
   } catch (e) {
-    // 반쯤 만들어진 작업을 남기지 않는다 — 카테고리는 사용자 것이므로 잡만 지운다
+    // 반쯤 만들어진 작업을 남기지 않는다 — 카테고리는 사용자 것이므로 잡만 지운다.
+    // 폴더를 지웠으면 잡 인덱스에서 빼는 것까지가 한 세트다 —
+    // 안 빼면 사라진 폴더를 가리키는 잡이 서버가 재시작될 때까지 화면에 남는다
     await fsp.rm(paths.job(ref.menu, ref.projectId, ref.jobId), { recursive: true, force: true })
       .catch(() => {});
+    jobs.forgetJob(ref);
     throw e;
   }
 

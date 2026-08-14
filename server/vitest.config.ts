@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.test.ts'],
+    // shared/는 서버·클라이언트가 같이 쓰는 단일 소스라 여기서 함께 돌린다
+    include: ['src/**/*.test.ts', '../shared/**/*.test.ts'],
   },
 });

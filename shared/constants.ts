@@ -62,7 +62,13 @@ export const STATE_LABELS: Record<string, string> = {
   paused: '일시정지',
 };
 
-/** 상태별 사용자가 해야 할 다음 액션 (대시보드 카드 버튼 문구) */
+/**
+ * 상태별 사용자가 해야 할 다음 액션 (대시보드 카드 버튼 문구).
+ *
+ * 기본값은 해외영상 짜집기 기준이다 — 두 메뉴가 같은 이름의 단계를 쓰지만 뜻이 다른
+ * 경우가 있어서, 다른 것만 `MENU_STATE_OVERRIDES`에서 덮어쓴다. 반드시 `stateNextAction()`
+ * 으로 읽는다.
+ */
 export const STATE_NEXT_ACTION: Record<string, string> = {
   draft: '영상 주소 넣기',
   collecting: '내려받기 시작하기',
@@ -191,6 +197,46 @@ export const STATE_GUIDE: Record<string, StateGuide> = {
     next: '',
   },
 };
+
+/**
+ * 메뉴마다 뜻이 다른 단계만 덮어쓴다.
+ *
+ * 두 메뉴는 `draft`·`script_approved` 같은 이름을 공유하지만 하는 일이 다르다.
+ * 상태 이름만으로 문구를 고르면 **제품정보리뷰 화면에 해외영상 짜집기 안내가 뜬다** —
+ * 실제로 "해외 영상 주소를 넣으세요"라고 안내해서 영상을 쓰지 않는 메뉴에 영상 14개가
+ * 등록된 적이 있다(2026-08-13). 새 단계를 추가할 때 두 메뉴에서 뜻이 같은지 반드시 확인할 것.
+ */
+const MENU_STATE_OVERRIDES: Record<Menu, Record<string, { guide?: StateGuide; nextAction?: string }>> = {
+  'menu-a': {},
+  'menu-b': {
+    draft: {
+      guide: {
+        what: '제품 정보만으로 영상을 만드는 작업입니다. 영상 소재는 쓰지 않습니다.',
+        todo: '카테고리에 지정된 고유 포맷으로 시작하세요.',
+        next: '포맷이 정해지면 대본 단계로 넘어갑니다.',
+      },
+      nextAction: '포맷 확인하고 시작하기',
+    },
+    script_approved: {
+      guide: {
+        what: '대본이 확정됐습니다. 이제 씬마다 보여줄 이미지를 준비합니다.',
+        todo: '씬 이미지를 만들거나 직접 첨부하세요.',
+        next: '모든 씬에 이미지가 채워지면 음성 단계로 넘어갑니다.',
+      },
+      nextAction: '씬 이미지 준비하기',
+    },
+  },
+};
+
+/** 단계 안내문 — 반드시 이걸로 읽는다. 메뉴를 빼먹으면 다른 메뉴의 안내가 뜬다 */
+export function stateGuide(menu: Menu, state: string): StateGuide | undefined {
+  return MENU_STATE_OVERRIDES[menu]?.[state]?.guide ?? STATE_GUIDE[state];
+}
+
+/** 다음 액션 문구 — 반드시 이걸로 읽는다 */
+export function stateNextAction(menu: Menu, state: string): string {
+  return MENU_STATE_OVERRIDES[menu]?.[state]?.nextAction ?? STATE_NEXT_ACTION[state] ?? '계속하기';
+}
 
 /** 요청서(패킷) 종류 */
 export const PACKET_KINDS = [

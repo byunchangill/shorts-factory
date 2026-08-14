@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { clsx } from 'clsx';
 import { Check, ChevronRight, CircleDot, Flag } from 'lucide-react';
 import {
-  MENU_A_STATES, MENU_B_STATES, STATE_GUIDE, STATE_LABELS, type Menu,
+  MENU_A_STATES, MENU_B_STATES, STATE_GUIDE, STATE_LABELS, stateGuide, type Menu,
 } from '@shared/constants';
 import { focusRing } from '@/components/ui';
 
@@ -13,17 +13,20 @@ import { focusRing } from '@/components/ui';
  * 이 단계가 무엇인지 · 지금 할 일 · 무엇을 채우면 다음으로 넘어가는지.
  */
 export function StepGuide({
+  menu,
   pipeline,
   state,
   viewing,
 }: {
+  /** 같은 단계 이름이라도 메뉴마다 뜻이 달라 안내문이 갈린다 */
+  menu: Menu;
   pipeline: string[];
   state: string;
   /** 레일에서 지난 단계를 눌러 들여다보는 중이면 그 단계 (현재 진행 단계와 다름) */
   viewing?: string;
 }) {
   const shown = viewing ?? state;
-  const guide = STATE_GUIDE[shown];
+  const guide = stateGuide(menu, shown);
   if (!guide) return null;
 
   const step = pipeline.indexOf(shown);
@@ -101,7 +104,7 @@ export function FlowOverview({ menu }: { menu: Menu }) {
           <li key={s} className="flex items-center gap-1">
             {i > 0 && <ChevronRight size={13} className="shrink-0 text-slate-400" aria-hidden />}
             <span
-              title={STATE_GUIDE[s]?.what}
+              title={stateGuide(menu, s)?.what}
               className="rounded-full bg-slate-100 px-2.5 py-1 text-xs break-keep text-slate-700"
             >
               {/* 칩 배경(slate-100) 위라 slate-500은 4.34:1로 모자란다 */}
@@ -145,10 +148,12 @@ export function StepIndicator({ pipeline, state }: { pipeline: string[]; state: 
 
 /** 세로 체크리스트 — 잡 화면 좌측 고정 레일 */
 export function ProgressRail({
+  menu,
   pipeline,
   state,
   onNavigate,
 }: {
+  menu: Menu;
   pipeline: string[];
   state: string;
   onNavigate?: (state: string) => void;
@@ -164,7 +169,7 @@ export function ProgressRail({
               onClick={() => onNavigate?.(s)}
               disabled={status === 'todo'}
               // 아직 안 온 단계도 무엇을 하는 단계인지는 알 수 있어야 한다 (누르지는 못해도)
-              title={STATE_GUIDE[s]?.what ?? STATE_LABELS[s] ?? s}
+              title={stateGuide(menu, s)?.what ?? STATE_LABELS[s] ?? s}
               className={clsx(
                 'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors',
                 'break-keep', // 좁은 레일에서 "자막/워터마크 제/거"처럼 낱글자로 끊기지 않게
