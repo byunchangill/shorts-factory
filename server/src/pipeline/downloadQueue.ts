@@ -3,7 +3,8 @@ import fsp from 'node:fs/promises';
 import pLimit from 'p-limit';
 import type { Settings, SourceUrl, Clip } from '@shared/types';
 import { ClipSchema } from '@shared/types';
-import { run } from '../util/exec.js';
+import { run, toolFailureMessage } from '../util/exec.js';
+import { needsBrowserDownload, downloadViaBrowser } from '../sourcing/browserDownload.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
 import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
@@ -118,26 +119,35 @@ async function downloadOne(
 
   const outTemplate = path.join(sourcesDir, `${sourceId}.%(ext)s`);
   try {
-    await run(
-      settings.ytdlpPath,
-      [
-        '--no-playlist',
-        '--write-info-json',
-        '-f', 'bv*[height<=1080]+ba/b',
-        '--merge-output-format', 'mp4',
-        '-o', outTemplate,
-        source.url,
-      ],
-      {
-        onStdout: (line) => {
-          const m = line.match(/\[download\]\s+([\d.]+)%/);
-          if (m) {
-            const progress = Math.min(100, parseFloat(m[1]));
-            broadcast('source.progress', { jobId: ref.jobId, sourceId, progress });
-          }
+    // 틱톡은 yt-dlp를 지문으로 걸러낸다 — 앱이 검색에 쓰는 브라우저로 받는다 (browserDownload.ts)
+    let browserUploader: string | undefined;
+    if (needsBrowserDownload(source.url)) {
+      const r = await downloadViaBrowser(source.url, path.join(sourcesDir, `${sourceId}.mp4`));
+      browserUploader = r.uploader;
+      // 브라우저 경로는 한 번에 받아 진행률 단계가 없다 — 끝난 것만 알린다
+      broadcast('source.progress', { jobId: ref.jobId, sourceId, progress: 100 });
+    } else {
+      await run(
+        settings.ytdlpPath,
+        [
+          '--no-playlist',
+          '--write-info-json',
+          '-f', 'bv*[height<=1080]+ba/b',
+          '--merge-output-format', 'mp4',
+          '-o', outTemplate,
+          source.url,
+        ],
+        {
+          onStdout: (line) => {
+            const m = line.match(/\[download\]\s+([\d.]+)%/);
+            if (m) {
+              const progress = Math.min(100, parseFloat(m[1]));
+              broadcast('source.progress', { jobId: ref.jobId, sourceId, progress });
+            }
+          },
         },
-      },
-    );
+      );
+    }
 
     // 산출 파일 찾기 (mp4 병합 보장했지만 방어적으로 검색)
     const files = await fsp.readdir(sourcesDir);
@@ -154,14 +164,17 @@ async function downloadOne(
       status: 'downloaded',
       progress: 100,
       filePath: toWorkspaceRel(filePath),
-      uploader: info?.uploader,
+      // 브라우저 경로는 info.json이 없다 — 업로더는 주소의 @핸들에서 온다 (저작권 체크리스트용)
+      uploader: info?.uploader ?? browserUploader,
       license: info?.license ?? undefined,
     });
-    await logJobEvent(ref, { type: 'source.downloaded', sourceId, url: source.url, uploader: info?.uploader });
+    await logJobEvent(ref, {
+      type: 'source.downloaded', sourceId, url: source.url, uploader: info?.uploader ?? browserUploader,
+    });
 
     await createClipForSource(settings, ref, sourceId, filePath);
   } catch (e) {
-    const msg = e instanceof Error ? e.message.split('\n').slice(0, 3).join(' | ') : String(e);
+    const msg = toolFailureMessage(e);
     await setSource(ref, sourceId, { status: 'failed', error: msg });
     await logJobEvent(ref, { type: 'source.failed', sourceId, error: msg });
   }

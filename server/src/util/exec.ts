@@ -64,6 +64,23 @@ export function run(
   return child;
 }
 
+/**
+ * 서브프로세스 실패에서 사람이 볼 부분만 남긴다.
+ *
+ * execa의 `message`는 첫 줄이 "Command failed ...: <명령 전체>"라 다운로드 URL이
+ * 그대로 들어가 수백 자가 된다. 앞에서 몇 줄을 잘라 쓰면 **정작 원인인 `ERROR:` 줄이
+ * 잘려나가고** 화면에는 명령 에코만 남는다 (틱톡 다운로드 실패가 전부 이렇게 보였다).
+ * 그래서 에코를 버리고 도구가 남긴 `ERROR:` 줄을 고른다.
+ */
+export function toolFailureMessage(e: unknown, max = 300): string {
+  if (!(e instanceof Error)) return String(e);
+  const [echo, ...rest] = e.message.split('\n').map((l) => l.trim()).filter(Boolean);
+  const errors = rest.filter((l) => /^ERROR\b/i.test(l));
+  // ERROR 줄이 없으면 마지막 출력이 그나마 단서다. 출력 자체가 없으면 종료 코드라도 남긴다
+  const picked = errors.length ? errors : rest.slice(-2);
+  return (picked.join(' | ') || echo || String(e)).slice(0, max);
+}
+
 /** 도구 버전 확인에 허용하는 최대 시간 — 넘으면 "없음"으로 처리하고 부팅을 계속한다 */
 const TOOL_CHECK_TIMEOUT_MS = 8_000;
 

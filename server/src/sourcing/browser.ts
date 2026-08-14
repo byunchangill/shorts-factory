@@ -37,10 +37,32 @@ const CONTEXT_OPTIONS = {
   viewport: { width: 1280, height: 900 },
   locale: 'ko-KR',
   timezoneId: 'Asia/Seoul',
-  userAgent:
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-    + '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 };
+
+/**
+ * UA는 **실제 브라우저 것에서 만든다. 버전을 적어 넣지 않는다.**
+ *
+ * 예전에는 `Chrome/131.0.0.0`을 박아 뒀는데, 그 사이 크로미움이 151로 올라가면서
+ * UA가 말하는 버전과 엔진이 실제로 내는 신호가 어긋났다. 그 불일치 자체가 봇 표시라
+ * 틱톡은 알맹이 없는 페이지를 돌려줬다 — 영상 주소도 제목도 없는 껍데기다
+ * (2026-08-13 실측: 위장 UA 163KB·제목 없음 / 실제 UA 519KB·제목과 재생 주소 정상).
+ * 숨길 것은 `HeadlessChrome` 표시 하나뿐이므로 그것만 바꾼다.
+ */
+let cachedUserAgent: string | undefined;
+async function realisticUserAgent(): Promise<string | undefined> {
+  if (cachedUserAgent) return cachedUserAgent;
+  try {
+    const browser = await chromium.launch({ headless: true, executablePath: executablePath() });
+    const page = await browser.newPage();
+    const ua = await page.evaluate(() => navigator.userAgent);
+    await browser.close();
+    cachedUserAgent = ua.replace('HeadlessChrome/', 'Chrome/');
+  } catch {
+    // 못 읽으면 playwright 기본값을 그대로 쓴다 — 위장보다 일관성이 중요하다
+    cachedUserAgent = undefined;
+  }
+  return cachedUserAgent;
+}
 
 /**
  * 열려 있는 컨텍스트를 재사용한다.
@@ -61,6 +83,7 @@ export async function getContext(
     headless: opts.headless ?? true,
     executablePath: executablePath(),
     args: ['--disable-blink-features=AutomationControlled'],
+    userAgent: await realisticUserAgent(),
     ...CONTEXT_OPTIONS,
   });
   // navigator.webdriver를 지운다 — 가장 초보적인 자동화 탐지 신호다
