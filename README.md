@@ -71,11 +71,13 @@ tools\win\create-shortcut.vbs   ← 더블클릭
 아이콘을 누르면 **없는 것만** 자동으로 설치합니다 (`winget` 사용). 있으면 건너뛰므로
 두 번째 실행부터는 이 과정이 순식간에 지나갑니다.
 
-| 대상 | winget 패키지 |
+| 대상 | 설치 방법 |
 |---|---|
-| Node.js | `OpenJS.NodeJS.LTS` |
-| ffmpeg · ffprobe | `Gyan.FFmpeg` |
-| yt-dlp | `yt-dlp.yt-dlp` |
+| Node.js | winget `OpenJS.NodeJS.LTS` |
+| ffmpeg · ffprobe | winget `Gyan.FFmpeg` |
+| yt-dlp | winget `yt-dlp.yt-dlp` |
+| Python 3.12 | winget `Python.Python.3.12` (iopaint용) |
+| iopaint (2차 AI 인페인팅) | `pip install iopaint` |
 
 - 설치가 필요한 때만 **검은 창이 잠깐 보입니다** — 몇 분 걸리는 작업이라 진행 상황이
   보여야 합니다. 다 끝나면 창이 닫히고 앱이 열립니다
@@ -83,7 +85,14 @@ tools\win\create-shortcut.vbs   ← 더블클릭
 - 설치 직후에도 그 실행에서 바로 쓸 수 있게 PATH를 다시 읽습니다 (`refresh-path.cmd`)
 - `winget`이 없는 PC(윈도우 10 구버전)에서는 자동 설치 대신 직접 받을 주소를 안내합니다
 - 한글 폰트는 윈도우에 기본 탑재라 따로 깔지 않습니다
-- iopaint(2차 AI 인페인팅)는 선택이라 자동 설치 대상이 아닙니다 — `npm run doctor` 참고
+
+**iopaint는 조금 다르게 다룹니다.** 선택 기능인 데다 PyTorch가 딸려 와 2GB가 넘습니다.
+
+- 맨 **마지막**에 설치합니다 — 여기서 실패하거나 오래 걸려도 앱은 이미 쓸 수 있는 상태입니다
+- 실패해도 앱은 정상 동작합니다. 1차 워터마크 제거(ffmpeg)는 그대로 됩니다
+- 한 번 시도하면 `workspace/.iopaint-attempted` 표시를 남겨, 실패했더라도 **매번 다시
+  붙잡지 않습니다**. 나중에 직접 깔려면 `tools/install-inpaint.md` 참고
+- Python은 3.13이 아니라 **3.12**를 씁니다 — PyTorch 지원이 아직 안 따라온 경우가 있습니다
 
 배포가 아니라 내 PC의 `localhost`입니다 — 밖에서는 접속되지 않습니다.
 
