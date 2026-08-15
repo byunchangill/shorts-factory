@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { ProjectSchema, type Project, ProductSchema, type Product } from '@shared/types';
 import {
   GUIDELINE_FILES, charBudget, TARGET_SEC_BY_MENU, type Menu, type GuidelineFile,
@@ -76,6 +77,39 @@ const DEFAULT_GUIDELINES: Record<GuidelineFile, string> = {
 `,
 };
 
+/**
+ * 메뉴별 기본 대본 지침을 담은 스킬. **이 파일이 단일 출처다** —
+ * 내용을 코드로 복사해오면 스킬을 고쳤을 때 둘이 어긋난다.
+ *
+ * 저장소에 커밋되어 있으므로 어느 PC에서 받아도 같은 지침으로 시작한다. 카테고리를 만들 때
+ * 그 시점의 내용이 `workspace/{menu}/{project}/guidelines/`로 복사되고, 그 뒤로는 사용자가
+ * 화면에서 고친 것이 그 카테고리의 지침이다 (PC마다 따로 쌓인다).
+ */
+const MENU_SKILL: Partial<Record<Menu, string>> = {
+  'menu-a': fileURLToPath(new URL('../../../.claude/skills/temcasting-shorts/SKILL.md', import.meta.url)),
+};
+
+/** 스킬 문서의 앞머리(name/description)는 지침이 아니다 — 본문만 쓴다 */
+export function skillBody(raw: string): string {
+  const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
+  return (m ? raw.slice(m[0].length) : raw).trim();
+}
+
+/**
+ * 그 메뉴의 기본 대본 지침. 스킬 파일이 없으면 일반 지침으로 돌아간다 —
+ * 파일 하나 때문에 카테고리를 못 만드는 일은 없어야 한다.
+ */
+async function defaultScriptGuideline(menu: Menu): Promise<string> {
+  const file = MENU_SKILL[menu];
+  if (!file) return DEFAULT_GUIDELINES['script.md'];
+  try {
+    return skillBody(await fsp.readFile(file, 'utf8'));
+  } catch {
+    console.warn(`[projects] 기본 대본 스킬을 읽지 못해 일반 지침을 씁니다: ${file}`);
+    return DEFAULT_GUIDELINES['script.md'];
+  }
+}
+
 export async function listProjects(menu: Menu): Promise<Project[]> {
   const dirs = await listDirs(paths.menu(menu));
   const projects: Project[] = [];
@@ -123,9 +157,12 @@ export async function createProject(
   await ensureDir(paths.product(menu, id));
   await ensureDir(paths.guidelines(menu, id));
   for (const file of GUIDELINE_FILES) {
+    const template = file === 'script.md'
+      ? await defaultScriptGuideline(menu)
+      : DEFAULT_GUIDELINES[file];
     await fsp.writeFile(
       path.join(paths.guidelines(menu, id), file),
-      await fillGuideline(DEFAULT_GUIDELINES[file], menu),
+      await fillGuideline(template, menu),
       'utf8',
     );
   }

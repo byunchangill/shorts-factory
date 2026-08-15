@@ -303,7 +303,10 @@ export const CHARS_PER_MIN = 300;
  * 이 길이는 배속과 함께 계산돼야 한다 — 1.25배속에서 30초는 약 187자다.
  */
 export const TARGET_SEC_BY_MENU: Record<Menu, { min: number; recommended: number; max: number }> = {
-  'menu-a': { min: 20, recommended: 27, max: 30 },
+  // 해외영상 짜집기의 기준은 기본 대본 스킬(.claude/skills/temcasting-shorts)이 정한다 —
+  // 스킬이 "20~28초, 기본 22초, 28초 초과 금지"라고 말하는데 앱이 30초라고 하면
+  // 요청서 하나에 서로 다른 두 숫자가 실린다
+  'menu-a': { min: 20, recommended: 22, max: 28 },
   'menu-b': { min: 18, recommended: 22, max: 26 },
 };
 

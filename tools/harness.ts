@@ -1004,7 +1004,7 @@ async function main(): Promise<void> {
     const req = await get<PacketView>(`/packets/${p1.id}`);
     assert(req.requestMd.includes('26초 이내'), 'menu-b 목표 시간이 요청서에 없음');
     assert(req.requestMd.includes('162자'), `menu-b 분량 상한이 반영되지 않음`);
-    assert(!req.requestMd.includes('187자'), 'menu-a 분량 상한이 새어 들어옴');
+    assert(!req.requestMd.includes('175자'), 'menu-a 분량 상한이 새어 들어옴');
     assert(req.requestMd.includes('isDownside'), '단점 씬 규칙이 요청서에 없음');
 
     // ② 단점 씬이 없으면 반려 — 대본이 반영되면 안 된다
@@ -1058,7 +1058,7 @@ async function main(): Promise<void> {
     const aReq = await get<PacketView>(`/packets/${aPacket.id}`);
     // 규칙 문장으로 본다 — 이전 대본이 문맥으로 실리면 isDownside 키 자체는 등장할 수 있다
     assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
-    assert(aReq.requestMd.includes('187자'), 'menu-a 분량 기준이 바뀜');
+    assert(aReq.requestMd.includes('175자'), 'menu-a 분량 기준이 바뀜');
     assert(aReq.requestMd.includes('30초 이내'), 'menu-a 목표 시간이 바뀜');
 
     return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';

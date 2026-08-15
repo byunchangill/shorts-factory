@@ -9,16 +9,17 @@ describe('대본 분량 계산', () => {
     expect(SettingsSchema.parse({}).speechRate).toBe(1.25);
   });
 
-  it('목표는 30초 이내', () => {
-    expect(TARGET_SEC.max).toBe(30);
+  // 기본값(메뉴 미지정)은 해외영상 짜집기 기준이고, 그 기준은 기본 대본 스킬이 정한다
+  it('목표는 28초 이내', () => {
+    expect(TARGET_SEC.max).toBe(28);
     expect(TARGET_SEC.min).toBe(20);
   });
 
-  it('1.25배속에서 30초는 187자', () => {
+  it('1.25배속에서 28초는 175자', () => {
     const b = charBudget(1.25);
-    expect(b.max).toBe(187);
+    expect(b.max).toBe(175);
     expect(b.min).toBe(125);   // 20초
-    expect(b.recommended).toBe(169); // 27초
+    expect(b.recommended).toBe(138); // 22초
   });
 
   it('배속이 오르면 같은 시간에 더 많은 글자를 쓸 수 있다', () => {
@@ -26,8 +27,8 @@ describe('대본 분량 계산', () => {
     expect(charBudget(1.0).max).toBeLessThan(charBudget(1.25).max);
   });
 
-  it('정속(1.0)에서 30초는 150자', () => {
-    expect(charBudget(1.0).max).toBe(150);
+  it('정속(1.0)에서 28초는 140자', () => {
+    expect(charBudget(1.0).max).toBe(140);
   });
 
   it('글자 수 → 시간 환산이 역함수로 맞아떨어진다', () => {

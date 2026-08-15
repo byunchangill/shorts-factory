@@ -1,0 +1,48 @@
+{
+  "channel": "템캐스팅",
+  "handle": "@템캐스팅",
+  "schema_version": "1.0",
+  "updated_at": "2026-08-15",
+  "_note": "§0 중복검사·카테고리 쿼터·CTA 키워드 중복검사가 이 파일을 읽는다. 발행 후 매 편 갱신한다.",
+
+  "category_codes": {
+    "SG": "시공·보수·필름",
+    "GJ": "가전",
+    "GL": "생활 관리법",
+    "BS": "변신형 가구",
+    "SN": "수납·선반 (직전 5편 중 최대 2편)"
+  },
+
+  "series": {
+    "집주인": { "count": 0, "next_number": 1 }
+  },
+
+  "episodes": [
+    { "no": "001", "topic": "L자 책장",        "category": "SN", "duration": 35, "views": 1754, "real_retention": 0.17, "ctr": 0.069, "cta_keyword": null, "character": null, "published": "2026-08-04" },
+    { "no": "002", "topic": "자석 방충망",      "category": "SG", "duration": 26, "views": 2001, "real_retention": 0.36, "ctr": 0.050, "cta_keyword": null, "character": null, "published": "2026-08-04" },
+    { "no": "003", "topic": "싱크대 찌든때 필름", "category": "GL", "duration": 20, "views": 569,  "real_retention": 0.16, "ctr": 0.015, "cta_keyword": null, "character": null, "published": "2026-08-05" },
+    { "no": "004", "topic": "무타공 벽선반",    "category": "SN", "duration": 22, "views": 1845, "real_retention": 0.18, "ctr": 0.016, "cta_keyword": null, "character": "친구", "published": "2026-08-07" },
+    { "no": "005", "topic": "이케아 칼락스 TV장", "category": "SN", "duration": 21, "views": 1822, "real_retention": 0.49, "ctr": 0.034, "cta_keyword": null, "character": null, "published": "2026-08-08" },
+    { "no": "006", "topic": "전동 TV 브라켓",   "category": "GJ", "duration": 32, "views": 1243, "real_retention": 0.45, "ctr": 0.060, "cta_keyword": null, "character": null, "published": "2026-08-09" },
+    { "no": "007", "topic": null,             "category": null, "duration": null, "views": null, "real_retention": null, "ctr": null, "cta_keyword": null, "character": null, "published": null, "_note": "결번 — 비공개/삭제" },
+    { "no": "008", "topic": "32cm 틈새선반",    "category": "SN", "duration": 25, "views": 1837, "real_retention": 0.47, "ctr": 0.053, "cta_keyword": null, "character": null, "published": "2026-08-11" },
+    { "no": "009", "topic": "70kg 주방선반",    "category": "SN", "duration": 23, "views": 2274, "real_retention": 0.22, "ctr": 0.115, "cta_keyword": null, "character": "엄마", "published": "2026-08-12" },
+    { "no": "010", "topic": "슬림 신발장",      "category": "SN", "duration": 22, "views": 1260, "real_retention": 0.64, "ctr": 0.019, "cta_keyword": null, "character": "누나", "published": "2026-08-13" },
+    { "no": "011", "topic": "세탁기 이동받침",   "category": "SN", "duration": 22, "views": 1725, "real_retention": null, "ctr": null, "cta_keyword": null, "character": null, "published": "2026-08-14" }
+  ],
+
+  "health": {
+    "_formula_real_retention": "시청시간(초) ÷ 조회수 ÷ 길이(초)",
+    "_formula_spread": "직전 5편 최고조회수 ÷ 최저조회수",
+    "spread_last5": 1.8,
+    "spread_target": 10.0,
+    "spread_verdict": "미달 — 확산 미발생. 갈등 블록 비율부터 재점검",
+    "sn_count_last5": 4,
+    "sn_quota": 2,
+    "sn_verdict": "초과 — SN 소재 거절, SG/GJ/GL/BS로 전환"
+  },
+
+  "used_cta_keywords": [],
+  "blocked_tags": ["스펙먼저"],
+  "blocked_emails": ["specfirstkr@gmail.com"]
+}
