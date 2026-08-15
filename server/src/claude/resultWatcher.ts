@@ -167,7 +167,7 @@ async function applyResult(packetId: string): Promise<void> {
     if (!ref) return;
     const raw = await readJson<unknown>(resultPath('product.json'));
     const product = ProductSchema.parse(raw);
-    await writeProduct(ref.menu, ref.projectId, product);
+    await writeProduct(ref, product);
     await logJobEvent(ref, { type: 'product.extracted', packetId });
   }
 

@@ -61,11 +61,11 @@ router.post('/jobs/:jid/packets', async (req, res) => {
   // 제품정보 추출은 첨부 자료를 읽는 작업이다. 자료가 없으면 AI가 할 수 있는 일이
   // 지어내는 것뿐이라, 아예 발행하지 않는다 (검증 규칙 1번이 "지어내지 않는다"이다)
   if (body.kind === 'product-extract') {
-    const files = await listProductFiles(ref.menu, ref.projectId);
+    const files = await listProductFiles(ref);
     if (!files.length) {
       return res.status(400).json({
         error:
-          '첨부된 제품 자료가 없습니다. 프로젝트 화면의 "제품자료" 탭에서 ' +
+          '첨부된 제품 자료가 없습니다. 이 영상 작업 화면의 "제품자료"에서 ' +
           '쿠팡 상세페이지 캡처나 텍스트를 먼저 올리세요 — 자료 없이 발행하면 ' +
           'AI가 제품 정보를 지어낼 수밖에 없습니다.',
       });

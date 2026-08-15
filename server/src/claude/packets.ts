@@ -256,8 +256,8 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
 
   // ③ 제품 정보 / 포맷 / 컨텍스트
   if (opts.jobRef) {
-    const product = await readProduct(opts.jobRef.menu, opts.jobRef.projectId);
-    const productFiles = await listProductFiles(opts.jobRef.menu, opts.jobRef.projectId);
+    const product = await readProduct(opts.jobRef);
+    const productFiles = await listProductFiles(opts.jobRef);
     lines.push('## 3. 제품 정보');
     if (product.name) {
       lines.push('```json');
@@ -269,7 +269,7 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     if (productFiles.length) {
       lines.push('');
       lines.push('제품 상세페이지 첨부파일 (필요 시 Read로 확인):');
-      const productDir = paths.product(opts.jobRef.menu, opts.jobRef.projectId);
+      const productDir = paths.product(opts.jobRef.menu, opts.jobRef.projectId, opts.jobRef.jobId);
       for (const f of productFiles) {
         lines.push(`- workspace/${toWorkspaceRel(path.join(productDir, f))}`);
       }
