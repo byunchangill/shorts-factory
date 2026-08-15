@@ -1075,7 +1075,7 @@ async function main(): Promise<void> {
     // 규칙 문장으로 본다 — 이전 대본이 문맥으로 실리면 isDownside 키 자체는 등장할 수 있다
     assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
     assert(aReq.requestMd.includes('175자'), 'menu-a 분량 기준이 바뀜');
-    assert(aReq.requestMd.includes('30초 이내'), 'menu-a 목표 시간이 바뀜');
+    assert(aReq.requestMd.includes('28초 이내'), 'menu-a 목표 시간이 바뀜');
 
     return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
   });
