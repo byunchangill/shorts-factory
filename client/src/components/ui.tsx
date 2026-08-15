@@ -286,7 +286,12 @@ export function PageHeader({
           </Link>
         )}
         <div className="min-w-0">
-          {eyebrow && <p className="text-xs font-medium text-slate-500">{eyebrow}</p>}
+          {/*
+            `eyebrow`는 아무 노드나 올 수 있다 — 실제로 Breadcrumb의 <nav>가 온다.
+            <p> 안에는 문장 요소만 들어갈 수 있어서, 브라우저가 <p>를 먼저 닫아버리고
+            React는 하이드레이션 오류를 낸다. 감싸는 것은 <div>여야 한다.
+          */}
+          {eyebrow && <div className="text-xs font-medium text-slate-500">{eyebrow}</div>}
           <h2 className="truncate text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
         </div>
       </div>
