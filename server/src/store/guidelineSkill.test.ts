@@ -58,6 +58,18 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
   });
 
   /*
+    이 지침은 요청서에 통째로 실려 AI에게 간다. 요청서 경로에서 쓸 곳은 `result/` 하나뿐인데
+    스킬이 다른 경로를 시키면 결과가 반영되지 않는다 (서버는 result/의 .done만 본다).
+  */
+  it('요청서로 실행할 때는 result/에만 쓰라고 말한다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
+    expect(body).toContain('`result/`에만');
+    expect(body).toContain('result/.done');
+    // 상태 파일은 서버 전용이다 — 스킬이 로그 파일을 쓰면 안 된다
+    expect(body).toContain('건너뛴다');
+  });
+
+  /*
     스킬은 초를 글자 수로 환산해 스스로 검산한다. 그 환산표가 앱의 계산과 달라지면
     요청서와 지침이 서로 다른 분량을 말하게 된다 — 이 리포가 이미 겪은 사고다.
   */
