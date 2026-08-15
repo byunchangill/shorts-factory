@@ -180,6 +180,7 @@ async function probeTools(): Promise<ToolEntry[]> {
     name: '글자 검출 (자막 자리 자동 찾기)',
     required: false,
     available: await ocrCheck,
+    version: undefined, // 파이썬 모듈이라 버전을 따로 보여주지 않는다
     installHint:
       'pip install rapidocr-onnxruntime (선택 — 없으면 자막 자리를 직접 드래그해야 합니다)',
   });
