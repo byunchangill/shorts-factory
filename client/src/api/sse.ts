@@ -48,6 +48,25 @@ export function useServerEvents(): void {
       alert(`정리 실패 (${data.clipId}): ${data.error}`);
       endClean(data, data.error);
     });
+    /**
+     * 영상 재생성 — 클립 수만큼 오래 걸린다. 몇 개째인지 캐시에 적어 화면이 읽게 한다.
+     * 끝나면 잡 상태가 대본 작성으로 넘어가므로 job도 함께 갱신한다.
+     */
+    es.addEventListener('regenerate.progress', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      if (data.phase) qc.setQueryData(['regenerate', data.jobId], data);
+    });
+    es.addEventListener('regenerate.finished', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      qc.setQueryData(['regenerate', data.jobId], undefined);
+      invalidate('clips', 'job', 'active-jobs');
+    });
+    es.addEventListener('regenerate.failed', (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      qc.setQueryData(['regenerate', data.jobId], undefined);
+      alert(`영상 재생성 실패: ${data.error}`);
+      invalidate('clips', 'job');
+    });
     es.addEventListener('packet', () => invalidate('packets', 'packet'));
     es.addEventListener('packet.received', () => invalidate('packets', 'packet', 'job', 'script'));
     es.addEventListener('packet.failed', (e) => {

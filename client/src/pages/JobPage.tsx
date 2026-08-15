@@ -41,6 +41,7 @@ interface ClipInfo {
   cleanUrls: Array<{ v: number; url: string }>;
   currentCleanVersion?: number;
   segments: SegmentDraft[];
+  selectedUrl?: string; // 고른 장면만 이어붙이고 소리를 뺀 영상
 }
 interface SceneLine {
   sceneId: string; narration: string; subtitle: string;
@@ -371,13 +372,23 @@ function ClipsPanel({ job }: { job: JobDetail }) {
     // 요청 자체가 거부되면(존 없음 등) SSE가 오지 않는다 — 여기서 내린다
     onError: () => setCleaning(null),
   });
-  const toScript = useMutation({
-    mutationFn: () => api.post(`/jobs/${job.id}/packets`, { kind: 'script' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['job'] });
-      void qc.invalidateQueries({ queryKey: ['packets'] });
-    },
+  /**
+   * 영상 재생성 — 이 단계의 마무리.
+   * 고른 장면만 잇고, 그린 존으로 자막·워터마크를 지우고, 소리를 빼고, 대본 단계로 넘어간다.
+   * 클립 수만큼 걸리므로 서버는 즉시 답하고 진행은 SSE로 온다.
+   */
+  const regenerate = useMutation({
+    // 존을 가져올 클립은 호출하는 쪽이 넘긴다 — 지금 보고 있는 클립이다
+    mutationFn: (zonesFrom?: string) =>
+      api.post(`/jobs/${job.id}/regenerate`, { zonesFrom }),
+    onError: (e: Error) => alert(e.message),
   });
+  const progress = useQuery<{ done: number; total: number; clipId: string } | undefined>({
+    queryKey: ['regenerate', job.id],
+    enabled: false, // 서버에 물어볼 것이 없다. SSE가 적어둔 값을 구독만 한다
+    queryFn: () => undefined,
+  });
+  const running = progress.data;
 
   // 재추출 결과는 SSE로 들어온다 — 클립 데이터가 갱신되면 진행 표시를 내린다
   useEffect(() => { setReframing(null); }, [clips.dataUpdatedAt]);
@@ -417,11 +428,17 @@ function ClipsPanel({ job }: { job: JobDetail }) {
   return (
     <div className="space-y-4">
       <Card>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-semibold"><Wand2 size={17} /> 자막·워터마크 지우기</h3>
-          <Button onClick={() => toScript.mutate()} disabled={toScript.isPending}>
-            정리 완료 → AI에게 대본 맡기기
-          </Button>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="flex items-center gap-2 font-semibold"><Wand2 size={17} /> 쓸 장면 고르기</h3>
+          {running ? (
+            <span className="flex shrink-0 items-center gap-2 text-sm text-slate-600">
+              <Spinner /> 영상 만드는 중 {running.done}/{running.total} · {running.clipId}
+            </span>
+          ) : (
+            <Button onClick={() => regenerate.mutate(current?.id)} disabled={regenerate.isPending || list.length === 0}>
+              <Wand2 size={15} /> 영상 재생성 → 대본으로
+            </Button>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {list.map((c) => (
@@ -571,22 +588,34 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
             <p className="mt-2 text-xs text-slate-500">
               {current.zones.length === 0
-                ? '위 이미지에서 지울 부분(자막 띠·워터마크)을 드래그하면 버튼이 켜집니다.'
+                ? '위 이미지에서 지울 부분(자막 띠·워터마크)을 드래그하세요. 여기서 한 번만 그리면 "영상 재생성"이 존이 없는 나머지 클립에도 같은 자리를 적용합니다.'
                 : tier1Zones === 0
                   ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
                   : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
             </p>
           )}
-          {current.cleanUrls.length > 0 && (
-            <div className="mt-4">
-              <p className="mb-1.5 text-sm font-medium">정리본 미리보기 (v{current.currentCleanVersion})</p>
-              <video
-                src={current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url}
-                controls
-                className="max-h-72 rounded-lg bg-black"
-              />
-            </div>
-          )}
+          <div className="mt-4 flex flex-wrap gap-6">
+            {current.selectedUrl && (
+              <div>
+                <p className="mb-1.5 text-sm font-medium">
+                  이 클립의 결과물 · 고른 {current.segments.length}컷 · 소리 없음
+                </p>
+                <video src={current.selectedUrl} controls className="max-h-72 rounded-lg bg-black" />
+              </div>
+            )}
+            {current.cleanUrls.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-sm font-medium text-slate-500">
+                  자막만 지운 원본 길이 (v{current.currentCleanVersion})
+                </p>
+                <video
+                  src={current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url}
+                  controls
+                  className="max-h-72 rounded-lg bg-black"
+                />
+              </div>
+            )}
+          </div>
         </Card>
       )}
     </div>

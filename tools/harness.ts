@@ -254,6 +254,8 @@ interface ClipView {
   segments: Array<{ id: string; in: number; out: number; note: string; used: boolean }>;
   cleanVersions: Array<{ v: number; tier: number; filePath: string }>;
   currentCleanVersion?: number;
+  selectedVideo?: string;
+  selectedUrl?: string;
 }
 interface PacketView {
   id: string; kind: string; status: string; executionMode?: string; validationErrors: string[];
@@ -583,6 +585,43 @@ async function main(): Promise<void> {
       (await Promise.all(done.map(async (c) =>
         (await fsp.stat(c.cleanVersions.at(-1)!.filePath)).size))).reduce((a, b) => a + b, 0) / done.length / 1024,
     )}KB)`;
+  });
+
+  await step('영상 재생성 — 존 전파 · 고른 구간만 · 무음 · 대본으로 전진', async () => {
+    // 존이 없는 클립에 첫 클립의 존이 옮겨 붙는지 본다 (해상도가 같으니 좌표도 같아야 한다)
+    const bare = clips[1];
+    await put(`/jobs/${jid}/clips/${bare.id}/zones`, { zones: [] });
+
+    await post(`/jobs/${jid}/regenerate`, { zonesFrom: clips[0].id });
+    const done = await waitFor('재생성 완료', async () => {
+      await abortIfFailed('clips.regenerate_failed');
+      const j = await get<JobView>(`/jobs/${jid}`);
+      return j.state === 'scripting' ? j : null;
+    }, 180_000);
+    assert(done.state === 'scripting', `대본 단계로 넘어가지 않음: ${done.state}`);
+
+    const after = await get<ClipView[]>(`/jobs/${jid}/clips`);
+    assert(after.every((c) => c.segments.length > 0), '컷 구간이 채워지지 않음');
+    assert(after.find((c) => c.id === bare.id)!.zones.length === 2,
+      '존이 없는 클립에 존이 옮겨지지 않음');
+
+    for (const c of after) {
+      assert(!!c.selectedVideo, `${c.id}: 결과 영상이 없음`);
+      const stat = await fsp.stat(c.selectedVideo!);
+      assert(stat.size > 1000, `${c.id}: 결과 영상이 비어 있음`);
+      const probe = await probeJson(c.selectedVideo!);
+      /*
+        길이가 고른 구간의 합과 같아야 한다. "원본보다 짧다"로는 부족하다 —
+        프레임을 하나도 안 지운 클립은 원본 전체가 정답이라 그 검사는 통과해버린다.
+      */
+      const dur = Number(probe.format.duration);
+      const want = c.segments.filter((s) => s.used).reduce((a, s) => a + (s.out - s.in), 0);
+      assert(Math.abs(dur - want) < 0.5,
+        `${c.id}: 고른 구간은 ${want.toFixed(1)}초인데 결과는 ${dur.toFixed(1)}초`);
+      // 소리가 남으면 남의 영상 배경음이 그대로 들린다
+      assert(!probe.streams.some((s) => s.codec_type === 'audio'), `${c.id}: 소리가 남아 있음`);
+    }
+    return `${after.length}건 · 존 전파 · 무음 · ${after[0].segments.length}컷`;
   });
 
   // ── 대본 (요청서 왕복: 수동 붙여넣기 = 키 없이 검증 가능) ──

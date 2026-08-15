@@ -142,6 +142,12 @@ export const ClipSchema = z.object({
   })).default([]),
   currentCleanVersion: z.number().int().optional(),
   segments: z.array(SegmentSchema).default([]),
+  /**
+   * 고른 구간만 이어붙이고 소리를 뺀 영상 (`selected.mp4`).
+   * 사용자가 이 단계에서 눈으로 확인하는 결과물이다. 조립은 여전히 `cleanVersions`와
+   * `segments`를 쓴다 — 이 파일은 원본 시각 기준이 아니라서 컷 시각을 여기에 대면 어긋난다.
+   */
+  selectedVideo: z.string().optional(),
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
