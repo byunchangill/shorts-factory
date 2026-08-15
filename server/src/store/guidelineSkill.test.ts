@@ -56,4 +56,17 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
     expect(body).toContain(`${t.min}~${t.max}초`);
     expect(body).toContain(`${t.max}초를 넘기지 않는다`);
   });
+
+  /*
+    스킬은 초를 글자 수로 환산해 스스로 검산한다. 그 환산표가 앱의 계산과 달라지면
+    요청서와 지침이 서로 다른 분량을 말하게 된다 — 이 리포가 이미 겪은 사고다.
+  */
+  it('스킬의 분량 환산표가 앱의 계산과 같다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
+    const { charBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
+    const b = charBudget(1.25, 'menu-a');
+    const t = TARGET_SEC_BY_MENU['menu-a'];
+    expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}자`);
+    expect(body).toContain(`**${b.max}자를 넘지 않는다**`);
+  });
 });
