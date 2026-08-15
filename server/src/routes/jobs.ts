@@ -4,10 +4,10 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
 import { MENUS, type JobState } from '@shared/constants';
-import { JobStateSchema, ZoneSchema, SegmentSchema } from '@shared/types';
+import { JobStateSchema, ZoneSchema, SegmentSchema, ProductSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { trashJob } from '../store/remove.js';
-import { getProject } from '../store/projects.js';
+import { getProject, readProduct, writeProduct, listProductFiles } from '../store/projects.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
 import { progressOf, statesFor } from '../pipeline/stateMachine.js';
@@ -26,8 +26,9 @@ import {
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir } from '../pipeline/exporter.js';
 import { hasKey } from '../store/secrets.js';
-import { readJson } from '../util/fsx.js';
+import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
+import { extractZip, safeEntryPath } from '../util/zip.js';
 import { broadcast } from '../sse.js';
 
 const router = asyncRouter();
@@ -882,5 +883,99 @@ export async function runExport(ref: jobs.JobRef) {
   broadcast('export.done', { jobId: ref.jobId, dir: result.rootDir, count: result.copied.length });
   return result;
 }
+
+// ── 제품자료 (작업마다 따로) ──────────────────────────────────────
+
+function originalName(file: Express.Multer.File): string {
+  return Buffer.from(file.originalname, 'latin1').toString('utf8');
+}
+
+/**
+ * 폴더째 올리면 파일명에 상대경로가 들어온다 (`캡처/사양표.png`).
+ * 그 구조를 그대로 살려서 저장한다 — 파일이 수십 개일 때 폴더가 곧 분류다.
+ */
+function relativeDir(file: Express.Multer.File): string {
+  const rel = safeEntryPath(originalName(file));
+  if (!rel) return '';
+  const dir = path.posix.dirname(rel);
+  if (dir === '.' || dir === '/') return '';
+  return dir.split('/').map((s) => slugify(s)).join(path.sep);
+}
+
+const productUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      // 여기서는 404를 던질 수 없다 — 없는 작업이면 에러로 넘겨 업로드를 중단시킨다
+      const ref = jobs.resolveJob(req.params.jid);
+      if (!ref) return cb(new Error('작업 없음'), '');
+      const dir = path.join(paths.product(ref.menu, ref.projectId, ref.jobId), relativeDir(file));
+      fsp.mkdir(dir, { recursive: true }).then(() => cb(null, dir), (e) => cb(e as Error, ''));
+    },
+    filename: (_req, file, cb) => {
+      const base = path.posix.basename(originalName(file).replace(/\\/g, '/'));
+      const ext = path.extname(base);
+      cb(null, `${slugify(path.basename(base, ext))}${ext}`);
+    },
+  }),
+  // 상세페이지 캡처를 폴더째 올리는 경우가 있어 장수를 넉넉히 잡는다
+  limits: { fileSize: 100 * 1024 * 1024, files: 300 },
+});
+
+router.post('/jobs/:jid/product/files', productUpload.array('files'), async (req, res) => {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  const uploaded: string[] = [];
+  const errors: string[] = [];
+
+  for (const f of files) {
+    // 압축 파일을 그대로 두면 AI가 열지 못한다 (붙여넣기·API 방식에는 해제 수단이 없다).
+    // 풀어서 같은 이름의 폴더에 넣고 압축 파일 자체는 지운다
+    if (/\.zip$/i.test(f.filename)) {
+      const root = path.dirname(f.path);
+      const fallback = path.basename(f.filename, path.extname(f.filename));
+      try {
+        const written = await extractZip(await fsp.readFile(f.path), root, fallback);
+        if (!written.length) throw new Error('압축 안에 쓸 만한 파일이 없습니다');
+        uploaded.push(...written);
+        await fsp.rm(f.path, { force: true });
+      } catch (e) {
+        // 못 푼 압축은 지우지 않고 남긴다 — 사용자가 다시 올리지 않아도 되게
+        errors.push(`${f.filename}: ${e instanceof Error ? e.message : String(e)}`);
+        uploaded.push(f.filename);
+      }
+      continue;
+    }
+    uploaded.push(f.filename);
+  }
+  res.json({ uploaded, errors });
+});
+
+/** 잘못 올린 자료 정리 — 폴더째 올리면 필요 없는 파일이 섞여 온다 */
+router.delete('/jobs/:jid/product/files', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const rel = safeEntryPath(z.string().min(1).parse(req.query.file));
+  if (!rel) return res.status(400).json({ error: '잘못된 경로' });
+  if (rel === 'product.json') return res.status(400).json({ error: 'product.json은 여기서 지울 수 없습니다' });
+  const target = path.join(paths.product(ref.menu, ref.projectId, ref.jobId), rel);
+  await fsp.rm(target, { recursive: true, force: true });
+  res.json({ ok: true });
+});
+
+router.get('/jobs/:jid/product', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const product = await readProduct(ref);
+  const files = await listProductFiles(ref);
+  const productDir = paths.product(ref.menu, ref.projectId, ref.jobId);
+  res.json({
+    product,
+    files: files.map((f) => ({ name: f, url: toMediaUrl(path.join(productDir, f)) })),
+  });
+});
+
+router.put('/jobs/:jid/product', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const product = ProductSchema.parse(req.body);
+  await writeProduct(ref, product);
+  res.json({ ok: true });
+});
 
 export default router;

@@ -30,8 +30,12 @@ export const paths = {
     path.join(WORKSPACE_ROOT, menu, projectId, 'project.json'),
   guidelines: (menu: Menu, projectId: string) =>
     path.join(WORKSPACE_ROOT, menu, projectId, 'guidelines'),
-  product: (menu: Menu, projectId: string) =>
-    path.join(WORKSPACE_ROOT, menu, projectId, 'product'),
+  /**
+   * 제품자료는 **영상 작업마다** 따로다 — 카테고리(가전제품·주방용품)에 붙여두면
+   * 그 안의 모든 작업이 같은 제품을 참조하게 된다. 영상 한 편이 제품 하나다.
+   */
+  product: (menu: Menu, projectId: string, jobId: string) =>
+    path.join(WORKSPACE_ROOT, menu, projectId, 'jobs', jobId, 'product'),
   jobs: (menu: Menu, projectId: string) =>
     path.join(WORKSPACE_ROOT, menu, projectId, 'jobs'),
   job: (menu: Menu, projectId: string, jobId: string) =>

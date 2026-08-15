@@ -6,6 +6,7 @@ import {
   GUIDELINE_FILES, charBudget, TARGET_SEC_BY_MENU, type Menu, type GuidelineFile,
 } from '@shared/constants';
 import { paths, loadSettings } from './workspace.js';
+import type { JobRef } from './jobs.js';
 import { ensureDir, exists, listDirs, listFiles, readJson, slugify, writeJsonAtomic } from '../util/fsx.js';
 
 /** menu-b의 formats 디렉토리는 프로젝트가 아님 */
@@ -154,7 +155,6 @@ export async function createProject(
 
   const root = paths.project(menu, id);
   await ensureDir(path.join(root, 'jobs'));
-  await ensureDir(paths.product(menu, id));
   await ensureDir(paths.guidelines(menu, id));
   for (const file of GUIDELINE_FILES) {
     const template = file === 'script.md'
@@ -218,8 +218,8 @@ export async function readAllGuidelines(menu: Menu, projectId: string): Promise<
  * 압축을 풀거나 폴더째 올리면 하위 폴더가 생기므로 재귀로 훑는다 —
  * 여기서 빠지면 요청서에 경로가 실리지 않아 AI가 자료를 못 본다.
  */
-export async function listProductFiles(menu: Menu, projectId: string): Promise<string[]> {
-  const root = paths.product(menu, projectId);
+export async function listProductFiles(ref: JobRef): Promise<string[]> {
+  const root = paths.product(ref.menu, ref.projectId, ref.jobId);
   const out: string[] = [];
   const walk = async (dir: string, prefix: string): Promise<void> => {
     for (const e of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
@@ -232,12 +232,15 @@ export async function listProductFiles(menu: Menu, projectId: string): Promise<s
   return out.sort();
 }
 
-export async function readProduct(menu: Menu, projectId: string): Promise<Product> {
-  const raw = await readJson<unknown>(path.join(paths.product(menu, projectId), 'product.json'));
+export async function readProduct(ref: JobRef): Promise<Product> {
+  const raw = await readJson<unknown>(path.join(paths.product(ref.menu, ref.projectId, ref.jobId), 'product.json'));
   const parsed = ProductSchema.safeParse(raw ?? {});
   return parsed.success ? parsed.data : ProductSchema.parse({});
 }
 
-export async function writeProduct(menu: Menu, projectId: string, product: Product): Promise<void> {
-  await writeJsonAtomic(path.join(paths.product(menu, projectId), 'product.json'), ProductSchema.parse(product));
+export async function writeProduct(ref: JobRef, product: Product): Promise<void> {
+  await writeJsonAtomic(
+    path.join(paths.product(ref.menu, ref.projectId, ref.jobId), 'product.json'),
+    ProductSchema.parse(product),
+  );
 }

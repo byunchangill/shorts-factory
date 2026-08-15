@@ -671,18 +671,15 @@ async function main(): Promise<void> {
     // 파이썬 zipfile로 만든 진짜 zip (한글 경로 + deflate/stored 혼합)
     const fd = new FormData();
     fd.append('files', new Blob([PRODUCT_ZIP], { type: 'application/zip' }), '상세페이지.zip');
-    const up = await fetch(
-      `${API}/projects/menu-a/${encodeURIComponent(productName)}/product/files`,
-      { method: 'POST', body: fd },
-    );
+    // 제품자료는 카테고리가 아니라 **영상 작업**에 붙는다
+    const up = await fetch(`${API}/jobs/${jid}/product/files`, { method: 'POST', body: fd });
     const upBody = await up.text();
     assert(up.ok, `업로드 실패: ${up.status} ${upBody}`);
     const { errors } = JSON.parse(upBody) as { uploaded: string[]; errors: string[] };
     assert(errors.length === 0, `압축 해제 오류: ${errors.join(', ')}`);
 
     // 하위 폴더까지 훑어야 요청서에 경로가 실린다
-    const listed = await get<{ files: Array<{ name: string }> }>(
-      `/projects/menu-a/${encodeURIComponent(productName)}/product`);
+    const listed = await get<{ files: Array<{ name: string }> }>(`/jobs/${jid}/product`);
     const names = listed.files.map((f) => f.name);
     assert(names.includes('상세페이지/가격.txt'), `해제된 파일이 목록에 없음: ${names.join(', ')}`);
     assert(!names.some((n) => n.endsWith('.zip')), '압축 파일이 그대로 남아 있음');
@@ -691,7 +688,24 @@ async function main(): Promise<void> {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'product-extract' });
     const d = await get<PacketView>(`/packets/${p.id}`);
     assert(d.requestMd.includes('상세페이지/가격.txt'), '요청서에 첨부 경로가 없음');
-    return `zip → ${names.length}개 파일 · ${p.id} 발행`;
+
+    /*
+      같은 카테고리의 **다른 작업**에는 이 자료가 보이면 안 된다. 영상 한 편이 제품 하나인데
+      카테고리에 붙여두면 두 번째 편이 첫 편의 제품자료로 대본을 쓰게 된다.
+    */
+    const other = await post<JobView>(
+      `/projects/menu-a/${encodeURIComponent(productName)}/jobs`, { title: '자료격리확인' });
+    const otherFiles = await get<{ files: Array<{ name: string }> }>(`/jobs/${other.id}/product`);
+    assert(otherFiles.files.length === 0,
+      `다른 작업에 제품자료가 새어 들어감: ${otherFiles.files.map((f) => f.name).join(', ')}`);
+    const blocked = await fetch(`${API}/jobs/${other.id}/packets`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'product-extract' }),
+    });
+    assert(blocked.status === 400, `자료 없는 작업에서 발행이 막히지 않음: ${blocked.status}`);
+    await del(`/jobs/${other.id}`);
+
+    return `zip → ${names.length}개 파일 · ${p.id} 발행 · 다른 작업과 격리됨`;
   });
 
   const packetId = await step2<string>('대본 요청서 발행', async () => {
