@@ -12,6 +12,7 @@ interface Settings {
   ffmpegPath: string;
   ffprobePath: string;
   iopaintPath: string;
+  pythonPath: string;
   exportRoot: string;
   exportIncludeSources: boolean;
   exportOnDone: boolean;
@@ -271,13 +272,20 @@ export default function SettingsPage() {
       <Card>
         <h3 className="mb-3 font-medium">도구 경로 (PATH에 없을 때만 수정)</h3>
         <div className="space-y-2">
-          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'iopaintPath'] as const).map((k) => (
+          {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'iopaintPath', 'pythonPath'] as const).map((k) => (
             <div key={k} className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-sm text-slate-500">{k.replace('Path', '')}</span>
-              <Input value={form[k]} onChange={(e) => set({ [k]: e.target.value } as Partial<Settings>)} />
+              <Input
+                value={form[k]}
+                placeholder={k === 'pythonPath' ? '비우면 자동으로 찾습니다 (py · python · python3)' : ''}
+                onChange={(e) => set({ [k]: e.target.value } as Partial<Settings>)}
+              />
             </div>
           ))}
         </div>
+        <p className="mt-2 text-xs text-slate-500">
+          python은 자막 자리 자동 찾기에 씁니다 — 가상환경에 넣었다면 그 안의 python 경로를 적어주세요.
+        </p>
       </Card>
 
       <Button onClick={() => save.mutate()} disabled={save.isPending}>

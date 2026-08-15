@@ -588,7 +588,7 @@ function ClipsPanel({ job }: { job: JobDetail }) {
           {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
             <p className="mt-2 text-xs text-slate-500">
               {current.zones.length === 0
-                ? '위 이미지에서 지울 부분(자막 띠·워터마크)을 드래그하세요. 여기서 한 번만 그리면 "영상 재생성"이 존이 없는 나머지 클립에도 같은 자리를 적용합니다.'
+                ? '비워두면 "영상 재생성"이 자막·워터마크 자리를 스스로 찾아 지웁니다. 잘못 잡거나 놓치는 곳이 있을 때만 직접 드래그하세요 — 그린 자리가 있으면 그 클립은 그것을 씁니다.'
                 : tier1Zones === 0
                   ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
                   : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
