@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Input, PageHeader } from '@/components/ui';
+import { TARGET_SEC, charBudget } from '@shared/constants';
 
 interface Settings {
   parallelDownloads: number;
@@ -259,9 +260,9 @@ export default function SettingsPage() {
           <span className="text-xs text-slate-500">배 (합성 음성에만 적용)</span>
         </div>
         <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
-          이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 30초 영상에
-          최대 <b>{Math.round((30 * 300 * (form.speechRate || 1)) / 60)}자</b>
-          (권장 {Math.round((27 * 300 * (form.speechRate || 1)) / 60)}자)까지 쓸 수 있습니다.
+          이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 {TARGET_SEC.max}초 영상에
+          최대 <b>{charBudget(form.speechRate || 1).max}자</b>
+          (권장 {charBudget(form.speechRate || 1).recommended}자)까지 쓸 수 있습니다.
           첨부한 음성 파일은 원본 속도 그대로 사용됩니다.
         </p>
         <p className="mt-2 text-xs text-slate-500">

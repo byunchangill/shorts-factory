@@ -89,6 +89,8 @@ async function runQc(
   scriptJson: string,
   knowledge: string,
   budget: { min: number; recommended: number; max: number },
+  // 초 수를 문장에 박아두면 메뉴별 목표가 바뀌어도 그대로 남아 검수자가 옛 기준으로 채점한다
+  target: { min: number; recommended: number; max: number },
 ): Promise<QcVerdict> {
   const prompt = `너는 쇼핑쇼츠 대본 검수자다. 아래 대본을 냉정하게 채점하라.
 
@@ -102,7 +104,7 @@ ${knowledge.slice(0, 6000)}
 ${scriptJson}
 
 [배점 100점]
-- 낭독 시간 20점: 나레이션 총 글자수가 ${budget.min}~${budget.max}자 범위 (${settings.speechRate}배속 기준 20~30초). 범위 밖이면 0점
+- 낭독 시간 20점: 나레이션 총 글자수가 ${budget.min}~${budget.max}자 범위 (${settings.speechRate}배속 기준 ${target.min}~${target.max}초). 범위 밖이면 0점
 - 훅 강도 20점: 첫 씬이 가격충격/질문/반전/문제상황/시연 중 하나. 설명형이면 0점
 - 소재 정합성 20점: clipRef의 clipId가 요청서 소재현황 표에 실제로 있는가. 없으면 0점
 - 나레이션/자막 분리 10점: 같은 문장이면 0점
@@ -233,7 +235,7 @@ JSON은 파싱 가능한 형태여야 하며 설명 문장은 붙이지 마라.`
     if (!scriptFile || !files[scriptFile]) break; // 대본이 아닌 패킷은 검수 없이 통과
 
     report(packetId, 'qc', `검수 중 (${attempt + 1}회차)`);
-    const verdict = await runQc(provider, settings, requestMd, files[scriptFile], knowledge, budget);
+    const verdict = await runQc(provider, settings, requestMd, files[scriptFile], knowledge, budget, target);
     lastVerdict = verdict;
     report(packetId, 'qc-result', `${verdict.score}점 ${verdict.pass ? '통과' : '반려'}`);
 
