@@ -101,7 +101,9 @@ export async function runTier1Clean(
     '-y', '-i', inputPath,
     '-vf', graph,
     '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast',
-    '-c:a', 'copy',
+    // 원본 소리는 버린다 — 나레이션을 따로 붙이고 조립도 `-an`으로 영상만 가져간다.
+    // 남겨두면 이 단계 미리보기에서만 남의 영상 소리·배경음악이 들린다
+    '-an',
     outPath,
   ];
   await run(settings.ffmpegPath, args, { onStderr: onProgress });

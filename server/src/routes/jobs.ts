@@ -15,6 +15,7 @@ import {
   downloadAll, retrySource, isDownloading, attachSourceFile, removeSource, reconcileDownloadState,
 } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
+import { segmentsFromFrames, scaleZones, buildSelectedVideo, selectedPath } from '../pipeline/selected.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { detectZoneRanges } from '../pipeline/detectZone.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
@@ -287,6 +288,7 @@ router.get('/jobs/:jid/clips', async (req, res) => {
       ...c,
       frameUrls: c.frames.map((f) => toMediaUrl(fromWorkspaceRel(f.file))),
       cleanUrls: c.cleanVersions.map((v) => ({ v: v.v, url: toMediaUrl(v.filePath) })),
+      selectedUrl: c.selectedVideo ? toMediaUrl(c.selectedVideo) : undefined,
     })),
   );
 });
@@ -373,27 +375,98 @@ router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
   const body = z.object({ padSec: z.number().min(0.5).max(10).default(1.5) }).parse(req.body ?? {});
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
-  const duration = clip.probe?.duration ?? 0;
-  const picked = clip.frames;
-  if (!picked.length) return res.status(400).json({ error: '남은 프레임이 없습니다' });
+  if (!clip.frames.length) return res.status(400).json({ error: '남은 프레임이 없습니다' });
 
-  const ranges: Array<{ in: number; out: number }> = [];
-  for (const f of [...picked].sort((a, b) => a.t - b.t)) {
-    const start = Math.max(0, f.t - body.padSec);
-    const end = duration ? Math.min(duration, f.t + body.padSec) : f.t + body.padSec;
-    const last = ranges[ranges.length - 1];
-    if (last && start <= last.out) last.out = Math.max(last.out, end);
-    else ranges.push({ in: start, out: end });
-  }
-  clip.segments = ranges.map((r, i) => ({
-    id: `g${i + 1}`,
-    in: Number(r.in.toFixed(2)),
-    out: Number(r.out.toFixed(2)),
-    note: '남은 프레임 기준',
-    used: true,
-  }));
+  clip.segments = segmentsFromFrames(clip.frames, clip.probe?.duration ?? 0, body.padSec);
   await jobs.writeClip(ref, clip);
   res.json(clip);
+});
+
+/**
+ * 영상 재생성 — 정리 단계의 마무리를 한 번에 끝낸다.
+ *
+ * 클립마다 같은 일을 반복하는 자리였다. 사용자가 하는 일은 **쓸 장면 고르기**뿐이고,
+ * 나머지(자막·워터마크 지우기 → 고른 구간만 잇기 → 소리 빼기 → 대본으로 넘어가기)는
+ * 기계가 한다.
+ *
+ * `zonesFrom`의 존은 **존이 없는 클립에만** 채운다 — 클립마다 공들여 그린 것을
+ * 덮어쓰지 않기 위해서다. 좌표는 클립 해상도에 맞춰 환산한다.
+ *
+ * 만들어진 `selected.mp4`는 **보기 위한 결과물**이다. 조립은 원본 시각 기준의
+ * `cleanVersions` + `segments`를 그대로 쓴다 — 잘라낸 영상에 원본 시각을 대면 어긋난다.
+ */
+router.post('/jobs/:jid/regenerate', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({
+    zonesFrom: z.string().optional(),
+    padSec: z.number().min(0.5).max(10).default(1.5),
+  }).parse(req.body ?? {});
+
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '작업 없음' });
+
+  const clips = await jobs.listClips(ref);
+  if (!clips.length) return res.status(400).json({ error: '클립이 없습니다' });
+  // 프레임을 다 지운 클립이 있으면 만들 영상이 없다 — 도중에 멈추지 말고 미리 막는다
+  const empty = clips.filter((c) => !c.frames.length).map((c) => c.id);
+  if (empty.length) {
+    return res.status(400).json({ error: `쓸 장면이 하나도 없는 클립이 있습니다: ${empty.join(', ')}` });
+  }
+  const template = body.zonesFrom ? clips.find((c) => c.id === body.zonesFrom) : undefined;
+  if (body.zonesFrom && !template) return res.status(404).json({ error: '존을 가져올 클립 없음' });
+
+  res.json({ started: true, clips: clips.length }); // 즉시 응답, 진행은 SSE
+
+  void (async () => {
+    let done = 0;
+    for (const clip of clips) {
+      broadcast('regenerate.progress', {
+        jobId: ref.jobId, clipId: clip.id, done, total: clips.length, phase: 'start',
+      });
+
+      if (template && template.id !== clip.id && clip.zones.length === 0) {
+        clip.zones = scaleZones(template.zones, template.probe, clip.probe);
+      }
+
+      const source = job.sources.find((s) => s.id === clip.sourceId);
+      if (!source?.filePath) throw new Error(`${clip.id}: 소스 파일이 없습니다`);
+      const outDir = jobs.clipDir(ref, clip.id);
+      let footage = fromWorkspaceRel(source.filePath);
+
+      // 1차 제거 — 지울 존이 있을 때만. 없으면 원본을 그대로 잘라 쓴다
+      if (clip.zones.some((z) => z.method !== 'inpaint')) {
+        const r = await runTier1Clean(settings, clip, footage, outDir, (line) =>
+          broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }));
+        clip.cleanVersions.push({
+          v: r.version, tier: 1, params: r.params, filePath: r.filePath,
+          createdAt: new Date().toISOString(),
+        });
+        clip.currentCleanVersion = r.version;
+        footage = r.filePath;
+      }
+
+      clip.segments = segmentsFromFrames(clip.frames, clip.probe?.duration ?? 0, body.padSec);
+      clip.selectedVideo = await buildSelectedVideo(
+        settings, footage, clip.segments, selectedPath(outDir),
+        (line) => broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+      );
+      await jobs.writeClip(ref, clip);
+
+      done++;
+      broadcast('regenerate.progress', {
+        jobId: ref.jobId, clipId: clip.id, done, total: clips.length, phase: 'done',
+      });
+    }
+
+    await jobs.logJobEvent(ref, { type: 'clips.regenerated', count: clips.length });
+    await jobs.advanceTo(ref, 'scripting', 'server');
+    broadcast('regenerate.finished', { jobId: ref.jobId, clips: clips.length });
+  })().catch(async (e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    await jobs.logJobEvent(ref, { type: 'clips.regenerate_failed', error: msg }).catch(() => {});
+    broadcast('regenerate.failed', { jobId: ref.jobId, error: msg });
+  });
 });
 
 router.put('/jobs/:jid/clips/:cid/zones', async (req, res) => {
