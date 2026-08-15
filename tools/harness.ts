@@ -587,12 +587,16 @@ async function main(): Promise<void> {
     )}KB)`;
   });
 
-  await step('영상 재생성 — 존 전파 · 고른 구간만 · 무음 · 대본으로 전진', async () => {
-    // 존이 없는 클립에 첫 클립의 존이 옮겨 붙는지 본다 (해상도가 같으니 좌표도 같아야 한다)
+  await step('영상 재생성 — 존 채우기 · 고른 구간만 · 무음 · 대본으로 전진', async () => {
+    /*
+      존이 없는 클립이 어떻게 채워지는지 본다. 글자 검출기가 깔려 있으면 스스로 찾고,
+      없으면 다른 클립의 존을 옮겨 쓴다. CI에는 검출기가 없으므로 둘 다 통과해야 한다 —
+      합성 영상에는 글자가 없어서, 검출기가 있으면 존 0개가 정답이다.
+    */
     const bare = clips[1];
     await put(`/jobs/${jid}/clips/${bare.id}/zones`, { zones: [] });
 
-    await post(`/jobs/${jid}/regenerate`, { zonesFrom: clips[0].id });
+    const started = await post<{ autoDetect: boolean }>(`/jobs/${jid}/regenerate`, { zonesFrom: clips[0].id });
     const done = await waitFor('재생성 완료', async () => {
       await abortIfFailed('clips.regenerate_failed');
       const j = await get<JobView>(`/jobs/${jid}`);
@@ -602,8 +606,25 @@ async function main(): Promise<void> {
 
     const after = await get<ClipView[]>(`/jobs/${jid}/clips`);
     assert(after.every((c) => c.segments.length > 0), '컷 구간이 채워지지 않음');
-    assert(after.find((c) => c.id === bare.id)!.zones.length === 2,
-      '존이 없는 클립에 존이 옮겨지지 않음');
+    const bareClip = after.find((c) => c.id === bare.id)!;
+    const bareZones = bareClip.zones as Array<{ x: number; y: number; w: number; h: number }>;
+    if (started.autoDetect) {
+      /*
+        합성 영상에는 testsrc2가 좌상단에 타임코드(`00:00:00.467`)를 찍는다. 그게 정답지다 —
+        검출기는 그 자리를 찾아야 하고, 화면을 통째로 덮어서는 안 된다. 넓은 존을 만드는
+        회귀가 제일 위험하다: 자막이 아니라 영상 자체를 뭉갠 채로 조용히 지나간다.
+      */
+      assert(bareZones.length > 0, '화면의 글자(타임코드)를 찾지 못함');
+      const found = bareZones.some((z) => z.x < 150 && z.y < 60);
+      assert(found, `좌상단 타임코드를 못 찾음: ${JSON.stringify(bareZones)}`);
+      const frame = W * H;
+      for (const z of bareZones) {
+        assert((z.w * z.h) / frame < 0.3,
+          `존 하나가 화면의 ${Math.round((z.w * z.h) / frame * 100)}%를 덮음 — 영상을 뭉갠다`);
+      }
+    } else {
+      assert(bareZones.length === 2, '존이 없는 클립에 다른 클립의 존이 옮겨지지 않음');
+    }
 
     for (const c of after) {
       assert(!!c.selectedVideo, `${c.id}: 결과 영상이 없음`);
@@ -621,7 +642,7 @@ async function main(): Promise<void> {
       // 소리가 남으면 남의 영상 배경음이 그대로 들린다
       assert(!probe.streams.some((s) => s.codec_type === 'audio'), `${c.id}: 소리가 남아 있음`);
     }
-    return `${after.length}건 · 존 전파 · 무음 · ${after[0].segments.length}컷`;
+    return `${after.length}건 · ${started.autoDetect ? '자동 검출' : '존 전파'} · 무음 · ${after[0].segments.length}컷`;
   });
 
   // ── 대본 (요청서 왕복: 수동 붙여넣기 = 키 없이 검증 가능) ──

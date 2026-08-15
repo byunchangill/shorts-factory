@@ -274,6 +274,12 @@ export const SettingsSchema = z.object({
   ffmpegPath: z.string().default('ffmpeg'),
   ffprobePath: z.string().default('ffprobe'),
   iopaintPath: z.string().default('iopaint'),
+  /**
+   * 글자 검출(자막 자리 자동 찾기)에 쓸 파이썬. 비워두면 서버가 찾아 쓴다
+   * (윈도우 `py` → `python` → `python3`). 여기서 플랫폼을 보면 안 된다 —
+   * 이 파일은 브라우저에서도 읽혀서 `process`를 만지는 순간 화면이 통째로 죽는다.
+   */
+  pythonPath: z.string().default(''),
   // 내보내기 (제품별 별도 폴더 저장)
   exportRoot: z.string().default(''), // 빈 값 = OS 다운로드 폴더 자동 사용
   exportIncludeSources: z.boolean().default(false), // 다운로드 원본 포함 (용량 큼)

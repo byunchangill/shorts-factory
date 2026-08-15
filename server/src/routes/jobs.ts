@@ -16,6 +16,7 @@ import {
 } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
 import { segmentsFromFrames, scaleZones, buildSelectedVideo, selectedPath } from '../pipeline/selected.js';
+import { detectTextZones, ocrAvailable } from '../pipeline/ocrDetect.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { detectZoneRanges } from '../pipeline/detectZone.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
@@ -416,7 +417,9 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
   const template = body.zonesFrom ? clips.find((c) => c.id === body.zonesFrom) : undefined;
   if (body.zonesFrom && !template) return res.status(404).json({ error: '존을 가져올 클립 없음' });
 
-  res.json({ started: true, clips: clips.length }); // 즉시 응답, 진행은 SSE
+  // 검출기 유무는 한 번만 본다 — 클립마다 확인하면 그 자체로 몇 초씩 먹는다
+  const useOcr = await ocrAvailable(settings);
+  res.json({ started: true, clips: clips.length, autoDetect: useOcr }); // 즉시 응답, 진행은 SSE
 
   void (async () => {
     let done = 0;
@@ -425,14 +428,23 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
         jobId: ref.jobId, clipId: clip.id, done, total: clips.length, phase: 'start',
       });
 
-      if (template && template.id !== clip.id && clip.zones.length === 0) {
-        clip.zones = scaleZones(template.zones, template.probe, clip.probe);
-      }
-
       const source = job.sources.find((s) => s.id === clip.sourceId);
       if (!source?.filePath) throw new Error(`${clip.id}: 소스 파일이 없습니다`);
       const outDir = jobs.clipDir(ref, clip.id);
       let footage = fromWorkspaceRel(source.filePath);
+
+      /*
+        존이 없는 클립은 글자를 직접 찾아 채운다. 검출기가 없으면 사용자가 그려둔
+        존을 옮겨 쓰고, 그것도 없으면 자르기만 한다 — 어느 쪽이든 멈추지는 않는다.
+      */
+      if (clip.zones.length === 0 && clip.probe) {
+        if (useOcr) {
+          clip.zones = await detectTextZones(settings, footage, clip.probe, (line) =>
+            broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }));
+        } else if (template && template.id !== clip.id) {
+          clip.zones = scaleZones(template.zones, template.probe, clip.probe);
+        }
+      }
 
       // 1차 제거 — 지울 존이 있을 때만. 없으면 원본을 그대로 잘라 쓴다
       if (clip.zones.some((z) => z.method !== 'inpaint')) {

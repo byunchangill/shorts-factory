@@ -3,6 +3,7 @@ import { checkToolAny, IOPAINT_VERSION_ARGS } from './util/toolCheck.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
 import { findKoreanFont } from './pipeline/fonts.js';
+import { ocrAvailable } from './pipeline/ocrDetect.js';
 
 export interface DoctorReport {
   tools: Array<{
@@ -146,6 +147,10 @@ async function probeTools(): Promise<ToolEntry[]> {
     },
   ];
 
+  // 글자 검출은 파이썬 유무만으로 판정할 수 없다 — 모듈이 없으면 있으나 마나다.
+  // 그래서 도구 목록과 달리 실제 import까지 확인한다. 나머지 점검과 같이 돌린다
+  const ocrCheck = ocrAvailable(s).catch(() => false);
+
   const tools = await Promise.all(
     checks.map(async (c) => {
       const r = await checkToolAny(c.bin, c.versionArgs ?? [['--version']]);
@@ -169,6 +174,14 @@ async function probeTools(): Promise<ToolEntry[]> {
     installHint:
       'Windows·macOS는 기본 탑재. Linux는 `apt install fonts-nanum` 또는 ' +
       '설정에서 폰트 파일 경로를 직접 지정하세요 (없으면 자막·카드의 한글이 깨집니다)',
+  });
+
+  tools.push({
+    name: '글자 검출 (자막 자리 자동 찾기)',
+    required: false,
+    available: await ocrCheck,
+    installHint:
+      'pip install rapidocr-onnxruntime (선택 — 없으면 자막 자리를 직접 드래그해야 합니다)',
   });
 
   return tools;
