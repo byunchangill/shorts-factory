@@ -376,12 +376,21 @@ async function main(): Promise<void> {
 
   // ── 프로젝트 / 지침 / 잡 ──
   const productName = '테스트충전기';
-  await step('프로젝트 생성 + 기본 지침 확인', async () => {
+  await step('프로젝트 생성 + 기본 지침 = 대본 스킬', async () => {
     await post('/projects', { menu: 'menu-a', title: productName });
     const g = await get<{ content: string }>(
       `/projects/menu-a/${encodeURIComponent(productName)}/guidelines/script.md`);
-    assert(g.content.includes('대본 지침'), '기본 대본 지침이 생성되지 않음');
-    return `${productName} (지침 3종 자동 생성)`;
+
+    /*
+      문구가 아니라 배선을 본다 — 저장소의 스킬 본문이 그대로 깔려야 한다.
+      제목 같은 문구로 검사하면 스킬을 고칠 때마다 하네스가 깨진다.
+    */
+    const raw = await fsp.readFile(
+      path.join(REPO_ROOT, '.claude/skills/temcasting-shorts/SKILL.md'), 'utf8');
+    const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+    assert(g.content.trim() === body,
+      `기본 대본 지침이 스킬과 다름 (지침 ${g.content.length}자 / 스킬 ${body.length}자)`);
+    return `${productName} · 지침 3종 · 대본은 스킬 ${body.split('\n').length}줄`;
   });
 
   await step('지침 수정 저장', async () => {
@@ -998,6 +1007,13 @@ async function main(): Promise<void> {
       `/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '1편' });
     // 포맷이 카테고리에 있으니 draft에 머무르지 않고 바로 다음 단계로 간다
     assert(bJob.state === 'format_selected', `menu-b 잡이 draft에 갇힘: ${bJob.state}`);
+
+    // 대본 스킬은 해외영상 짜집기 전용이다 — 제품정보리뷰까지 따라오면 안 된다
+    const bGuide = await get<{ content: string }>(
+      `/projects/menu-b/${encodeURIComponent(bProduct)}/guidelines/script.md`);
+    assert(!bGuide.content.includes('템캐스팅'),
+      'menu-a 대본 스킬이 제품정보리뷰 지침으로 새어 들어옴');
+    assert(bGuide.content.includes('대본 지침'), 'menu-b 기본 지침이 깔리지 않음');
 
     // ① 요청서가 menu-b 기준(22초·162자)과 단점 씬 규칙을 담아야 한다
     const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
