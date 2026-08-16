@@ -5,13 +5,15 @@ import { ensureDir, exists, writeJsonAtomic } from '../util/fsx.js';
 import { probeDuration } from './probe.js';
 import { broadcast } from '../sse.js';
 import { synthesizeToFile as typecastSynthesize, AUDIO_EXT } from './voice/typecast.js';
+import { synthesizeToFile as voiceboxSynthesize } from './voice/voicebox.js';
+import { shapeAudio } from './voice/shape.js';
 
 export interface SceneTiming {
   sceneId: string;
   audioFile: string; // voice/ 내 파일명
   duration: number;
   start: number; // 누적 시작 시각
-  source: 'file' | 'typecast';
+  source: 'file' | 'typecast' | 'voicebox';
 }
 
 export interface NarrationOptions {
@@ -47,6 +49,19 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
     if (uploaded && (await exists(path.join(voiceDir, uploaded)))) {
       fileName = uploaded;
       source = 'file';
+    } else if (settings.voiceProvider === 'voicebox') {
+      fileName = `scene_${String(i + 1).padStart(2, '0')}.wav`;
+      const out = path.join(voiceDir, fileName);
+      await voiceboxSynthesize(settings, scene.narration, out);
+      /*
+        Voicebox에는 배속 인자가 없다. 말투 지시로는 3%밖에 못 올려서(실측)
+        쇼츠 톤은 여기서 만든다 — 배속을 먼저 맞추고 음정을 따로 올린다.
+      */
+      await shapeAudio(settings, out, {
+        rate: settings.speechRate,
+        semitones: settings.voicePitchSemitones,
+      });
+      source = 'voicebox';
     } else {
       if (!typecastVoiceId) {
         throw new Error(
@@ -55,10 +70,13 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
       }
       // 확장자는 실제 요청한 오디오 포맷과 일치해야 ffprobe/조립이 오작동하지 않는다
       fileName = `scene_${String(i + 1).padStart(2, '0')}${AUDIO_EXT}`;
-      await typecastSynthesize(scene.narration, typecastVoiceId, path.join(voiceDir, fileName), {
+      const out = path.join(voiceDir, fileName);
+      await typecastSynthesize(scene.narration, typecastVoiceId, out, {
         emotion: typecastEmotion,
         tempo: settings.speechRate, // 쇼츠는 빠른 낭독이 유지율에 유리하다
       });
+      // 배속은 타입캐스트가 이미 반영했으므로 음정만 손댄다
+      await shapeAudio(settings, out, { rate: 1, semitones: settings.voicePitchSemitones });
       source = 'typecast';
     }
 

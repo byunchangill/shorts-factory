@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, Input, PageHeader } from '@/components/ui';
+import { Badge, Button, Card, Input, PageHeader, Textarea } from '@/components/ui';
 import { TARGET_SEC, charBudget } from '@shared/constants';
 
 interface Settings {
@@ -20,7 +20,12 @@ interface Settings {
   defaultPacketMode: 'claude-code' | 'api' | 'manual';
   defaultAiProvider: 'anthropic' | 'openai' | 'gemini';
   aiModels: { anthropic: string; openai: string; gemini: string };
+  voiceProvider: 'typecast' | 'voicebox';
   typecastVoiceId: string;
+  voiceboxUrl: string;
+  voiceboxProfileId: string;
+  voiceboxInstruct: string;
+  voicePitchSemitones: number;
   speechRate: number;
   fontPath: string;
   layout: 'fullscreen' | 'framed';
@@ -245,9 +250,50 @@ export default function SettingsPage() {
       <Card>
         <h3 className="mb-3 font-medium">음성</h3>
         <p className="text-sm text-slate-500">
-          나레이션은 <b>타입캐스트 API</b>로 합성하거나, 작업 화면에서 <b>씬별 음성 파일을 첨부</b>합니다.
+          나레이션은 아래에서 고른 방식으로 합성하거나, 작업 화면에서 <b>씬별 음성 파일을 첨부</b>합니다.
           첨부된 씬은 합성하지 않고 그 파일을 그대로 사용합니다.
         </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="w-28 shrink-0 font-medium">합성 방식</span>
+          <select
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            value={form.voiceProvider}
+            onChange={(e) => set({ voiceProvider: e.target.value as Settings['voiceProvider'] })}
+          >
+            <option value="typecast">타입캐스트 (클라우드 · API 키 필요)</option>
+            <option value="voicebox">Voicebox (내 PC · 무료 · 서버를 켜둬야 함)</option>
+          </select>
+        </div>
+
+        {form.voiceProvider === 'voicebox' && (
+          <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-slate-500">서버 주소</span>
+              <Input value={form.voiceboxUrl} onChange={(e) => set({ voiceboxUrl: e.target.value })} />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-slate-500">목소리 id</span>
+              <Input
+                value={form.voiceboxProfileId}
+                placeholder="음성 단계에서 고르면 여기 채워집니다"
+                onChange={(e) => set({ voiceboxProfileId: e.target.value })}
+              />
+            </div>
+            <div>
+              <span className="text-slate-500">말투 지시</span>
+              <Textarea
+                rows={2}
+                value={form.voiceboxInstruct}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set({ voiceboxInstruct: e.target.value })}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                어조를 잡는 값입니다. <b>속도는 아래 낭독 속도가 만듭니다</b> — 말투 지시로는
+                실측상 3%밖에 빨라지지 않았습니다.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
           <span className="w-28 shrink-0 font-medium">낭독 속도</span>
@@ -258,6 +304,19 @@ export default function SettingsPage() {
             onChange={(e) => set({ speechRate: Number(e.target.value) })}
           />
           <span className="text-xs text-slate-500">배 (합성 음성에만 적용)</span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="w-28 shrink-0 font-medium">음정</span>
+          <Input
+            type="number" step="1" min={-12} max={12}
+            className="w-24"
+            value={form.voicePitchSemitones}
+            onChange={(e) => set({ voicePitchSemitones: Number(e.target.value) })}
+          />
+          <span className="text-xs text-slate-500">
+            반음 (0이면 그대로 · 양수면 높아짐, 길이는 안 변합니다)
+          </span>
         </div>
         <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
           이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 {TARGET_SEC.max}초 영상에
