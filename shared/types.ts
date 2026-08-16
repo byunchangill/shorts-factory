@@ -292,8 +292,25 @@ export const SettingsSchema = z.object({
     openai: z.string().default('gpt-4o-mini'),
     gemini: z.string().default('gemini-2.0-flash'),
   }).default({ anthropic: 'claude-sonnet-4-5', openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash' }),
-  // 음성: 타입캐스트 API로 합성하거나 씬별 음성 파일을 첨부한다
+  /**
+   * 음성 경로는 셋이다: 타입캐스트 API · Voicebox(로컬) · 씬별 파일 첨부.
+   * 첨부 파일이 있는 씬은 언제나 그 파일이 우선이고, 나머지 씬만 여기서 고른 방식으로 합성한다.
+   */
+  voiceProvider: z.enum(['typecast', 'voicebox']).default('typecast'),
   typecastVoiceId: z.string().default(''),
+  /** Voicebox 서버 주소 — 앱이 띄우지 않는다. 사용자가 켜 둔 것에 붙는다 */
+  voiceboxUrl: z.string().default('http://127.0.0.1:17493'),
+  /** 쓸 목소리(프로필) id. 복제한 목소리든 프리셋이든 여기 들어간다 */
+  voiceboxProfileId: z.string().default(''),
+  /** 말투 지시 — 속도보다 어조를 잡는 용도다 (속도는 speechRate가 만든다) */
+  voiceboxInstruct: z.string().default(
+    '아주 빠르게 몰아치듯이 말한다. 흥분한 톤으로 쉼 없이 이어가고, 문장 끝은 짧게 끊는다.',
+  ),
+  /**
+   * 나레이션 음정(반음). 0이면 그대로.
+   * 쇼츠 톤은 높은 편이 얹히는데, 배속만 올리면 속도만 빨라지고 톤은 그대로다.
+   */
+  voicePitchSemitones: z.number().min(-12).max(12).default(0),
   /**
    * 나레이션 속도 배율. 쇼츠는 빠른 낭독이 유지율에 유리해 기본 1.25배.
    * 합성 음성에만 적용된다 — 첨부 파일은 사용자가 의도한 속도로 본다.

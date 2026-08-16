@@ -863,9 +863,13 @@ interface TypecastVoice {
   emotions: string[];
 }
 interface EngineInfo {
+  provider: 'typecast' | 'voicebox';
   typecastReady: boolean;
   typecastVoices: TypecastVoice[];
   error?: string;
+  voiceboxReady: boolean;
+  voiceboxProfiles: Array<{ id: string; name: string; language: string; voiceType: string }>;
+  voiceboxUrl: string;
 }
 
 /** ssfm-v30 감정 프리셋 한글 라벨 */
@@ -955,10 +959,19 @@ function VoicePanel({ job }: { job: JobDetail }) {
       <Card>
         <h3 className="mb-1 flex items-center gap-2 font-semibold"><Mic size={17} /> 나레이션 음성</h3>
         <p className="mb-3 text-sm text-slate-500">
-          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만 타입캐스트로 합성합니다.
+          씬에 음성 파일을 첨부하면 그 파일을 쓰고, 첨부하지 않은 씬만{' '}
+          {engineInfo.data?.provider === 'voicebox' ? 'Voicebox' : '타입캐스트'}로 합성합니다.
         </p>
 
-        {!allUploaded && (
+        {/*
+          합성 방식은 설정에서 고른다. 여기서는 그 방식에 필요한 것만 묻는다 —
+          두 벌을 한 화면에 늘어놓으면 무엇이 실제로 쓰이는지 알 수 없다.
+        */}
+        {!allUploaded && engineInfo.data?.provider === 'voicebox' && (
+          <VoiceboxPicker job={job} engine={engineInfo.data} />
+        )}
+
+        {!allUploaded && engineInfo.data?.provider !== 'voicebox' && (
           <div className="space-y-3">
             {engineInfo.data && !engineInfo.data.typecastReady ? (
               <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
@@ -1386,4 +1399,66 @@ async function collectDropped(items: DataTransferItemList): Promise<Array<{ file
     .filter((e): e is FileSystemEntry => !!e);
   for (const e of entries) await walk(e, '');
   return out;
+}
+
+
+/**
+ * Voicebox는 사용자가 켜 둔 로컬 서버다 — 앱이 띄우지 않는다.
+ * 꺼져 있으면 "고장"이 아니라 "켜세요"이므로, 켜는 방법을 그 자리에서 알려준다.
+ */
+function VoiceboxPicker({ job, engine }: { job: JobDetail; engine: EngineInfo }) {
+  const qc = useQueryClient();
+  const pick = useMutation({
+    mutationFn: (voiceboxProfileId: string) => api.put('/settings', { voiceboxProfileId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settings'] });
+      void qc.invalidateQueries({ queryKey: ['tts-engine'] });
+    },
+  });
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api.get<{ voiceboxProfileId: string; speechRate: number; voicePitchSemitones: number }>('/settings'),
+  });
+
+  if (!engine.voiceboxReady) {
+    return (
+      <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+        <p className="font-medium">Voicebox 서버가 꺼져 있습니다</p>
+        <p className="mt-0.5">
+          아래 명령으로 켠 뒤 이 화면을 새로고침하세요. <code>--data-dir</code>를 빼면
+          현재 폴더에 생성물이 쌓입니다.
+        </p>
+        <pre className="mt-2 overflow-x-auto rounded bg-white/60 p-2 text-xs">
+{`voicebox-server.exe --host 127.0.0.1 --port 17493 \
+  --data-dir "C:/Users/chang/AppData/Local/voicebox-data"`}
+        </pre>
+        <p className="mt-1 text-xs">찾는 주소: {engine.voiceboxUrl}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium">목소리</span>
+        <select
+          className="min-w-[240px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          value={settings.data?.voiceboxProfileId ?? ''}
+          onChange={(e) => pick.mutate(e.target.value)}
+        >
+          <option value="">선택하세요 ({engine.voiceboxProfiles.length}개)</option>
+          {engine.voiceboxProfiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} · {p.voiceType === 'cloned' ? '복제' : '프리셋'} ({p.language})
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="text-xs text-slate-500">
+        속도 {settings.data?.speechRate ?? 1}배 · 음정 {settings.data?.voicePitchSemitones ?? 0}반음으로
+        합성합니다 (설정에서 바꿉니다). 씬 {job.script.currentVersion > 0 ? '' : ''}하나에 한 문장으로
+        나뉘어 있어야 뒷문장이 잘리지 않습니다.
+      </p>
+    </div>
+  );
 }

@@ -23,6 +23,7 @@ import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pi
 import {
   listVoices as listTypecastVoices, synthesize as typecastSynthesize, AUDIO_MIME,
 } from '../pipeline/voice/typecast.js';
+import { available as voiceboxAvailable, listProfiles as listVoiceboxProfiles } from '../pipeline/voice/voicebox.js';
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir } from '../pipeline/exporter.js';
 import { hasKey } from '../store/secrets.js';
@@ -652,8 +653,9 @@ router.post('/jobs/:jid/rights-confirm', async (req, res) => {
 
 // ── 음성 (타입캐스트 API 또는 씬별 파일 첨부) ─────────────────────
 
-/** 타입캐스트 사용 가능 여부 + 캐릭터 목록 */
+/** 두 합성 경로의 사용 가능 여부와 목소리 목록 — 화면이 이걸 보고 고르게 한다 */
 router.get('/tts/engine', async (_req, res) => {
+  const settings = await loadSettings();
   const typecastReady = await hasKey('typecast');
   let voices: unknown[] = [];
   let error: string | undefined;
@@ -664,7 +666,19 @@ router.get('/tts/engine', async (_req, res) => {
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  res.json({ typecastReady, typecastVoices: voices, error });
+
+  // Voicebox는 사용자가 켜 둔 로컬 서버다 — 꺼져 있어도 오류가 아니라 "없음"으로 답한다
+  const voiceboxReady = await voiceboxAvailable(settings);
+  let voiceboxProfiles: unknown[] = [];
+  if (voiceboxReady) {
+    voiceboxProfiles = await listVoiceboxProfiles(settings).catch(() => []);
+  }
+
+  res.json({
+    provider: settings.voiceProvider,
+    typecastReady, typecastVoices: voices, error,
+    voiceboxReady, voiceboxProfiles, voiceboxUrl: settings.voiceboxUrl,
+  });
 });
 
 /** 캐릭터 미리듣기 — 짧은 샘플 문장을 합성해 오디오로 바로 반환 */
@@ -734,17 +748,33 @@ router.post('/jobs/:jid/tts', async (req, res) => {
   const typecastVoiceId = body.typecastVoiceId ?? job.typecastVoiceId ?? settings.typecastVoiceId;
   const typecastEmotion = body.emotion ?? job.typecastEmotion;
 
-  // 모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다
+  /*
+    모든 씬에 파일이 첨부됐으면 합성 없이 진행할 수 있다.
+    합성이 필요할 때 무엇을 확인할지는 **고른 방식마다 다르다** — 타입캐스트는 캐릭터와 API 키,
+    Voicebox는 목소리와 서버가 떠 있는지다. 여기서 막지 않으면 씬을 몇 개 만든 뒤에 터진다.
+  */
   const allUploaded = script.scenes.every((s) => job.sceneVoiceFiles[s.sceneId]);
-  if (!typecastVoiceId && !allUploaded) {
-    return res.status(400).json({
-      error: '타입캐스트 캐릭터를 선택하거나, 음성이 없는 씬에 파일을 첨부하세요',
-    });
-  }
-  if (!allUploaded && !(await hasKey('typecast'))) {
-    return res.status(400).json({
-      error: '타입캐스트 API 키가 없습니다. API 키 메뉴에서 등록하거나 씬별 음성 파일을 첨부하세요',
-    });
+  if (!allUploaded && settings.voiceProvider === 'voicebox') {
+    if (!settings.voiceboxProfileId) {
+      return res.status(400).json({ error: 'Voicebox 목소리를 설정에서 고르세요' });
+    }
+    if (!(await voiceboxAvailable(settings))) {
+      return res.status(400).json({
+        error: `Voicebox 서버에 닿지 않습니다 (${settings.voiceboxUrl}). ` +
+          'voicebox-server를 켠 뒤 다시 시도하세요',
+      });
+    }
+  } else if (!allUploaded) {
+    if (!typecastVoiceId) {
+      return res.status(400).json({
+        error: '타입캐스트 캐릭터를 선택하거나, 음성이 없는 씬에 파일을 첨부하세요',
+      });
+    }
+    if (!(await hasKey('typecast'))) {
+      return res.status(400).json({
+        error: '타입캐스트 API 키가 없습니다. API 키 메뉴에서 등록하거나 씬별 음성 파일을 첨부하세요',
+      });
+    }
   }
 
   const voiceDir = path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'voice');
