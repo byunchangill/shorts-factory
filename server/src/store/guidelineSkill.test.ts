@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { skillBody } from './projects.js';
 
 const SKILL = fileURLToPath(
-  new URL('../../../.claude/skills/temcasting-shorts/SKILL.md', import.meta.url));
+  new URL('../../../.claude/skills/shorts-direct-script/SKILL.md', import.meta.url));
 
 describe('skillBody', () => {
   it('앞머리(name/description)를 떼고 본문만 남긴다', () => {
@@ -33,10 +33,15 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
     await expect(fsp.access(SKILL)).resolves.toBeUndefined();
   });
 
-  it('참조 파일도 함께 들어 있다 (Claude Code 경로가 읽는다)', async () => {
-    const dir = path.join(path.dirname(SKILL), 'references');
-    const files = await fsp.readdir(dir);
-    expect(files).toContain('block-structure.md');
+  /*
+    지침은 **본문 하나만** 요청서에 실린다 (`readAllGuidelines`가 script.md만 읽는다).
+    옛 스킬은 `references/block-structure.md`에 블록 규칙을 두고 본문에서 "그 파일을
+    읽어라"라고 시켰는데, 파일을 못 여는 실행 경로(API 자동·복사 붙여넣기)에서는
+    그 지시가 허공을 가리킨다. 스킬은 스스로 완결돼야 한다.
+  */
+  it('바깥 파일을 읽으라고 시키지 않는다 — 요청서에는 본문만 실린다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
+    expect(body).not.toMatch(/references\//);
   });
 
   it('본문만 뽑아도 지침 구실을 한다 (앞머리를 뗀 뒤 내용이 남는다)', async () => {
