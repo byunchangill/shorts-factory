@@ -46,6 +46,12 @@ export async function run(
     buffer: true,
     stripFinalNewline: true,
     reject: true,
+    /*
+      표준입력은 닫아둔다. 서버가 부르는 도구는 아무도 입력을 안 준다 — 열어두면
+      Claude Code CLI가 "입력이 올지도 모른다"며 3초를 기다렸다 경고를 찍는다.
+      표준입력으로 뭘 흘려보내는 자리는 execa를 직접 쓴다 (`ocrDetect`).
+    */
+    stdin: 'ignore',
     // execa는 기본으로 부모 환경을 상속한다 — 여기 준 값만 덮어쓴다
     env: opts.env,
   });

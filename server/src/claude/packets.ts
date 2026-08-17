@@ -213,12 +213,22 @@ export interface PacketCommands {
   quality: string;
 }
 
+/**
+ * Claude Code에 넘길 슬래시 명령.
+ *
+ * 앱이 직접 CLI를 띄울 때(`cliRunner`)와 사용자가 터미널에 붙여넣을 때가 같은 문자열을
+ * 써야 한다 — 갈라두면 화면에 보이는 것과 실제로 도는 것이 달라진다.
+ */
+export function packetSlashCommand(packet: Packet, mode: 'fast' | 'quality'): string {
+  const dir = `workspace/${packet.dir.replace(/^\/?/, '')}`;
+  return mode === 'quality' ? `/shorts-content-team ${dir}` : `/answer-job ${dir}`;
+}
+
 /** Claude Code에서 실행할 명령 (UI 복사 버튼용) */
 export function packetCommands(packet: Packet): PacketCommands {
-  const dir = `workspace/${packet.dir.replace(/^\/?/, '')}`;
   return {
-    fast: `claude "/answer-job ${dir}"`,
-    quality: `claude "/shorts-content-team ${dir}"`,
+    fast: `claude "${packetSlashCommand(packet, 'fast')}"`,
+    quality: `claude "${packetSlashCommand(packet, 'quality')}"`,
   };
 }
 
