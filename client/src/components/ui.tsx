@@ -215,9 +215,14 @@ export function ConfirmDialog({
   );
 }
 
+/**
+ * `div`가 아니라 `span`이다. 「…하는 중」 문구 옆에 붙이는 물건이라 `<p>` 안에 들어가는
+ * 자리가 많은데, `<p>` 안의 `div`는 브라우저가 문단을 강제로 닫아버리는 잘못된 마크업이라
+ * 콘솔에 빨간 오류가 뜬다. 부르는 쪽마다 감싸개를 고치는 대신 여기서 한 번에 막는다.
+ */
 export function Spinner() {
   return (
-    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
+    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
   );
 }
 
