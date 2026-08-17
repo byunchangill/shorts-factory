@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { checkToolAny, IOPAINT_VERSION_ARGS } from './util/toolCheck.js';
+import { checkToolAny, checkIopaint } from './util/toolCheck.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
 import { findKoreanFont } from './pipeline/fonts.js';
 import { ocrAvailable } from './pipeline/ocrDetect.js';
+import { vsrProvider } from './pipeline/vsr.js';
 
 export interface DoctorReport {
   tools: Array<{
@@ -139,10 +140,9 @@ async function probeTools(): Promise<ToolEntry[]> {
       installHint: 'winget install yt-dlp.yt-dlp 또는 pip install yt-dlp (자주 깨지므로 주기적으로 yt-dlp -U)',
     },
     {
-      // iopaint는 버전마다 CLI가 다르다 — --version이 없는 빌드가 있어서
-      // 그것만 보고 판정하면 설치돼 있어도 "없음"이 된다 (실제로 그랬다).
-      // --help는 어느 버전이든 0으로 끝나므로 마지막 확인 수단으로 쓴다.
-      name: 'iopaint', bin: s.iopaintPath, required: false, versionArgs: IOPAINT_VERSION_ARGS,
+      // iopaint는 실행해 묻는 것 자체가 비싸다 (파이썬+torch). checkIopaint가
+      // 절대경로면 파일만 보고 판정한다 — 2차 제거 쪽과 같은 판정을 써야 한다
+      name: 'iopaint', bin: s.iopaintPath, required: false, check: checkIopaint,
       installHint: 'pip install iopaint (2차 AI 인페인팅용 — 선택. tools/install-inpaint.md 참조)',
     },
   ];
@@ -153,7 +153,9 @@ async function probeTools(): Promise<ToolEntry[]> {
 
   const tools = await Promise.all(
     checks.map(async (c) => {
-      const r = await checkToolAny(c.bin, c.versionArgs ?? [['--version']]);
+      const r = c.check
+        ? await c.check(c.bin)
+        : await checkToolAny(c.bin, c.versionArgs ?? [['--version']]);
       return {
         name: c.name,
         required: c.required,
@@ -174,6 +176,17 @@ async function probeTools(): Promise<ToolEntry[]> {
     installHint:
       'Windows·macOS는 기본 탑재. Linux는 `apt install fonts-nanum` 또는 ' +
       '설정에서 폰트 파일 경로를 직접 지정하세요 (없으면 자막·카드의 한글이 깨집니다)',
+  });
+
+  // VSR은 실행해 물으면 torch를 통째로 올린다 — 자리에 있는지만 파일로 본다
+  tools.push({
+    name: 'VSR (자막 제거)',
+    required: false,
+    available: await vsrProvider.available(),
+    version: s.vsrPath ? s.vsrMode : undefined,
+    installHint:
+      '설정에서 VSR 저장소 폴더를 지정하세요 (선택 — 2차 제거의 1순위. '
+      + '없으면 iopaint로, 그것도 없으면 1차 제거만으로 내려갑니다)',
   });
 
   tools.push({

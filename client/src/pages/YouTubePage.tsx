@@ -300,7 +300,10 @@ function PopularTab() {
 
 // ── 탭 3: 타채널 분석 ─────────────────────────────────────────────
 
-interface ChannelHit { channelId: string; title: string; description: string; thumbnail: string }
+interface ChannelHit {
+  channelId: string; title: string; description: string; thumbnail: string;
+  subscriberCount: number; videoCount: number; totalViewCount: number;
+}
 interface ChannelAnalysisData {
   channelId: string; title: string; thumbnail: string;
   subscriberCount: number; videoCount: number; totalViewCount: number;
@@ -339,22 +342,31 @@ function ChannelTab() {
             <Search size={15} /> 검색
           </Button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">채널 검색 100유닛 · 분석은 3유닛만 사용합니다.</p>
+        <p className="mt-2 text-xs text-slate-500">채널 검색 101유닛 · 분석은 3유닛만 사용합니다.</p>
       </Card>
 
       {hits.data && hits.data.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {hits.data.map((c) => (
             <button
               key={c.channelId}
               onClick={() => setSelected(c.channelId)}
               className={clsx(
-                'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
-                selected === c.channelId ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200 bg-white',
+                'flex flex-col gap-2 rounded-lg border p-4 text-left',
+                selected === c.channelId ? 'border-brand-500 bg-brand-50' : 'border-slate-200 bg-white',
               )}
             >
-              {c.thumbnail && <img src={c.thumbnail} alt="" className="h-6 w-6 rounded-full" />}
-              {c.title}
+              <div className="flex items-center gap-3">
+                {c.thumbnail && <img src={c.thumbnail} alt="" className="h-12 w-12 shrink-0 rounded-full" />}
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{c.title}</p>
+                  <p className="text-xs text-slate-500">
+                    구독자 {fmtCount(c.subscriberCount)} · 영상 {c.videoCount.toLocaleString()}개
+                  </p>
+                </div>
+              </div>
+              <p className="line-clamp-2 text-xs text-slate-500">{c.description || '설명 없음'}</p>
+              <p className="text-xs text-slate-400">총 조회 {fmtCount(c.totalViewCount)}</p>
             </button>
           ))}
         </div>

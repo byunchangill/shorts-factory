@@ -125,10 +125,13 @@ export async function videoCategories(regionCode = 'KR'): Promise<Array<{ id: st
     .map((it: { id: string; snippet: { title: string } }) => ({ id: it.id, title: it.snippet.title }));
 }
 
-/** 채널 검색 (search.list 100유닛) */
-export async function searchChannels(query: string): Promise<Array<{
+export interface ChannelHit {
   channelId: string; title: string; description: string; thumbnail: string;
-}>> {
+  subscriberCount: number; videoCount: number; totalViewCount: number;
+}
+
+/** 채널 검색 (search.list 100유닛 + channels.list 1유닛 — 구독자·영상 수를 채운다) */
+export async function searchChannels(query: string): Promise<ChannelHit[]> {
   const data = await ytFetch('search', {
     part: 'snippet',
     type: 'channel',
@@ -136,15 +139,36 @@ export async function searchChannels(query: string): Promise<Array<{
     maxResults: '10',
     regionCode: 'KR',
   });
-  return (data.items ?? []).map((it: {
+  const hits: ChannelHit[] = (data.items ?? []).map((it: {
     id: { channelId: string };
     snippet: { title: string; description: string; thumbnails?: Record<string, { url: string }> };
   }) => ({
     channelId: it.id.channelId,
     title: it.snippet.title,
     description: it.snippet.description,
-    thumbnail: it.snippet.thumbnails?.default?.url ?? '',
+    thumbnail: it.snippet.thumbnails?.medium?.url ?? it.snippet.thumbnails?.default?.url ?? '',
+    subscriberCount: 0,
+    videoCount: 0,
+    totalViewCount: 0,
   }));
+  if (hits.length === 0) return hits;
+
+  // channels.list 한 번(1유닛)이면 10개 통계가 다 온다 — 카드에 보여줄 값
+  const stats = await ytFetch('channels', {
+    part: 'statistics',
+    id: hits.map((h) => h.channelId).join(','),
+    maxResults: '50',
+  });
+  const byId = new Map<string, { subscriberCount?: string; videoCount?: string; viewCount?: string }>(
+    (stats.items ?? []).map((it: { id: string; statistics?: Record<string, string> }) => [it.id, it.statistics ?? {}]),
+  );
+  for (const h of hits) {
+    const s = byId.get(h.channelId);
+    h.subscriberCount = Number(s?.subscriberCount ?? 0);
+    h.videoCount = Number(s?.videoCount ?? 0);
+    h.totalViewCount = Number(s?.viewCount ?? 0);
+  }
+  return hits;
 }
 
 /**

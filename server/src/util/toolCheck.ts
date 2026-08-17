@@ -1,3 +1,5 @@
+import path from 'node:path';
+import fsp from 'node:fs/promises';
 import { checkTool } from './exec.js';
 
 /**
@@ -25,3 +27,21 @@ export async function checkToolAny(
  * `--version`이 없는 빌드가 있어서, 어느 버전에서든 0으로 끝나는 `--help`를 뒤에 둔다.
  */
 export const IOPAINT_VERSION_ARGS = [['--version'], ['--help']];
+
+/**
+ * iopaint 설치 확인.
+ *
+ * **절대경로로 지정했으면 실행하지 않고 파일만 본다.** iopaint는 `--help` 한 번에도
+ * 파이썬과 torch를 통째로 올려 2.5초(예열)~8초 이상(냉시작)이 걸린다. 확인 인자를
+ * 두 개 시도하므로 상한(8초)을 넘기기 쉽고, 그러면 멀쩡히 깔린 도구가 "없음"이 되어
+ * 2차 제거가 막힌다 (실측: 서버 재시작 직후 실제로 막혔다).
+ * 있느냐는 물음에 20초를 쓸 이유가 없다 — 그 자리에 파일이 있으면 있는 것이다.
+ */
+export async function checkIopaint(bin: string): Promise<{ available: boolean; version?: string }> {
+  if (path.isAbsolute(bin)) {
+    const ok = await fsp.access(bin).then(() => true, () => false);
+    return { available: ok };
+  }
+  // PATH에서 찾는 이름이면 실행해보는 수밖에 없다
+  return checkToolAny(bin, IOPAINT_VERSION_ARGS);
+}

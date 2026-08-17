@@ -361,6 +361,16 @@ function ClipsPanel({ job }: { job: JobDetail }) {
       void qc.invalidateQueries({ queryKey: ['clips'] });
     },
   });
+  /*
+    자막 자리 다시 찾기 — 그려둔 존을 버리고 검출기로 새로 잡는다.
+    "영상 재생성"은 존이 없는 클립에만 채우므로, 한 번 그린 뒤에는 이 버튼이 유일한 길이다.
+    프레임을 뽑아 글자를 찾는 동안(수십 초) 응답을 기다린다 — 끝나면 클립을 다시 읽는다
+  */
+  const autoZones = useMutation({
+    mutationFn: (cid: string) => api.post(`/jobs/${job.id}/clips/${cid}/zones/auto`),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['clips'] }); },
+    onError: (e: Error) => alert(e.message),
+  });
   // 프레임이 5장뿐인 예전 클립, 또는 지운 것을 되살릴 때.
   // 결과는 SSE(clip)로 들어오므로 여기서는 진행 표시만 건다
   const reextract = useMutation({
@@ -484,6 +494,17 @@ function ClipsPanel({ job }: { job: JobDetail }) {
               <Button
                 variant="ghost"
                 className="px-2 py-1 text-xs"
+                title="원본에서 글자를 찾아 자막·워터마크 존을 다시 잡습니다 — 지금 그려둔 존은 지워집니다"
+                disabled={autoZones.isPending}
+                onClick={() => autoZones.mutate(current.id)}
+              >
+                {autoZones.isPending
+                  ? <span className="inline-flex items-center gap-1">글자 찾는 중… <Spinner /></span>
+                  : <><Wand2 size={12} /> 자막 자리 자동 찾기</>}
+              </Button>
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
                 title="원본 영상에서 프레임을 전부 다시 뽑습니다 — 프레임이 몇 장 없는 예전 클립이나, 지운 것을 되살릴 때 쓰세요"
                 disabled={reframing === current.id}
                 onClick={() => reextract.mutate(current.id)}
@@ -494,114 +515,121 @@ function ClipsPanel({ job }: { job: JobDetail }) {
               </Button>
             </div>
           </div>
-          <div className="mb-3 flex max-h-72 flex-wrap gap-2 overflow-y-auto pb-1">
-            {frames.map((f) => (
-              <div
-                key={f.file}
-                className={clsx(
-                  'relative rounded-lg border-2 p-0.5',
-                  marked.has(f.file) ? 'border-red-400 bg-red-50'
-                    : shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
-                )}
-              >
-                <button onClick={() => setActiveFrame(f.file)} className="block" title="이 프레임에 존 그리기">
-                  <img
-                    src={f.url}
-                    alt={`${f.t}초`}
-                    className={clsx('h-20 w-auto rounded', marked.has(f.file) && 'opacity-40')}
-                    draggable={false}
-                  />
-                </button>
-                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600">
-                  <span>{f.t.toFixed(1)}초</span>
-                  {f.recommended && <span className="text-brand-600" title="장면이 바뀌는 지점">▸</span>}
-                  <button
-                    className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-500 hover:text-red-500')}
-                    title={marked.has(f.file) ? '삭제 취소' : '삭제할 프레임으로 찍기'}
-                    onClick={() => toggleMark(f.file)}
-                  >
-                    <Trash2 size={12} />
+          {/* 왼쪽 = 프레임 목록, 오른쪽 = 고른 프레임. 세로 영상이라 목록이 옆으로 붙어야 둘 다 보인다 */}
+          <div className="flex flex-col gap-4 lg:flex-row">
+            <div className="flex max-h-[560px] flex-wrap content-start gap-2 overflow-y-auto pb-1 lg:w-72 lg:shrink-0">
+              {frames.map((f) => (
+                <div
+                  key={f.file}
+                  className={clsx(
+                    'relative rounded-lg border-2 p-0.5',
+                    marked.has(f.file) ? 'border-red-400 bg-red-50'
+                      : shownFrame.file === f.file ? 'border-brand-500' : 'border-transparent',
+                  )}
+                >
+                  <button onClick={() => setActiveFrame(f.file)} className="block" title="이 프레임에 존 그리기">
+                    <img
+                      src={f.url}
+                      alt={`${f.t}초`}
+                      className={clsx('h-20 w-auto rounded', marked.has(f.file) && 'opacity-40')}
+                      draggable={false}
+                    />
                   </button>
+                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600">
+                    <span>{f.t.toFixed(1)}초</span>
+                    {f.recommended && <span className="text-brand-600" title="장면이 바뀌는 지점">▸</span>}
+                    <button
+                      className={clsx('ml-auto', marked.has(f.file) ? 'text-red-500' : 'text-slate-500 hover:text-red-500')}
+                      title={marked.has(f.file) ? '삭제 취소' : '삭제할 프레임으로 찍기'}
+                      onClick={() => toggleMark(f.file)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
+              ))}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <ZoneEditor
+                frameUrl={shownFrame.url}
+                frameTime={shownFrame.t}
+                frameTimes={frames.map((f) => f.t)}
+                duration={current.probe.duration}
+                videoWidth={current.probe.width}
+                videoHeight={current.probe.height}
+                zones={current.zones}
+                onChange={(zones) => saveZones.mutate({ cid: current.id, zones })}
+                detecting={detecting}
+                onDetect={async (zone) => {
+                  setDetecting(zone.id);
+                  try {
+                    const r = await api.post<{
+                      verdict: 'ranges' | 'always' | 'none' | 'unclear';
+                      ranges: Array<{ t0: number; t1: number }>;
+                      frames: Array<{ t: number; score: number }>;
+                    }>(`/jobs/${job.id}/clips/${current.id}/zones/detect`, {
+                      zone: { x: zone.x, y: zone.y, w: zone.w, h: zone.h },
+                    });
+                    // 애매하면 구간을 넣지 않는다 — 틀린 구간이 조용히 적용되면 더 나쁘다
+                    if (r.verdict !== 'ranges') {
+                      alert({
+                        always: '이 영역에는 영상 내내 글자가 있습니다.\n전체 구간으로 두시면 됩니다.',
+                        none: '이 영역에서 글자를 찾지 못했습니다.\n영역이 자막에서 벗어났는지 확인해 보세요.',
+                        unclear: '구간을 특정하지 못했습니다.\n배경과 잘 구분되지 않는 경우입니다. 직접 골라주세요.',
+                      }[r.verdict]);
+                      return;
+                    }
+                    const [best, ...rest] = r.ranges;
+                    saveZones.mutate({
+                      cid: current.id,
+                      zones: current.zones.map((z) =>
+                        z.id === zone.id ? { ...z, t0: best.t0, t1: best.t1 } : z),
+                    });
+                    if (rest.length) {
+                      alert(
+                        `${best.t0.toFixed(1)}~${best.t1.toFixed(1)}초를 넣었습니다.\n`
+                        + `다른 구간도 있습니다: ${rest.map((x) => `${x.t0.toFixed(1)}~${x.t1.toFixed(1)}초`).join(', ')}\n`
+                        + '필요하면 존을 하나 더 그려서 그 구간을 지정하세요.',
+                      );
+                    }
+                  } finally {
+                    setDetecting(null);
+                  }
+                }}
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => clean.mutate({ cid: current.id, tier: 1 })}
+                  disabled={tier1Zones === 0 || cleaning === current.id}
+                >
+                  1차 제거 실행 (크롭/블러/보간)
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => clean.mutate({ cid: current.id, tier: 2 })}
+                  disabled={tier2Zones === 0 || cleaning === current.id}
+                >
+                  AI 인페인팅 (2차)
+                </Button>
+                {cleaning === current.id && <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 처리 중…</span>}
               </div>
-            ))}
+              {/*
+                비활성 버튼은 이유를 말해주지 않으면 고장으로 보인다.
+                무엇을 해야 눌리는지 그 자리에서 알려준다.
+              */}
+              {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {current.zones.length === 0
+                    ? '비워두면 "영상 재생성"이 자막·워터마크 자리를 스스로 찾아 지웁니다. 잘못 잡거나 놓치는 곳이 있을 때만 직접 드래그하세요 — 그린 자리가 있으면 그 클립은 그것을 씁니다.'
+                    : tier1Zones === 0
+                      ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
+                      : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
+                </p>
+              )}
+            </div>
           </div>
-          <ZoneEditor
-            frameUrl={shownFrame.url}
-            frameTime={shownFrame.t}
-            frameTimes={frames.map((f) => f.t)}
-            duration={current.probe.duration}
-            videoWidth={current.probe.width}
-            videoHeight={current.probe.height}
-            zones={current.zones}
-            onChange={(zones) => saveZones.mutate({ cid: current.id, zones })}
-            detecting={detecting}
-            onDetect={async (zone) => {
-              setDetecting(zone.id);
-              try {
-                const r = await api.post<{
-                  verdict: 'ranges' | 'always' | 'none' | 'unclear';
-                  ranges: Array<{ t0: number; t1: number }>;
-                  frames: Array<{ t: number; score: number }>;
-                }>(`/jobs/${job.id}/clips/${current.id}/zones/detect`, {
-                  zone: { x: zone.x, y: zone.y, w: zone.w, h: zone.h },
-                });
-                // 애매하면 구간을 넣지 않는다 — 틀린 구간이 조용히 적용되면 더 나쁘다
-                if (r.verdict !== 'ranges') {
-                  alert({
-                    always: '이 영역에는 영상 내내 글자가 있습니다.\n전체 구간으로 두시면 됩니다.',
-                    none: '이 영역에서 글자를 찾지 못했습니다.\n영역이 자막에서 벗어났는지 확인해 보세요.',
-                    unclear: '구간을 특정하지 못했습니다.\n배경과 잘 구분되지 않는 경우입니다. 직접 골라주세요.',
-                  }[r.verdict]);
-                  return;
-                }
-                const [best, ...rest] = r.ranges;
-                saveZones.mutate({
-                  cid: current.id,
-                  zones: current.zones.map((z) =>
-                    z.id === zone.id ? { ...z, t0: best.t0, t1: best.t1 } : z),
-                });
-                if (rest.length) {
-                  alert(
-                    `${best.t0.toFixed(1)}~${best.t1.toFixed(1)}초를 넣었습니다.\n`
-                    + `다른 구간도 있습니다: ${rest.map((x) => `${x.t0.toFixed(1)}~${x.t1.toFixed(1)}초`).join(', ')}\n`
-                    + '필요하면 존을 하나 더 그려서 그 구간을 지정하세요.',
-                  );
-                }
-              } finally {
-                setDetecting(null);
-              }
-            }}
-          />
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button
-              onClick={() => clean.mutate({ cid: current.id, tier: 1 })}
-              disabled={tier1Zones === 0 || cleaning === current.id}
-            >
-              1차 제거 실행 (크롭/블러/보간)
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => clean.mutate({ cid: current.id, tier: 2 })}
-              disabled={tier2Zones === 0 || cleaning === current.id}
-            >
-              AI 인페인팅 (2차)
-            </Button>
-            {cleaning === current.id && <span className="flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 처리 중…</span>}
-          </div>
-          {/*
-            비활성 버튼은 이유를 말해주지 않으면 고장으로 보인다.
-            무엇을 해야 눌리는지 그 자리에서 알려준다.
-          */}
-          {cleaning !== current.id && (tier1Zones === 0 || tier2Zones === 0) && (
-            <p className="mt-2 text-xs text-slate-500">
-              {current.zones.length === 0
-                ? '비워두면 "영상 재생성"이 자막·워터마크 자리를 스스로 찾아 지웁니다. 잘못 잡거나 놓치는 곳이 있을 때만 직접 드래그하세요 — 그린 자리가 있으면 그 클립은 그것을 씁니다.'
-                : tier1Zones === 0
-                  ? 'AI 인페인팅 존만 있습니다. 1차 제거는 크롭·보간·블러 방식 존이 있어야 실행됩니다.'
-                  : 'AI 인페인팅은 존의 방식을 "AI 인페인팅"으로 바꾼 것이 있어야 켜집니다 (iopaint 설치 필요).'}
-            </p>
-          )}
+
           <div className="mt-4 flex flex-wrap gap-6">
             {current.selectedUrl && (
               <div>

@@ -8,16 +8,26 @@ import { run } from '../util/exec.js';
  * 프레임은 1초 간격의 정지 장면이라 그 자체로는 영상이 되지 않는다. 앞뒤로 `padSec`을
  * 붙여 구간으로 만들고, 겹치면 하나로 합친다 (인접 프레임을 남기면 끊긴 컷 두 개가 아니라
  * 이어진 컷 하나가 나와야 한다).
+ *
+ * `sceneTimes`를 주면 붙인 폭이 **씬 경계를 넘지 않게 자른다.** 사용자가 고르지 않은
+ * 옆 장면이 앞뒤 1.5초에 딸려 들어오면 컷 안에서 화면이 튄다 — 프레임 몇 장짜리
+ * 미리보기로는 안 보이고 완성본에서 드러난다. 사용자가 경계 양쪽을 다 골랐으면
+ * 두 구간이 맞닿아 그대로 합쳐지므로, 잘려 나가는 것은 **아무도 고르지 않은 쪽**뿐이다.
  */
 export function segmentsFromFrames(
   frames: ClipFrame[],
   duration: number,
   padSec = 1.5,
+  sceneTimes: number[] = [],
 ): Segment[] {
+  const scenes = [...sceneTimes].sort((a, b) => a - b);
   const ranges: Array<{ in: number; out: number }> = [];
   for (const f of [...frames].sort((a, b) => a.t - b.t)) {
-    const start = Math.max(0, f.t - padSec);
-    const end = duration ? Math.min(duration, f.t + padSec) : f.t + padSec;
+    // 이 프레임이 속한 씬의 경계. 없으면 영상 끝까지가 한 씬이다
+    const sceneIn = Math.max(0, ...scenes.filter((s) => s <= f.t));
+    const sceneOut = Math.min(duration || Infinity, ...scenes.filter((s) => s > f.t));
+    const start = Math.max(0, f.t - padSec, sceneIn);
+    const end = Math.min(duration || Infinity, f.t + padSec, sceneOut);
     const last = ranges.at(-1);
     if (last && start <= last.out) last.out = Math.max(last.out, end);
     else ranges.push({ in: start, out: end });
@@ -29,6 +39,28 @@ export function segmentsFromFrames(
     note: '남은 프레임 기준',
     used: true,
   }));
+}
+
+/**
+ * 고른 구간에 실제로 걸리는 존만 남긴다.
+ *
+ * **제거 방식 사다리의 0순위는 "글자가 없는 구간을 고르는 것"이다** — 지우는 순간
+ * 화질이든 번짐이든 대가가 붙으니, 안 지우고 끝나는 길이 있으면 그 길로 간다.
+ * 자막은 대개 오프닝 몇 초에 몰려 있어서, 사용자가 그 구간의 프레임을 지우고 나면
+ * 지울 것이 아예 없는 경우가 흔하다.
+ *
+ * 구간 밖의 글자를 지우는 것은 손해만 남는다 — 최종 영상에 안 나오는 자리를
+ * delogo로 문질러 놓고 시간까지 쓴다. 시각이 없는 존(`t0`/`t1` 없음)은 전 구간이라
+ * 항상 남는다.
+ */
+export function zonesInSegments(zones: Zone[], segments: Segment[]): Zone[] {
+  const used = segments.filter((s) => s.used && s.out > s.in);
+  if (!used.length) return zones; // 고른 구간이 없으면 좁힐 근거도 없다 — 원래대로 둔다
+  return zones.filter((z) => {
+    const t0 = z.t0 ?? 0;
+    const t1 = z.t1 ?? Infinity;
+    return used.some((s) => t0 < s.out && s.in < t1);
+  });
 }
 
 /**

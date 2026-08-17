@@ -69,6 +69,26 @@ describe('buildLayoutFilter', () => {
     const f = buildLayoutFilter({ ...base, layout: 'framed', frameTitle: '  ' }, '/font.ttf');
     expect(f).not.toContain('drawtext');
   });
+
+  it('채널 그레이딩은 맨 끝 — 합성이 끝난 화면 전체가 한 룩이어야 한다', () => {
+    const f = buildLayoutFilter({ ...base, layout: 'fullscreen', grade: 'eq=contrast=1.07' }, null);
+    expect(f.endsWith('eq=contrast=1.07')).toBe(true);
+  });
+
+  it('그레이딩을 비우면 색보정을 안 건다', () => {
+    expect(buildLayoutFilter({ ...base, layout: 'fullscreen', grade: '' }, null)).toContain('fps=30');
+  });
+
+  it('좌우반전은 맨 앞 — 소재만 뒤집고 우리가 얹는 글자는 그대로 둔다', () => {
+    const f = buildLayoutFilter({ ...base, layout: 'framed', frameTitle: '꿀템창고', mirror: true }, '/font.ttf');
+    expect(f.startsWith('hflip,')).toBe(true);
+    // 제목은 반전 뒤에 얹히므로 거울상이 되지 않는다
+    expect(f.indexOf('hflip')).toBeLessThan(f.indexOf('drawtext'));
+  });
+
+  it('반전을 끄면 hflip이 없다', () => {
+    expect(buildLayoutFilter({ ...base, mirror: false }, null)).not.toContain('hflip');
+  });
 });
 
 describe('폰트 유틸', () => {

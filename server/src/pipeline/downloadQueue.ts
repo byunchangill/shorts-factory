@@ -197,11 +197,12 @@ async function createClipForSource(
   let clip: Clip = ClipSchema.parse({ id: clipId, sourceId });
   try {
     const probe = await probeVideo(settings, filePath);
-    const frames = await extractFrames(settings, filePath, framesDir, probe.duration);
+    const { frames, sceneTimes } = await extractFrames(settings, filePath, framesDir, probe.duration);
     clip = ClipSchema.parse({
       id: clipId,
       sourceId,
       probe,
+      sceneTimes,
       frames: frames.map((f) => ({
         file: toWorkspaceRel(f.filePath),
         t: f.t,

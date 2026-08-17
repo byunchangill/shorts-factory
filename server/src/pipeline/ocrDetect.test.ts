@@ -50,6 +50,19 @@ describe('clusterBoxes', () => {
     expect(zones[0].t1).toBe(4);
   });
 
+  it('한참 뒤 같은 자리에 뜬 글자는 다른 존이다 — 그 사이를 지우면 안 된다', () => {
+    // 실측(c01): 10초 제목과 74초 "The End"가 같은 자리다. 하나로 묶으면 62초를 통째로 뭉갠다
+    const dets: FrameDetection[] = [
+      { t: 10, boxes: [box(165, 295, 329, 92)] },
+      { t: 11, boxes: [box(165, 295, 329, 92)] },
+      { t: 74, boxes: [box(170, 300, 320, 88)] },
+    ];
+    const zones = clusterBoxes(dets, 1, 80);
+    expect(zones).toHaveLength(2);
+    expect(zones[0].t1).toBeLessThan(20);
+    expect(zones[1].t0).toBeGreaterThan(70);
+  });
+
   it('내내 떠 있으면 구간을 두지 않는다 (전체 구간이 곧 정답)', () => {
     const dets: FrameDetection[] = [
       { t: 0, boxes: [box(100, 820, 300, 40)] },

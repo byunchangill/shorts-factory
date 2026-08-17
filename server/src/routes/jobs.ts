@@ -15,7 +15,9 @@ import {
   downloadAll, retrySource, isDownloading, attachSourceFile, removeSource, reconcileDownloadState,
 } from '../pipeline/downloadQueue.js';
 import { runTier1Clean } from '../pipeline/cleaner.js';
-import { segmentsFromFrames, scaleZones, buildSelectedVideo, selectedPath } from '../pipeline/selected.js';
+import {
+  segmentsFromFrames, scaleZones, zonesInSegments, buildSelectedVideo, selectedPath,
+} from '../pipeline/selected.js';
 import { detectTextZones, ocrAvailable } from '../pipeline/ocrDetect.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
 import { detectZoneRanges } from '../pipeline/detectZone.js';
@@ -349,11 +351,12 @@ router.post('/jobs/:jid/clips/:cid/frames/reextract', async (req, res) => {
     const framesDir = path.join(jobs.clipDir(ref, clip.id), 'frames');
     // 장수가 줄어들 수도 있으므로 통째로 지우고 새로 뽑는다
     await fsp.rm(framesDir, { recursive: true, force: true });
-    const frames = await extractFrames(settings, input, framesDir, probe.duration);
+    const { frames, sceneTimes } = await extractFrames(settings, input, framesDir, probe.duration);
 
     // 그 사이 사용자가 존을 편집했을 수 있다 — 다시 읽어 프레임만 갈아끼운다
     const latest = (await jobs.readClip(ref, clip.id)) ?? clip;
     latest.probe = probe;
+    latest.sceneTimes = sceneTimes;
     latest.frames = frames.map((f) => ({
       file: toWorkspaceRel(f.filePath),
       t: f.t,
@@ -380,7 +383,9 @@ router.post('/jobs/:jid/clips/:cid/segments/from-frames', async (req, res) => {
   if (!clip) return res.status(404).json({ error: '클립 없음' });
   if (!clip.frames.length) return res.status(400).json({ error: '남은 프레임이 없습니다' });
 
-  clip.segments = segmentsFromFrames(clip.frames, clip.probe?.duration ?? 0, body.padSec);
+  clip.segments = segmentsFromFrames(
+    clip.frames, clip.probe?.duration ?? 0, body.padSec, clip.sceneTimes,
+  );
   await jobs.writeClip(ref, clip);
   res.json(clip);
 });
@@ -448,10 +453,22 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
         }
       }
 
+      /*
+        컷 구간을 먼저 잡는다. 지울 대상을 여기서 좁히기 위해서다 — 최종 영상에
+        안 나오는 자막을 지우는 것은 시간만 쓰고 그 자리를 문질러 놓는 일이다.
+        고른 장면이 처음부터 깨끗하면 1차 제거를 통째로 건너뛴다 (제거 사다리 0순위).
+      */
+      clip.segments = segmentsFromFrames(
+        clip.frames, clip.probe?.duration ?? 0, body.padSec, clip.sceneTimes,
+      );
+      const inCut = zonesInSegments(clip.zones, clip.segments);
+
       // 1차 제거 — 지울 존이 있을 때만. 없으면 원본을 그대로 잘라 쓴다
-      if (clip.zones.some((z) => z.method !== 'inpaint')) {
-        const r = await runTier1Clean(settings, clip, footage, outDir, (line) =>
-          broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }));
+      if (inCut.some((z) => z.method !== 'inpaint')) {
+        const r = await runTier1Clean(
+          settings, { ...clip, zones: inCut }, footage, outDir,
+          (line) => broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+        );
         clip.cleanVersions.push({
           v: r.version, tier: 1, params: r.params, filePath: r.filePath,
           createdAt: new Date().toISOString(),
@@ -460,7 +477,6 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
         footage = r.filePath;
       }
 
-      clip.segments = segmentsFromFrames(clip.frames, clip.probe?.duration ?? 0, body.padSec);
       clip.selectedVideo = await buildSelectedVideo(
         settings, footage, clip.segments, selectedPath(outDir),
         (line) => broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }),
@@ -489,6 +505,34 @@ router.put('/jobs/:jid/clips/:cid/zones', async (req, res) => {
   const clip = await jobs.readClip(ref, req.params.cid);
   if (!clip) return res.status(404).json({ error: '클립 없음' });
   clip.zones = body.zones;
+  await jobs.writeClip(ref, clip);
+  res.json(clip);
+});
+
+/**
+ * 이 클립의 자막 자리 자동 찾기 — 그려둔 존을 **버리고** 다시 잡는다.
+ *
+ * "영상 재생성"은 존이 없는 클립에만 채운다 (공들여 그린 것을 덮지 않기 위해서다).
+ * 그래서 한 번 그리고 나면 검출기를 다시 태울 길이 없었다 — 이 경로가 그것이다.
+ * 검출은 항상 **원본**을 본다. 지운 영상을 보면 이미 사라진 글자를 찾게 된다.
+ */
+router.post('/jobs/:jid/clips/:cid/zones/auto', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const clip = await jobs.readClip(ref, req.params.cid);
+  if (!clip) return res.status(404).json({ error: '클립 없음' });
+  if (!clip.probe) return res.status(400).json({ error: '분석 전이라 영상 정보가 없습니다' });
+  if (!(await ocrAvailable(settings))) {
+    return res.status(400).json({
+      error: '글자 검출기가 없습니다 — pip install rapidocr-onnxruntime (설정에서 파이썬 경로 확인)',
+    });
+  }
+  const job = await jobs.readJob(ref);
+  const source = job?.sources.find((s) => s.id === clip.sourceId);
+  if (!source?.filePath) return res.status(400).json({ error: '소스 파일 없음' });
+
+  clip.zones = await detectTextZones(settings, fromWorkspaceRel(source.filePath), clip.probe, (line) =>
+    broadcast('clean.progress', { jobId: ref.jobId, clipId: clip.id, line }));
   await jobs.writeClip(ref, clip);
   res.json(clip);
 });
@@ -545,7 +589,12 @@ router.post('/jobs/:jid/clips/:cid/clean', async (req, res) => {
       clip.currentCleanVersion = r.version;
     } else {
       const provider = await getAvailableInpaintProvider();
-      if (!provider) throw new Error('AI 인페인팅 도구가 설치되어 있지 않습니다 (pip install iopaint)');
+      if (!provider) {
+        throw new Error(
+          'AI 제거 도구가 없습니다 — 설정에서 VSR 저장소 폴더를 지정하거나 iopaint를 설치하세요 '
+          + '(tools/install-inpaint.md)',
+        );
+      }
       const zones = clip.zones.filter((z) => z.method === 'inpaint');
       if (!zones.length) throw new Error('inpaint 방식으로 지정된 존이 없습니다');
       const version = (clip.cleanVersions.at(-1)?.v ?? 0) + 1;
