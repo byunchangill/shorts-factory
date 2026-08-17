@@ -10,7 +10,7 @@ import { getProject, listProductFiles } from '../store/projects.js';
 import { availableProviders } from '../ai/providers.js';
 import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
 import { runPacketQuality } from '../ai/qualityRunner.js';
-import { runPacketWithCli, claudeCliAvailable, isRunning } from '../claude/cliRunner.js';
+import { runPacketWithCli, claudeCliAvailable, isRunning, runningSince } from '../claude/cliRunner.js';
 import { broadcast } from '../sse.js';
 
 const router = asyncRouter();
@@ -37,7 +37,14 @@ router.get('/packets/:pkid', async (req, res) => {
   try {
     requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   } catch { /* 없으면 빈 값 */ }
-  res.json({ ...packet, requestMd, commands: packets.packetCommands(packet) });
+  // 실행 중 여부는 서버만 안다 — 화면을 새로 고치면 카드의 「실행 중」 상태가 날아가서,
+  // 이걸 안 주면 멀쩡히 돌고 있는데 버튼이 열려 있고 눌러야 「이미 실행 중」을 만난다
+  res.json({
+    ...packet,
+    requestMd,
+    commands: packets.packetCommands(packet),
+    runningSince: runningSince(req.params.pkid) ?? null,
+  });
 });
 
 router.get('/packets/:pkid/result', async (req, res) => {
@@ -186,8 +193,10 @@ router.post('/packets/:pkid/run-cli', async (req, res) => {
 
   res.json({ started: true, mode: body.mode }); // 즉시 응답, 진행은 SSE
   // 백그라운드 작업에는 반드시 catch — 없으면 로컬 서버가 통째로 죽는다
-  void runPacketWithCli(packet, body.mode, (line) =>
-    broadcast('packet.progress', { packetId: packet.id, line }))
+  // 진행 이벤트 모양은 API 자동 실행(`qualityRunner`)과 같아야 한다 —
+  // 화면이 `step`·`detail`을 읽는데 다른 이름으로 보내면 영영 「실행 중…」에 머문다
+  void runPacketWithCli(packet, body.mode, ({ step, detail }) =>
+    broadcast('packet.progress', { packetId: packet.id, step, detail }))
     .catch((e) => {
       const msg = e instanceof Error ? e.message : String(e);
       broadcast('packet.failed', { packetId: packet.id, error: msg });
