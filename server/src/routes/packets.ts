@@ -10,6 +10,7 @@ import { getProject, listProductFiles } from '../store/projects.js';
 import { availableProviders } from '../ai/providers.js';
 import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
 import { runPacketQuality } from '../ai/qualityRunner.js';
+import { runPacketWithCli, claudeCliAvailable } from '../claude/cliRunner.js';
 import { broadcast } from '../sse.js';
 
 const router = asyncRouter();
@@ -17,6 +18,11 @@ const router = asyncRouter();
 /** UI가 실행 방식(API 자동)의 선택 가능 여부를 판단하는 데 사용 */
 router.get('/ai/providers', async (_req, res) => {
   res.json(await availableProviders());
+});
+
+/** 「지금 실행」(구독 사용량)을 쓸 수 있는지 — Claude Code CLI가 자리에 있는가 */
+router.get('/ai/cli', async (_req, res) => {
+  res.json({ available: await claudeCliAvailable() });
 });
 
 router.get('/packets', async (_req, res) => {
@@ -155,6 +161,33 @@ router.post('/packets/:pkid/run', async (req, res) => {
     const msg = e instanceof Error ? e.message : String(e);
     broadcast('packet.failed', { packetId: req.params.pkid, error: msg });
   }
+});
+
+/**
+ * ②-2 Claude Code CLI 직접 실행 — 구독(Pro/Max) 사용량으로 돈다.
+ *
+ * 명령을 복사해 터미널에 붙여넣던 단계를 없앤다. 결과는 여기서 읽지 않는다 —
+ * CLI가 `result/.done`을 만들면 기존 파일 감시가 잡아 검증·반영까지 같은 길로 간다.
+ */
+router.post('/packets/:pkid/run-cli', async (req, res) => {
+  const body = z.object({ mode: z.enum(['fast', 'quality']).default('fast') }).parse(req.body ?? {});
+  const packet = await packets.readPacket(req.params.pkid);
+  if (!packet) return res.status(404).json({ error: '패킷 없음' });
+  if (packet.status !== 'waiting') return res.status(400).json({ error: '대기 상태가 아님' });
+  if (!(await claudeCliAvailable())) {
+    return res.status(400).json({
+      error: 'Claude Code CLI를 찾지 못했습니다 — 설치 후 서버를 다시 시작하세요',
+    });
+  }
+
+  res.json({ started: true, mode: body.mode }); // 즉시 응답, 진행은 SSE
+  // 백그라운드 작업에는 반드시 catch — 없으면 로컬 서버가 통째로 죽는다
+  void runPacketWithCli(packet, body.mode, (line) =>
+    broadcast('packet.progress', { packetId: packet.id, line }))
+    .catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      broadcast('packet.failed', { packetId: packet.id, error: msg });
+    });
 });
 
 /** ③ 수동 붙여넣기 — 아무 AI 챗에서 받은 응답을 반영 */

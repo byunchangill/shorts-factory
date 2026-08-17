@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal, Zap, Users } from 'lucide-react';
+import { Copy, Check, X, RefreshCw, Bot, ClipboardPaste, Terminal, Zap, Users, Play } from 'lucide-react';
 import {
   PACKET_KIND_LABELS, PACKET_KIND_DESCRIPTIONS, AI_PROVIDERS, AI_PROVIDER_LABELS,
   type PacketKind, type AiProvider,
@@ -84,6 +84,14 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
     queryFn: () => api.get<Record<AiProvider, boolean>>('/ai/providers'),
     enabled: active,
   });
+  // CLI 유무는 실행 파일을 찾아보는 일이라 요청서마다 다시 묻지 않는다
+  const cli = useQuery({
+    queryKey: ['ai-cli'],
+    queryFn: () => api.get<{ available: boolean }>('/ai/cli'),
+    enabled: active,
+    staleTime: 5 * 60_000,
+  });
+  const cliAvailable = cli.data?.available ?? false;
 
   const accept = useMutation({
     mutationFn: () => api.post(`/packets/${packet.id}/accept`),
@@ -110,6 +118,22 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
       setRunError(null);
       setProgress(mode === 'quality' ? '시작하는 중…' : null);
       return api.post(`/packets/${packet.id}/run`, { provider, mode });
+    },
+    onError: (e: Error) => {
+      setRunning(false);
+      setRunError(e.message);
+    },
+  });
+  /**
+   * 앱이 Claude Code CLI를 직접 띄운다 — 로그인된 구독(Pro/Max) 사용량으로 돈다.
+   * API 자동과 달리 키도, 종량 과금도 없다. 명령을 터미널에 붙여넣던 단계가 사라진다.
+   */
+  const runCli = useMutation({
+    mutationFn: (mode: 'fast' | 'quality') => {
+      setRunning(true);
+      setRunError(null);
+      setProgress('Claude Code 실행 중…');
+      return api.post(`/packets/${packet.id}/run-cli`, { mode });
     },
     onError: (e: Error) => {
       setRunning(false);
@@ -192,48 +216,54 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
           {tab === 'claude-code' && (
             <div className="space-y-2.5">
               <p className="text-xs text-slate-500">
-                이 리포의 Claude Code 터미널에서 실행하세요. 결과는 자동 감지됩니다.
+                구독(Pro·Max) 사용량으로 돕니다 — API 키도, 종량 과금도 없습니다.
+                결과는 자동 감지됩니다.
               </p>
 
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5">
-                  <Zap size={13} className="text-slate-500" />
-                  <span className="text-xs font-medium">빠르게 — 혼자 처리</span>
-                  <span className="text-xs text-slate-500">토큰 적게, 수십 초</span>
+              {([
+                ['fast', '빠르게 — 혼자 처리', '토큰 적게, 수십 초', Zap, 'text-slate-500', 'text-green-300'],
+                ['quality', '고품질 — 팀 처리', '리서치 → 대본 → 검수 → 킷, 토큰 많이', Users, 'text-brand-600', 'text-brand-200'],
+              ] as const).map(([key, label, desc, Icon, iconColor, codeColor]) => (
+                <div key={key} className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Icon size={13} className={iconColor} />
+                    <span className="text-xs font-medium">{label}</span>
+                    <span className="text-xs text-slate-500">{desc}</span>
+                    <Button
+                      className="ml-auto px-2.5 py-1 text-xs"
+                      disabled={running || !cliAvailable}
+                      onClick={() => runCli.mutate(key)}
+                    >
+                      <Play size={13} /> 지금 실행
+                    </Button>
+                  </div>
+                  {/* 직접 돌리고 싶을 때를 위해 명령도 그대로 둔다 */}
+                  <div className="flex items-center gap-1.5">
+                    <code className={clsx('flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs', codeColor)}>
+                      {detail.data.commands[key]}
+                    </code>
+                    <Button
+                      variant="secondary"
+                      className="px-2 py-1.5"
+                      onClick={() => copy(detail.data!.commands[key], key)}
+                    >
+                      {copied === key ? <Check size={14} /> : <Copy size={14} />}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-green-300">
-                    {detail.data.commands.fast}
-                  </code>
-                  <Button
-                    variant="secondary"
-                    className="px-2 py-1.5"
-                    onClick={() => copy(detail.data!.commands.fast, 'fast')}
-                  >
-                    {copied === 'fast' ? <Check size={14} /> : <Copy size={14} />}
-                  </Button>
-                </div>
-              </div>
+              ))}
 
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5">
-                  <Users size={13} className="text-brand-600" />
-                  <span className="text-xs font-medium">고품질 — 팀 처리</span>
-                  <span className="text-xs text-slate-500">리서치 → 대본 → 검수 → 킷, 토큰 많이</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <code className="flex-1 truncate rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-brand-200">
-                    {detail.data.commands.quality}
-                  </code>
-                  <Button
-                    variant="secondary"
-                    className="px-2 py-1.5"
-                    onClick={() => copy(detail.data!.commands.quality, 'quality')}
-                  >
-                    {copied === 'quality' ? <Check size={14} /> : <Copy size={14} />}
-                  </Button>
-                </div>
-              </div>
+              {!cliAvailable && (
+                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                  Claude Code CLI를 찾지 못해 「지금 실행」을 쓸 수 없습니다. 명령을 복사해
+                  터미널에서 실행하세요. (설치돼 있는데도 이러면 서버를 다시 시작하세요)
+                </p>
+              )}
+              {running && (
+                <p className="flex items-center gap-1.5 text-sm text-slate-500">
+                  <Spinner /> {progress ?? '실행 중…'} — 완료되면 자동으로 표시됩니다
+                </p>
+              )}
 
               <p className="text-xs text-slate-500">
                 반복 양산은 빠르게, 채널 대표 영상이나 새 포맷 첫 편은 고품질을 권합니다.
