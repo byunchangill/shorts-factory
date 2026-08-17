@@ -132,6 +132,13 @@ export const ClipSchema = z.object({
     fps: z.number(), duration: z.number(),
   }).optional(),
   frames: z.preprocess(legacyFrames, z.array(ClipFrameSchema)).default([]),
+  /**
+   * 장면이 바뀌는 시각(초). 프레임 추출 때 이미 재는 값이라 버리지 않고 남긴다.
+   *
+   * 컷 구간이 씬 전환을 물면 화면이 튀는데, 프레임 4장짜리 미리보기로는 안 보인다
+   * (샘플이 우연히 같은 씬에 걸린다). 구간을 씬 안쪽으로 자르는 데 쓴다.
+   */
+  sceneTimes: z.array(z.number()).default([]),
   zones: z.array(ZoneSchema).default([]),
   cleanVersions: z.array(z.object({
     v: z.number().int(),
@@ -275,6 +282,17 @@ export const SettingsSchema = z.object({
   ffprobePath: z.string().default('ffprobe'),
   iopaintPath: z.string().default('iopaint'),
   /**
+   * VSR(video-subtitle-remover) 저장소 폴더. 비우면 이 경로를 안 쓴다.
+   *
+   * 2차 제거의 1순위다 — 넘긴 좌표를 후보 영역으로만 쓰고 그 안에서 제 OCR이 글자를
+   * 찾은 자리만 지운다. iopaint처럼 사각형을 통째로 지우지 않아 배경이 덜 상한다.
+   */
+  vsrPath: z.string().default(''),
+  /** VSR을 돌릴 파이썬. 비우면 저장소 안의 `.venv`를 본다 */
+  vsrPython: z.string().default(''),
+  /** sttn-auto · sttn-det · lama · propainter · opencv. 이 PC 실측으로 lama가 기본 */
+  vsrMode: z.string().default('lama'),
+  /**
    * 글자 검출(자막 자리 자동 찾기)에 쓸 파이썬. 비워두면 서버가 찾아 쓴다
    * (윈도우 `py` → `python` → `python3`). 여기서 플랫폼을 보면 안 된다 —
    * 이 파일은 브라우저에서도 읽혀서 `process`를 만지는 순간 화면이 통째로 죽는다.
@@ -326,7 +344,26 @@ export const SettingsSchema = z.object({
    *          재사용 콘텐츠로 분류될 위험을 낮추고 정보 밀도를 올린다
    */
   layout: z.enum(['fullscreen', 'framed']).default('framed'),
+  /**
+   * 채널 그레이딩 — 조립할 때 모든 영상에 같은 값으로 걸리는 ffmpeg 색보정 필터.
+   *
+   * 두 가지를 동시에 한다. 소재가 계정마다 색이 제각각인 것을 한 룩으로 묶고,
+   * 픽셀을 원본과 다르게 만들어 재사용 판정을 피한다 (`layout: framed`와 같은 목적).
+   * 기본값은 대비 +7% / 채도 −6% / 살짝 쿨톤 — 생활·살림의 흰 제품에 맞춘 값이다.
+   *
+   * **편마다 바꾸지 않는다.** 매 편 같은 값이어야 채널 룩이 된다. 카테고리가 통째로
+   * 달라질 때만 바꾼다 (주방·음식은 웜톤 `colorbalance=rs=0.03:rm=0.02`).
+   * 비우면 보정하지 않는다.
+   */
+  grade: z.string().default('eq=contrast=1.07:saturation=0.94:gamma=1.02,colorbalance=bs=0.04:bm=0.02'),
   frameTitle: z.string().default(''), // framed 레이아웃 상단 고정 문구 (채널명 등)
+  /**
+   * 좌우반전. 중복 회피에는 제일 강한 수단이다 — 픽셀이 통째로 달라진다.
+   *
+   * 소재 화면에만 걸고 우리가 얹는 층(제목바·자막·카드)에는 안 건다.
+   * 그래서 화면의 글자는 뒤집히지 않는다.
+   */
+  mirror: z.boolean().default(true),
   // 씬 사이 텍스트 카드 삽입 (하이브리드 믹싱)
   insertCards: z.boolean().default(true),
   cardDurationSec: z.number().min(0.5).max(4).default(1.5),

@@ -1,5 +1,7 @@
 # 의존성
 node_modules/
+# AI 인페인팅용 파이썬 환경 (기계마다 따로 — tools/install-inpaint.md)
+.venv-inpaint/
 
 # 빌드
 dist/

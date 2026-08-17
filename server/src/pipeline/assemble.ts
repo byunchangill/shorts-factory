@@ -212,10 +212,18 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
  *                (호출부가 폰트 폴더를 cwd로 잡고 실행한다)
  */
 export function buildLayoutFilter(settings: Settings, fontArg: string | null): string {
-  const base = `fps=${FPS}`;
+  // 채널 그레이딩은 맨 끝에 건다 — 합성이 끝난 화면 전체가 한 룩으로 묶여야 한다
+  const grade = settings.grade.trim();
+  const base = grade ? `fps=${FPS},${grade}` : `fps=${FPS}`;
+  /*
+    좌우반전은 **맨 앞**에 건다. 소재만 뒤집고 우리가 얹는 층(제목바·테두리·고정 문구)은
+    그대로 두기 위해서다. 뒤에 걸면 제목 글자까지 거울상이 된다.
+    자막·카드는 여기가 아니라 다음 인코딩 단계에서 붙으므로 애초에 안 걸린다.
+  */
+  const flip = settings.mirror ? 'hflip,' : '';
 
   if (settings.layout === 'fullscreen') {
-    return `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${base}`;
+    return `${flip}scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${base}`;
   }
 
   // framed — 소스는 가로폭 92%, 세로 중앙 58% 영역에 넣는다
@@ -227,7 +235,7 @@ export function buildLayoutFilter(settings: Settings, fontArg: string | null): s
 
   const parts = [
     // 1) 배경: 소스를 크게 확대·블러 처리해 여백을 채운다
-    `split=2[bg][fg]`,
+    `${flip}split=2[bg][fg]`,
     `[bg]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=luma_radius=40:luma_power=2,eq=brightness=-0.18[bgb]`,
     // 2) 전경: 소스를 프레임 크기로 맞춤
     `[fg]scale=${inW}:${inH}:force_original_aspect_ratio=increase,crop=${inW}:${inH}[fgc]`,

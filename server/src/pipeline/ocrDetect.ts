@@ -32,6 +32,15 @@ const PAD_PX = 6;
 const SAME_ZONE_OVERLAP = 0.3;
 
 /**
+ * 같은 자리에 다시 글자가 떠도 이만큼(초) 비어 있었으면 다른 자막으로 본다.
+ *
+ * 자리만 보고 묶으면 10초의 제목과 74초의 "The End"가 한 덩어리가 되어 그 사이 62초를
+ * 통째로 지운다 — 글자가 없는 화면 한복판이 내내 뭉개진다 (실측: c01).
+ * 한두 프레임 놓친 것과 구분해야 하므로 몇 프레임치 여유를 둔다.
+ */
+const MAX_GAP_SEC = 3;
+
+/**
  * 쓸 파이썬 찾기. 설정에 적어뒀으면 그것만 쓴다 — 사용자가 가상환경을 지정했는데
  * 서버가 멋대로 다른 파이썬을 고르면 검출기가 없다고 나온다 (iopaint에서 겪은 그 문제).
  * 윈도우 런처(`py`)를 먼저 보는 이유는 `python`이 마이크로소프트 스토어 안내문으로
@@ -83,7 +92,10 @@ export function clusterBoxes(
   for (const { t, boxes } of detections) {
     for (const box of boxes) {
       if (box.score < MIN_SCORE) continue;
-      const hit = clusters.find((c) => overlapRatio(c.box, box) >= SAME_ZONE_OVERLAP);
+      // 자리가 겹치더라도 한참 비어 있었으면 다른 자막이다 — 새 덩어리로 시작한다
+      const hit = clusters.find((c) =>
+        overlapRatio(c.box, box) >= SAME_ZONE_OVERLAP
+        && t - c.times[c.times.length - 1] <= MAX_GAP_SEC);
       if (hit) {
         // 테두리를 넓혀 둘 다 덮는다
         const x = Math.min(hit.box.x, box.x);

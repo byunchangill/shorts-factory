@@ -12,7 +12,14 @@ export interface ZoneDraft {
 }
 
 const KIND_LABEL = { subtitle: '자막', logo: '워터마크', emoji: '이모지' } as const;
-const METHOD_LABEL = { crop: '크롭(가장자리)', delogo: '보간 제거', boxblur: '블러', inpaint: 'AI 인페인팅' } as const;
+/**
+ * 블러에 「비권장」을 붙여 둔다. 회색 판때기는 지운 것이 아니라 **가린 것**이라
+ * 검열 자국처럼 보이고, 완성본 검수에서 그 이유로 반려된 적이 있다.
+ * 지우는 순서는 크롭 → 보간 → 인페인팅이고, 블러는 그 셋이 다 안 될 때의 마지막 수단이다.
+ */
+const METHOD_LABEL = {
+  crop: '크롭(가장자리)', delogo: '보간 제거', inpaint: 'AI 인페인팅', boxblur: '블러(비권장)',
+} as const;
 const METHOD_COLOR = {
   crop: 'border-amber-400 bg-amber-400/20',
   delogo: 'border-blue-400 bg-blue-400/20',
@@ -198,6 +205,9 @@ export function ZoneEditor({
               <span className="text-xs text-slate-500">
                 ({z.x}, {z.y}) {z.w}×{z.h}
               </span>
+              {z.method === 'boxblur' && (
+                <span className="text-xs text-amber-600">가린 자국이 남습니다</span>
+              )}
               <TimeRange
                 zone={z}
                 frameTime={frameTime}

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -20,18 +21,79 @@ vi.mock('../store/workspace.js', () => ({
   loadSettings: async () => ({ iopaintPath: iopaintPath.value }),
 }));
 
-const { iopaintProvider, iopaintFailureMessage } = await import('./inpaint.js');
+const { iopaintProvider, iopaintFailureMessage, planFrames, zonesAtTime, maxMaskRatio } =
+  await import('./inpaint.js');
+
+const zone = (id: string, t0?: number, t1?: number) =>
+  ({ id, kind: 'subtitle' as const, x: 0, y: 0, w: 10, h: 10, t0, t1, method: 'inpaint' as const });
+
+/**
+ * 존은 대개 몇 초짜리인데 클립 전체를 돌리면 75초 클립이 CPU로 20시간이다(실측).
+ * 걸린 프레임만 고르면 4초짜리 자막은 120장, 6분이면 끝난다.
+ */
+describe('planFrames — 존이 걸린 프레임만 고른다', () => {
+  const files = Array.from({ length: 10 }, (_, i) => `f_${String(i + 1).padStart(6, '0')}.png`);
+
+  it('구간 밖 프레임은 건드리지 않는다', () => {
+    // 10fps · 10장 = 0.0~0.9초. 0.3~0.5초 존이면 4·5·6번째 장만 대상이다
+    const { skip, groups } = planFrames(files, 10, [zone('z1', 0.3, 0.5)]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].files).toEqual(['f_000004.png', 'f_000005.png', 'f_000006.png']);
+    expect(skip).toHaveLength(7);
+  });
+
+  it('구간이 없는 존은 전체 구간이다 — 예전 동작 그대로', () => {
+    const { skip, groups } = planFrames(files, 10, [zone('z1')]);
+    expect(skip).toEqual([]);
+    expect(groups[0].files).toHaveLength(10);
+  });
+
+  it('겹치는 존은 조합별로 묶는다 — 마스크를 조합마다 한 장만 만들면 된다', () => {
+    const { groups } = planFrames(files, 10, [zone('a', 0, 0.4), zone('b', 0.2, 0.9)]);
+    // a만 / a+b / b만 — 세 조합
+    expect(groups.map((g) => g.zones.map((z) => z.id).join('+'))).toEqual(['a', 'a+b', 'b']);
+    expect(groups.reduce((n, g) => n + g.files.length, 0)).toBe(10);
+  });
+
+  it('구간이 영상 밖이면 대상이 없다 — 전체를 돌리는 것으로 되돌아가면 안 된다', () => {
+    const { skip, groups } = planFrames(files, 10, [zone('z1', 50, 60)]);
+    expect(groups).toEqual([]);
+    expect(skip).toHaveLength(10);
+  });
+
+  it('경계 시각은 포함한다', () => {
+    expect(zonesAtTime([zone('z', 1, 2)], 1)).toHaveLength(1);
+    expect(zonesAtTime([zone('z', 1, 2)], 2)).toHaveLength(1);
+    expect(zonesAtTime([zone('z', 1, 2)], 2.1)).toHaveLength(0);
+  });
+});
 
 describe('iopaint 가용성', () => {
   beforeEach(() => {
     checkTool.mockReset();
-    iopaintPath.value = 'C:\\repo\\.venv-inpaint\\Scripts\\iopaint.exe';
+    iopaintPath.value = 'iopaint';
   });
 
-  it('설정에 적어둔 경로로 확인한다', async () => {
+  it('설정에 적어둔 절대경로를 본다 — 가상환경에 깔면 PATH에 없다', async () => {
+    iopaintPath.value = process.execPath; // 반드시 존재하는 절대경로
+    expect(await iopaintProvider.available()).toBe(true);
+  });
+
+  it('절대경로면 실행하지 않는다 — 파이썬·torch를 올리다 8초 상한을 넘겨 "없음"이 됐다', async () => {
+    iopaintPath.value = process.execPath;
+    await iopaintProvider.available();
+    expect(checkTool).not.toHaveBeenCalled();
+  });
+
+  it('그 자리에 파일이 없으면 false — 1차 제거로 강등되어야 한다', async () => {
+    iopaintPath.value = path.join(process.cwd(), '없는폴더', 'iopaint.exe');
+    expect(await iopaintProvider.available()).toBe(false);
+  });
+
+  it('PATH에서 찾는 이름이면 실행해 확인한다', async () => {
     checkTool.mockResolvedValue({ available: true, version: '1.6.0' });
     expect(await iopaintProvider.available()).toBe(true);
-    expect(checkTool.mock.calls[0][0]).toBe('C:\\repo\\.venv-inpaint\\Scripts\\iopaint.exe');
+    expect(checkTool.mock.calls[0][0]).toBe('iopaint');
   });
 
   it('--version이 없는 빌드는 --help로 다시 확인한다', async () => {
@@ -42,7 +104,7 @@ describe('iopaint 가용성', () => {
     expect(await iopaintProvider.available()).toBe(true);
   });
 
-  it('정말 없으면 false — 1차 제거로 강등되어야 한다', async () => {
+  it('PATH에도 없으면 false', async () => {
     checkTool.mockResolvedValue({ available: false, error: 'ENOENT' });
     expect(await iopaintProvider.available()).toBe(false);
   });
@@ -66,6 +128,29 @@ describe('파이썬 CLI 환경변수', () => {
 
   it('실제로 죽었던 스피너 문자가 UTF-8에서는 인코딩된다', () => {
     expect(Buffer.from('⠋', 'utf-8').toString('utf-8')).toBe('⠋');
+  });
+});
+
+/**
+ * 인페인팅은 주변 배경을 보고 채운다. 지울 자리가 넓으면 참조할 배경이 모자라 뭉갠다 —
+ * 큰 자막 블록을 통째로 넣었다가 그 자리가 문드러져 반려된 적이 있다.
+ */
+describe('maxMaskRatio — 한 시점에 가장 넓게 겹친 넓이', () => {
+  const box = (id: string, w: number, h: number, t0?: number, t1?: number) =>
+    ({ id, kind: 'subtitle' as const, x: 0, y: 0, w, h, t0, t1, method: 'inpaint' as const });
+
+  it('구간이 안 겹치는 존은 따로 잰다 — 합치면 안 넓은데도 막힌다', () => {
+    const zones = [box('a', 100, 100, 0, 2), box('b', 100, 100, 5, 7)];
+    expect(maxMaskRatio(zones, 200, 100)).toBeCloseTo(0.5);
+  });
+
+  it('같은 시각에 겹쳐 걸리면 더한다', () => {
+    const zones = [box('a', 100, 100, 0, 5), box('b', 100, 100, 1, 3)];
+    expect(maxMaskRatio(zones, 200, 100)).toBeCloseTo(1);
+  });
+
+  it('존이 없으면 0', () => {
+    expect(maxMaskRatio([], 200, 100)).toBe(0);
   });
 });
 

@@ -89,13 +89,16 @@ async function detectSceneTimes(settings: Settings, filePath: string): Promise<n
  *
  * 한 번의 디코딩으로 전부 뽑는다 — 프레임마다 따로 seek하면 장수에 비례해 느려진다.
  * 장면이 바뀌는 지점은 `recommended`로 표시만 해준다 (훑을 때 눈에 띄라고).
+ *
+ * 씬 경계 시각도 같이 돌려준다. 여기서 이미 재고 있어 공짜인데, 버리면 컷 구간을
+ * 씬 안쪽으로 자를 때 전체 디코딩을 한 번 더 해야 한다.
  */
 export async function extractFrames(
   settings: Settings,
   filePath: string,
   outDir: string,
   duration: number,
-): Promise<ExtractedFrame[]> {
+): Promise<{ frames: ExtractedFrame[]; sceneTimes: number[] }> {
   await ensureDir(outDir);
   const interval = Math.max(INTERVAL_SEC, duration / MAX_FRAMES);
 
@@ -114,7 +117,7 @@ export async function extractFrames(
   const nearScene = (t: number) => scenes.some((s) => Math.abs(s - t) <= interval / 2);
 
   // fps 필터는 간격의 배수 시점에서 프레임을 내보낸다
-  return files.map((f, i) => {
+  const frames = files.map((f, i) => {
     const t = i * interval;
     return {
       filePath: path.join(outDir, f),
@@ -122,4 +125,5 @@ export async function extractFrames(
       recommended: nearScene(t),
     };
   });
+  return { frames, sceneTimes: scenes };
 }

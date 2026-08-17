@@ -30,6 +30,11 @@ interface Settings {
   fontPath: string;
   layout: 'fullscreen' | 'framed';
   frameTitle: string;
+  mirror: boolean;
+  grade: string;
+  vsrPath: string;
+  vsrPython: string;
+  vsrMode: string;
   insertCards: boolean;
   cardDurationSec: number;
   maxClipExposureSec: number;
@@ -203,6 +208,22 @@ export default function SettingsPage() {
             </div>
           )}
           <label className="flex items-center gap-2">
+            <input type="checkbox" checked={form.mirror} onChange={(e) => set({ mirror: e.target.checked })} />
+            소재 좌우반전 (픽셀이 통째로 달라져 중복 회피에 제일 강함)
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">채널 그레이딩</span>
+            <Input
+              value={form.grade}
+              onChange={(e) => set({ grade: e.target.value })}
+              placeholder="비우면 색보정 안 함"
+            />
+          </div>
+          <p className="-mt-1 pl-30 text-xs text-slate-500">
+            계정마다 제각각인 소재 색을 한 룩으로 묶습니다. ffmpeg 필터 문자열이고,
+            <b> 편마다 바꾸지 않습니다</b> — 매 편 같은 값이어야 채널 룩이 됩니다.
+          </p>
+          <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={form.insertCards}
@@ -346,6 +367,47 @@ export default function SettingsPage() {
         <p className="mt-2 text-xs text-slate-500">
           python은 자막 자리 자동 찾기에 씁니다 — 가상환경에 넣었다면 그 안의 python 경로를 적어주세요.
         </p>
+      </Card>
+
+      <Card>
+        <h3 className="mb-1 font-medium">VSR (자막 제거)</h3>
+        <p className="mb-3 text-sm text-slate-500">
+          2차 제거의 1순위입니다. 넘긴 영역 안에서 <b>제 검출기가 글자를 찾은 자리만</b> 지워
+          사각형을 통째로 지우는 방식보다 배경이 덜 상합니다. 비워두면 iopaint로,
+          그것도 없으면 1차(ffmpeg) 제거만 씁니다.
+        </p>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">저장소 폴더</span>
+            <Input
+              value={form.vsrPath}
+              onChange={(e) => set({ vsrPath: e.target.value })}
+              placeholder="예: C:\Users\나\vsr (backend\main.py가 있는 폴더)"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">파이썬</span>
+            <Input
+              value={form.vsrPython}
+              onChange={(e) => set({ vsrPython: e.target.value })}
+              placeholder="비우면 저장소 안의 .venv를 씁니다"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">모드</span>
+            <select
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              value={form.vsrMode}
+              onChange={(e) => set({ vsrMode: e.target.value })}
+            >
+              <option value="lama">lama (권장 — 이 PC 실측에서 가장 깨끗하고 빨랐음)</option>
+              <option value="sttn-auto">sttn-auto</option>
+              <option value="sttn-det">sttn-det</option>
+              <option value="propainter">propainter (GPU 필요)</option>
+              <option value="opencv">opencv</option>
+            </select>
+          </div>
+        </div>
       </Card>
 
       <Button onClick={() => save.mutate()} disabled={save.isPending}>
