@@ -76,10 +76,13 @@ export default function SettingsPage() {
         <ul className="space-y-2">
           {(doctor.data?.tools ?? []).map((t) => (
             <li key={t.name} className="flex items-start gap-2 text-sm">
-              <Badge color={t.available ? 'green' : t.required ? 'red' : 'amber'}>
-                {t.available ? '설치됨' : '없음'}
-              </Badge>
-              <div>
+              {/* 경로가 길어 줄바꿈되면 배지까지 눌려 글자가 세로로 깨진다 — 배지는 안 줄인다 */}
+              <span className="shrink-0">
+                <Badge color={t.available ? 'green' : t.required ? 'red' : 'amber'}>
+                  {t.available ? '설치됨' : '없음'}
+                </Badge>
+              </span>
+              <div className="min-w-0">
                 <span className="font-medium">{t.name}</span>
                 {t.version && <span className="ml-2 text-xs text-slate-500">{t.version}</span>}
                 {/* PC마다 다른 파일이 뽑힌다 — 어느 것을 쓰는지 감추면 원인을 못 짚는다 */}
@@ -354,21 +357,23 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <h3 className="mb-3 font-medium">도구 경로 (PATH에 없을 때만 수정)</h3>
+        <h3 className="mb-3 font-medium">도구 경로 (자동으로 못 찾을 때만 수정)</h3>
         <div className="space-y-2">
           {(['ytdlpPath', 'ffmpegPath', 'ffprobePath', 'iopaintPath', 'pythonPath'] as const).map((k) => (
             <div key={k} className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-sm text-slate-500">{k.replace('Path', '')}</span>
               <Input
                 value={form[k]}
-                placeholder={k === 'pythonPath' ? '비우면 자동으로 찾습니다 (py · python · python3)' : ''}
+                placeholder="비우면 자동으로 찾습니다"
                 onChange={(e) => set({ [k]: e.target.value } as Partial<Settings>)}
               />
             </div>
           ))}
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          python은 자막 자리 자동 찾기에 씁니다 — 가상환경에 넣었다면 그 안의 python 경로를 적어주세요.
+          비워두면 PC마다 알아서 찾습니다 — 위 "도구 상태"에 실제로 고른 파일 경로가 보입니다.
+          파이썬은 <b>글자 검출기가 깔린 것</b>을 골라내므로, 파이썬이 여러 개여도 적어줄 필요가 없습니다.
+          자동 선택이 엉뚱한 것을 잡을 때만 여기에 경로를 적으세요.
         </p>
       </Card>
 
@@ -385,7 +390,7 @@ export default function SettingsPage() {
             <Input
               value={form.vsrPath}
               onChange={(e) => set({ vsrPath: e.target.value })}
-              placeholder="예: C:\Users\나\vsr (backend\main.py가 있는 폴더)"
+              placeholder="비우면 홈 폴더의 vsr · video-subtitle-remover를 찾습니다"
             />
           </div>
           <div className="flex items-center gap-2">
