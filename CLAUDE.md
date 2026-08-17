@@ -209,6 +209,22 @@ Electron 배포 때 ffmpeg·yt-dlp를 싸 넣을 자리가 1순위로 이미 뚫
 - 유튜브 API는 반드시 `youtube/client.ts`의 `ytFetch` 경유 — 쿼터 확인·차감·캐시가 여기 있다. 무료 한도(10,000유닛/일) 밖의 기능은 구현하지 않는다
 - 커밋: feat/fix/refactor/docs/test 접두어
 
+## 해외영상 짜집기 대본은 직접 화법이다 (2026-08-17)
+
+**menu-a의 기본 대본 지침은 `.claude/skills/shorts-direct-script`다.** 시청자에게 직접
+말하는 4비트 — 후킹(문제 장면 + 질문) → 해결책 → 실감(숫자를 혜택으로) → 엔딩(질문으로 댓글 유도).
+
+갈등 서사(`temcasting-shorts` — 집주인·원상복구비)는 **기본값에서 뺐다.** 스킬은 남아 있으니
+그 톤이 필요한 카테고리는 화면에서 지침을 바꾼다. 두 포맷은 톤이 정반대라 섞이면 대본이 흔들린다.
+
+- **기본 지침을 바꾸면 `MENU_SKILL`(store/projects.ts) 한 곳만 고친다.** 카테고리를 만들 때
+  그 시점의 스킬 본문이 `guidelines/script.md`로 복사되고, 그 뒤로는 카테고리마다 따로 산다.
+  **이미 만든 카테고리는 자동으로 안 바뀐다** — 화면에서 붙여넣거나 파일을 갈아야 한다
+- **스킬은 자기완결이어야 한다.** 요청서에는 `script.md` 본문만 실린다(`readAllGuidelines`).
+  `references/` 파일을 읽으라고 시키면 파일을 못 여는 경로(API 자동·복사 붙여넣기)에서
+  그 지시가 허공을 가리킨다. 테스트가 이걸 막는다
+- 분량 숫자는 이 스킬이 출처다. `TARGET_SEC_BY_MENU`와 어긋나면 테스트가 잡는다
+
 ## 메뉴별 분기 (2026-08-13)
 
 두 메뉴는 `draft`·`script_approved` 같은 **단계 이름을 공유하지만 뜻이 다르다.**
@@ -356,7 +372,7 @@ hflip → (레이아웃 합성) → drawtext → GRADE
 
 | 묶음 | 개수 | 내용 |
 |---|---:|---|
-| 이 저장소 자체 | 6 | answer-job · create-format · shorts-content-team · shorts-dev-team · shorts-script-qc · shorts-viral-script |
+| 이 저장소 자체 | 8 | answer-job · create-format · shorts-content-team · shorts-dev-team · shorts-direct-script · shorts-script-qc · shorts-viral-script · temcasting-shorts |
 | ECC에서 복사 | 13 | 아래 표. 출처·이유는 `.claude/skills/NOTICE.md` |
 | 에이전트 | 7 | `.claude/agents/` |
 

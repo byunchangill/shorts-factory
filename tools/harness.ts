@@ -386,7 +386,7 @@ async function main(): Promise<void> {
       제목 같은 문구로 검사하면 스킬을 고칠 때마다 하네스가 깨진다.
     */
     const raw = await fsp.readFile(
-      path.join(REPO_ROOT, '.claude/skills/temcasting-shorts/SKILL.md'), 'utf8');
+      path.join(REPO_ROOT, '.claude/skills/shorts-direct-script/SKILL.md'), 'utf8');
     const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
     assert(g.content.trim() === body,
       `기본 대본 지침이 스킬과 다름 (지침 ${g.content.length}자 / 스킬 ${body.length}자)`);

@@ -87,7 +87,12 @@ const DEFAULT_GUIDELINES: Record<GuidelineFile, string> = {
  * 화면에서 고친 것이 그 카테고리의 지침이다 (PC마다 따로 쌓인다).
  */
 const MENU_SKILL: Partial<Record<Menu, string>> = {
-  'menu-a': fileURLToPath(new URL('../../../.claude/skills/temcasting-shorts/SKILL.md', import.meta.url)),
+  /*
+    해외영상 짜집기는 **직접 화법 4비트**다 (2026-08-17 사용자 결정).
+    갈등 서사(`temcasting-shorts`)는 남겨 뒀지만 기본값에서는 뺐다 — 두 포맷은 톤이
+    정반대라 섞이면 대본이 흔들린다. 그 톤이 필요한 카테고리는 화면에서 지침을 바꾼다.
+  */
+  'menu-a': fileURLToPath(new URL('../../../.claude/skills/shorts-direct-script/SKILL.md', import.meta.url)),
 };
 
 /** 스킬 문서의 앞머리(name/description)는 지침이 아니다 — 본문만 쓴다 */
