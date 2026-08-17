@@ -52,8 +52,14 @@ describe('vsrFailureMessage', () => {
 });
 
 describe('defaultVsrPython', () => {
-  it('파이썬을 안 적었으면 저장소 안의 가상환경을 본다', () => {
-    expect(defaultVsrPython('C:/Users/x/vsr').replace(/\\/g, '/'))
-      .toBe('C:/Users/x/vsr/.venv/Scripts/python.exe');
+  /**
+   * **가상환경의 실행 파일 자리는 OS마다 다르다** — 윈도우만 `Scripts\python.exe`이고
+   * 나머지는 `bin/python`이다. 한쪽을 박아두면 다른 OS에서 VSR이 통째로 안 잡힌다.
+   */
+  it('파이썬을 안 적었으면 저장소 안의 가상환경을 본다 — 자리는 OS를 따른다', () => {
+    const expected = process.platform === 'win32'
+      ? '/vsr/.venv/Scripts/python.exe'
+      : '/vsr/.venv/bin/python';
+    expect(defaultVsrPython('/vsr').replace(/\\/g, '/')).toBe(expected);
   });
 });
