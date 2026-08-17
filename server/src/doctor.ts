@@ -3,8 +3,10 @@ import { checkToolAny, checkIopaint } from './util/toolCheck.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
 import { findKoreanFont } from './pipeline/fonts.js';
-import { ocrAvailable } from './pipeline/ocrDetect.js';
-import { vsrProvider } from './pipeline/vsr.js';
+import { resolvePython, OCR_MODULE } from './pipeline/ocrDetect.js';
+import { vsrProvider, vsrPaths } from './pipeline/vsr.js';
+import { resolveBin } from './util/toolPath.js';
+import { chromiumAvailable } from './sourcing/browser.js';
 
 export interface DoctorReport {
   tools: Array<{
@@ -12,6 +14,8 @@ export interface DoctorReport {
     required: boolean;
     available: boolean;
     version?: string;
+    /** 이 PC에서 실제로 뽑힌 경로 — 도구가 여럿일 때 어느 것이 쓰이는지 여기서 본다 */
+    path?: string;
     installHint: string;
   }>;
   ok: boolean; // 필수 도구 모두 사용 가능 여부
@@ -147,9 +151,8 @@ async function probeTools(): Promise<ToolEntry[]> {
     },
   ];
 
-  // 글자 검출은 파이썬 유무만으로 판정할 수 없다 — 모듈이 없으면 있으나 마나다.
-  // 그래서 도구 목록과 달리 실제 import까지 확인한다. 나머지 점검과 같이 돌린다
-  const ocrCheck = ocrAvailable(s).catch(() => false);
+  // 어느 파이썬이 뽑혔는지도 같이 보여준다 — 파이썬이 여럿인 PC에서 "왜 없다고 나오지"의 답이 여기다
+  const ocrPython = resolvePython(s, OCR_MODULE).catch(() => null);
 
   const tools = await Promise.all(
     checks.map(async (c) => {
@@ -161,6 +164,8 @@ async function probeTools(): Promise<ToolEntry[]> {
         required: c.required,
         available: r.available,
         version: cleanVersion(r.version),
+        // 이름만 적어둬도 실제로는 PC마다 다른 파일이 뽑힌다. 그 자리를 감추지 않는다
+        path: r.available ? await resolveBin(c.bin) : undefined,
         installHint: c.installHint,
       };
     }),
@@ -173,29 +178,49 @@ async function probeTools(): Promise<ToolEntry[]> {
     required: true,
     available: !!font,
     version: font ? path.basename(font) : undefined,
+    path: font ?? undefined,
     installHint:
       'Windows·macOS는 기본 탑재. Linux는 `apt install fonts-nanum` 또는 ' +
       '설정에서 폰트 파일 경로를 직접 지정하세요 (없으면 자막·카드의 한글이 깨집니다)',
   });
 
   // VSR은 실행해 물으면 torch를 통째로 올린다 — 자리에 있는지만 파일로 본다
+  const vsr = await vsrPaths();
   tools.push({
     name: 'VSR (자막 제거)',
     required: false,
     available: await vsrProvider.available(),
-    version: s.vsrPath ? s.vsrMode : undefined,
+    version: vsr.repo ? (s.vsrMode || undefined) : undefined,
+    path: vsr.repo || undefined,
     installHint:
-      '설정에서 VSR 저장소 폴더를 지정하세요 (선택 — 2차 제거의 1순위. '
+      '홈 폴더에 vsr(또는 video-subtitle-remover)로 받으면 자동으로 잡습니다. '
+      + '다른 자리면 설정에서 폴더를 지정하세요 (선택 — 2차 제거의 1순위. '
       + '없으면 iopaint로, 그것도 없으면 1차 제거만으로 내려갑니다)',
   });
 
+  // 틱톡은 yt-dlp로 못 받는다 — 이 브라우저가 없으면 그 플랫폼만 조용히 막힌다
+  const browser = await chromiumAvailable();
+  tools.push({
+    name: '브라우저 (틱톡 소재 받기)',
+    required: false,
+    available: browser.available,
+    version: undefined,
+    path: browser.available ? browser.path : undefined,
+    installHint:
+      'npx playwright install chromium 을 한 번 실행하세요 '
+      + '(선택 — 없으면 틱톡 소재만 못 받습니다. 다른 플랫폼은 yt-dlp가 받습니다)',
+  });
+
+  const python = await ocrPython;
   tools.push({
     name: '글자 검출 (자막 자리 자동 찾기)',
     required: false,
-    available: await ocrCheck,
+    available: !!python,
     version: undefined, // 파이썬 모듈이라 버전을 따로 보여주지 않는다
+    path: python ?? undefined,
     installHint:
-      'pip install rapidocr-onnxruntime (선택 — 없으면 자막 자리를 직접 드래그해야 합니다)',
+      `pip install rapidocr-onnxruntime (선택 — 없으면 자막 자리를 직접 드래그해야 합니다). `
+      + '파이썬이 여러 개면 검출기가 깔린 것을 자동으로 고릅니다',
   });
 
   return tools;

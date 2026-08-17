@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import type { Zone } from '@shared/types';
 import { run, PYTHON_CLI_ENV } from '../util/exec.js';
 import { loadSettings } from '../store/workspace.js';
+import { findVsrRepo } from '../util/toolPath.js';
 import type { InpaintProvider } from './inpaint.js';
 
 /**
@@ -25,9 +26,26 @@ import type { InpaintProvider } from './inpaint.js';
  */
 const DEFAULT_MODE = 'lama';
 
-/** 파이썬 경로를 안 적었으면 저장소 안의 가상환경을 본다 (설치 문서가 안내하는 자리다) */
+/**
+ * 파이썬 경로를 안 적었으면 저장소 안의 가상환경을 본다 (설치 문서가 안내하는 자리다).
+ * 가상환경의 실행 파일 자리는 OS마다 다르다 — 윈도우만 `Scripts\python.exe`다.
+ */
 export function defaultVsrPython(vsrPath: string): string {
-  return path.join(vsrPath, '.venv', 'Scripts', 'python.exe');
+  return process.platform === 'win32'
+    ? path.join(vsrPath, '.venv', 'Scripts', 'python.exe')
+    : path.join(vsrPath, '.venv', 'bin', 'python');
+}
+
+/**
+ * 이 PC에서 쓸 VSR 저장소와 파이썬.
+ * 설정이 비어 있어도 홈 아래 표준 자리를 찾아본다 — PC를 옮길 때마다 설정 화면을
+ * 다시 채우게 만들 이유가 없다.
+ */
+export async function vsrPaths(): Promise<{ repo: string; python: string }> {
+  const s = await loadSettings();
+  const repo = await findVsrRepo(s.vsrPath ?? '');
+  const python = (s.vsrPython ?? '').trim() || (repo ? defaultVsrPython(repo) : '');
+  return { repo, python };
 }
 
 /**
@@ -90,12 +108,10 @@ export const vsrProvider: InpaintProvider = {
    */
   async available(): Promise<boolean> {
     // 예전 설정 파일에는 이 항목이 아예 없다 — 없다고 도구 점검 전체가 죽으면 안 된다
-    const { vsrPath = '', vsrPython = '' } = await loadSettings();
-    if (!vsrPath.trim()) return false;
-    const entry = path.join(vsrPath, 'backend', 'main.py');
-    const python = vsrPython.trim() || defaultVsrPython(vsrPath);
+    const { repo, python } = await vsrPaths();
+    if (!repo) return false;
     const has = (p: string) => fsp.access(p).then(() => true, () => false);
-    return (await has(entry)) && (await has(python));
+    return (await has(path.join(repo, 'backend', 'main.py'))) && (await has(python));
   },
 
   async run({ settings, clip, inputVideo, zones, outPath, onProgress }): Promise<string> {
@@ -103,7 +119,8 @@ export const vsrProvider: InpaintProvider = {
     const areas = vsrAreaArgs(zones, clip.probe.width, clip.probe.height);
     if (!areas.length) throw new Error('지울 영역이 없습니다');
 
-    const python = (settings.vsrPython ?? '').trim() || defaultVsrPython(settings.vsrPath);
+    const { repo, python } = await vsrPaths();
+    if (!repo) throw new Error('VSR 저장소를 찾지 못했습니다 — 설정에서 폴더를 지정하세요');
     await fsp.mkdir(path.dirname(outPath), { recursive: true });
 
     onProgress?.(`VSR 실행 중… (${zones.length}곳 · ${settings.vsrMode || DEFAULT_MODE})`);
@@ -117,7 +134,7 @@ export const vsrProvider: InpaintProvider = {
         '--inpaint-mode', settings.vsrMode || DEFAULT_MODE,
       ], {
         // 저장소 루트에서 돌려야 한다 — `backend.*` 를 패키지로 임포트한다
-        cwd: settings.vsrPath,
+        cwd: repo,
         // 클립 전체를 훑는다(글자 없는 프레임은 VSR이 건너뛴다). CPU로 3초에 4분이라
         // 30초 클립이면 넉넉히 잡아야 한다
         timeoutMs: 7_200_000,

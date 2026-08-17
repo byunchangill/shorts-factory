@@ -18,6 +18,21 @@ const hasKey = vi.hoisted(() => vi.fn(async () => false));
 vi.mock('./store/secrets.js', () => ({ hasKey }));
 vi.mock('./pipeline/fonts.js', () => ({ findKoreanFont: async () => '/fonts/NanumGothic.ttf' }));
 
+/*
+  도구 탐색은 실제 파일시스템을 훑는다 — 캐시 동작을 보는 테스트에 끌어들이면
+  이 PC에 뭐가 깔렸느냐에 따라 결과가 갈린다. 탐색 자체는 toolPath.test.ts가 본다.
+*/
+vi.mock('./util/toolPath.js', () => ({ resolveBin: async (b: string) => b }));
+vi.mock('./pipeline/ocrDetect.js', () => ({
+  resolvePython: async () => null,
+  OCR_MODULE: 'rapidocr_onnxruntime',
+}));
+vi.mock('./pipeline/vsr.js', () => ({
+  vsrProvider: { available: async () => false },
+  vsrPaths: async () => ({ repo: '', python: '' }),
+}));
+vi.mock('./sourcing/browser.js', () => ({ chromiumAvailable: async () => ({ available: false }) }));
+
 const { runDoctor, resetDoctorCache } = await import('./doctor.js');
 
 describe('runDoctor 캐시', () => {

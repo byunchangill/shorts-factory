@@ -40,7 +40,8 @@ interface Settings {
   maxClipExposureSec: number;
 }
 interface DoctorTool {
-  name: string; required: boolean; available: boolean; version?: string; installHint: string;
+  name: string; required: boolean; available: boolean; version?: string; path?: string;
+  installHint: string;
 }
 
 export default function SettingsPage() {
@@ -81,6 +82,8 @@ export default function SettingsPage() {
               <div>
                 <span className="font-medium">{t.name}</span>
                 {t.version && <span className="ml-2 text-xs text-slate-500">{t.version}</span>}
+                {/* PC마다 다른 파일이 뽑힌다 — 어느 것을 쓰는지 감추면 원인을 못 짚는다 */}
+                {t.path && <p className="break-all text-xs text-slate-400">{t.path}</p>}
                 {!t.available && <p className="text-xs text-slate-500">{t.installHint}</p>}
               </div>
             </li>

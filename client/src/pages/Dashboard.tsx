@@ -23,6 +23,7 @@ interface DoctorTool {
   required: boolean;
   available: boolean;
   version?: string;
+  path?: string;
   installHint: string;
 }
 
@@ -49,7 +50,10 @@ export default function Dashboard() {
       {doctor.data && (
         <div className="flex flex-wrap items-center gap-2">
           {doctor.data.tools.map((t) => (
-            <span key={t.name} title={t.available ? t.version : t.installHint}>
+            <span
+              key={t.name}
+              title={t.available ? [t.version, t.path].filter(Boolean).join('\n') : t.installHint}
+            >
               <Badge color={t.available ? 'green' : t.required ? 'red' : 'amber'}>
                 {t.available ? '●' : '○'} {t.name}
               </Badge>
