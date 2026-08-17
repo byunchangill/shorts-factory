@@ -9,7 +9,8 @@ vi.mock('../util/exec.js', () => ({
   PYTHON_CLI_ENV: {},
 }));
 
-const { cliArgs, cliFailureMessage, runPacketWithCli, isRunning } = await import('./cliRunner.js');
+const { cliArgs, cliFailureMessage, runPacketWithCli, isRunning, progressFromEvent } =
+  await import('./cliRunner.js');
 const { packetCommands, packetSlashCommand } = await import('./packets.js');
 
 const packet = {
@@ -99,6 +100,45 @@ describe('같은 요청서를 두 번 실행하지 않는다', () => {
     runMock.mockImplementationOnce(() => Promise.reject(new Error('boom')));
     await expect(runPacketWithCli(p, 'fast')).rejects.toThrow();
     expect(isRunning(p.id)).toBe(false);
+  });
+});
+
+/**
+ * 기본 출력(text)은 다 끝날 때까지 한 글자도 안 나온다 — 몇 분짜리 실행이 멈춘 것과
+ * 구분이 안 됐다. 줄 단위 JSON을 읽어 그때그때 알린다. 잡음이 많이 섞여 나오므로
+ * 아는 것만 집어내고 나머지는 조용히 버린다.
+ */
+describe('progressFromEvent', () => {
+  const ev = (content: unknown) => JSON.stringify({ type: 'assistant', message: { content } });
+  let n = 0;
+  const count = () => ++n;
+
+  it('자료를 읽으면 몇 개째인지 센다', () => {
+    n = 0;
+    expect(progressFromEvent(ev([{ type: 'tool_use', name: 'Read' }]), count))
+      .toEqual({ step: '자료 읽는 중', detail: '1개째' });
+    expect(progressFromEvent(ev([{ type: 'tool_use', name: 'Read' }]), count)?.detail).toBe('2개째');
+  });
+
+  it('산출물을 쓰기 시작하면 그렇게 알린다', () => {
+    expect(progressFromEvent(ev([{ type: 'tool_use', name: 'Write' }]), count)?.step).toBe('산출물 쓰는 중');
+  });
+
+  it('말하는 내용은 앞부분만 보여준다', () => {
+    const p = progressFromEvent(ev([{ type: 'text', text: '가'.repeat(200) }]), count);
+    expect(p?.step).toBe('생각하는 중');
+    expect(p?.detail!.length).toBeLessThanOrEqual(60);
+  });
+
+  it('훅·요약 같은 잡음은 버린다', () => {
+    expect(progressFromEvent(JSON.stringify({ type: 'system', subtype: 'hook_started' }), count)).toBeNull();
+    expect(progressFromEvent(JSON.stringify({ type: 'result' }), count)).toBeNull();
+  });
+
+  /** 줄이 잘려 들어와도 진행 표시 하나 건너뛸 뿐, 실행이 깨지면 안 된다 */
+  it('JSON이 아니거나 잘린 줄에도 안 터진다', () => {
+    expect(progressFromEvent('Warning: something', count)).toBeNull();
+    expect(progressFromEvent('{"type":"assistant","mess', count)).toBeNull();
   });
 });
 

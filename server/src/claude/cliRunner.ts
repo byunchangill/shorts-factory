@@ -60,40 +60,93 @@ export async function claudeCliAvailable(): Promise<boolean> {
  * (버튼 잠금은 그 카드의 화면 상태라 새로고침에 날아간다) **같은 요청서에 CLI가 둘 붙어**
  * 같은 `result/`에 동시에 쓴다. 실제로 그렇게 두 개가 떴다 (2026-08-17).
  */
-const inFlight = new Set<string>();
+const inFlight = new Map<string, number>();
 
 export function isRunning(packetId: string): boolean {
   return inFlight.has(packetId);
 }
 
+/**
+ * 실행이 시작된 시각(ms). 안 돌고 있으면 undefined.
+ *
+ * 화면을 새로 고치면 「실행 중」이라는 카드 상태가 날아간다 — 서버에 물어 되살리는데,
+ * 그때 흐른 시간을 0부터 세면 방금 시작한 것처럼 보인다. 시작 시각을 줘서 제대로 세게 한다.
+ */
+export function runningSince(packetId: string): number | undefined {
+  return inFlight.get(packetId);
+}
+
 export function cliArgs(packet: Packet, mode: 'fast' | 'quality'): string[] {
   return [
     '-p', packetSlashCommand(packet, mode),
+    /*
+      🔴 기본 출력(text)은 **다 끝날 때까지 한 글자도 안 나온다.** 요청서 하나가 몇 분씩
+      걸리는데(소재 프레임을 수십 장 열어본다) 그동안 화면이 멈춘 것과 구분이 안 된다 —
+      실제로 「5분째 로딩 중」이라는 제보를 받았다. 줄 단위 JSON으로 받아 그때그때 알린다.
+      `--verbose`가 있어야 `-p`에서 stream-json이 나온다.
+    */
+    '--output-format', 'stream-json', '--verbose',
     '--allowedTools', ...READ_TOOLS, editScope(packet),
   ];
+}
+
+/**
+ * stream-json 한 줄 → 사람이 읽을 진행 상황.
+ *
+ * 훅·요약·사용량 같은 잡음이 많이 섞여 나오므로 **아는 것만 집어내고 나머지는 버린다.**
+ * 모양이 바뀌어도 진행 표시가 조용해질 뿐 실행은 안 깨진다.
+ */
+export function progressFromEvent(line: string, readCount: () => number):
+{ step: string; detail?: string } | null {
+  if (!line.startsWith('{')) return null;
+  let d: { type?: string; message?: { content?: Array<{ type?: string; name?: string; text?: string }> } };
+  try {
+    d = JSON.parse(line);
+  } catch {
+    return null; // 긴 줄이 잘려 들어오는 경우가 있다 — 진행 표시 하나 건너뛰면 그만이다
+  }
+  if (d.type !== 'assistant') return null;
+
+  for (const c of d.message?.content ?? []) {
+    if (c.type === 'tool_use') {
+      if (c.name === 'Read') return { step: '자료 읽는 중', detail: `${readCount()}개째` };
+      if (c.name === 'Write' || c.name === 'Edit') return { step: '산출물 쓰는 중' };
+      return { step: `${c.name} 실행 중` };
+    }
+    if (c.type === 'text' && c.text?.trim()) {
+      return { step: '생각하는 중', detail: c.text.trim().slice(0, 60) };
+    }
+  }
+  return null;
 }
 
 export async function runPacketWithCli(
   packet: Packet,
   mode: 'fast' | 'quality',
-  onProgress?: (line: string) => void,
+  onProgress?: (p: { step: string; detail?: string }) => void,
 ): Promise<void> {
   if (inFlight.has(packet.id)) {
     throw new Error('이 요청서는 이미 실행 중입니다 — 끝날 때까지 기다리세요.');
   }
-  inFlight.add(packet.id);
+  inFlight.set(packet.id, Date.now());
 
   const tail: string[] = [];
   const keep = (line: string) => {
     tail.push(line);
     if (tail.length > 20) tail.shift();
   };
+  let reads = 0;
   try {
     await run(CLI_BIN, cliArgs(packet, mode), {
       // 저장소 루트에서 돌려야 스킬(`.claude/skills/`)과 상대경로가 잡힌다
       cwd: REPO_ROOT,
       timeoutMs: TIMEOUT_MS,
-      onStdout: (line) => { keep(line); onProgress?.(line); },
+      onStdout: (line) => {
+        // 실패 메시지에 붙일 꼬리는 원문 그대로 둔다 (JSON 한 줄이 통째로 길다)
+        keep(line.slice(0, 300));
+        const p = progressFromEvent(line, () => ++reads);
+        if (p) onProgress?.(p);
+      },
       onStderr: (line) => { keep(line); console.error(`[claude-cli] ${line}`); },
     });
   } catch (e) {

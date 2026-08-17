@@ -25,6 +25,8 @@ interface PacketDetail extends PacketInfo {
   commands: { fast: string; quality: string };
   requestMd: string;
   resultSpec: Array<{ file: string; schema: string }>;
+  /** Claude Code가 지금 이 요청서를 돌고 있으면 시작 시각(ms). 서버만 아는 값이다 */
+  runningSince: number | null;
 }
 
 const STATUS_LABEL: Record<string, { label: string; color: 'slate' | 'brand' | 'green' | 'amber' | 'red' }> = {
@@ -73,6 +75,26 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
     return () => es.close();
   }, [running, packet.id]);
 
+  /*
+    흐른 시간. 요청서 하나가 몇 분씩 걸리는데(소재 프레임을 수십 장 열어본다) 진행 표시가
+    잠깐 조용하면 멈춘 것처럼 보인다 — 실제로 「5분째 로딩 중」이라는 제보를 받았다.
+    초가 올라가는 것만 보여도 살아 있다는 게 전해진다.
+
+    기준은 **서버가 준 시작 시각**이다. 화면을 새로 고쳐 되살린 실행을 0초부터 세면
+    방금 시작한 것처럼 보인다.
+  */
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+  const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+  const elapsedText = elapsed >= 60
+    ? `${Math.floor(elapsed / 60)}분 ${String(elapsed % 60).padStart(2, '0')}초`
+    : `${elapsed}초`;
+
   const active = packet.status === 'waiting' || packet.status === 'received';
   const detail = useQuery({
     queryKey: ['packet', packet.id],
@@ -92,6 +114,18 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
     staleTime: 5 * 60_000,
   });
   const cliAvailable = cli.data?.available ?? false;
+
+  /*
+    서버가 이미 돌리고 있으면 카드도 「실행 중」으로 들어간다. 이게 없으면 화면을 새로
+    고친 순간 버튼이 열려 보이고, 눌러야 「이미 실행 중」을 만난다.
+  */
+  const serverRunningSince = detail.data?.runningSince ?? null;
+  useEffect(() => {
+    if (serverRunningSince) {
+      setRunning(true);
+      setStartedAt(serverRunningSince);
+    }
+  }, [serverRunningSince]);
 
   const accept = useMutation({
     mutationFn: () => api.post(`/packets/${packet.id}/accept`),
@@ -131,12 +165,14 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
   const runCli = useMutation({
     mutationFn: (mode: 'fast' | 'quality') => {
       setRunning(true);
+      setStartedAt(Date.now());
       setRunError(null);
-      setProgress('Claude Code 실행 중…');
+      setProgress(null);
       return api.post(`/packets/${packet.id}/run-cli`, { mode });
     },
     onError: (e: Error) => {
       setRunning(false);
+      setStartedAt(null);
       setRunError(e.message);
     },
   });
@@ -221,7 +257,7 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
               </p>
 
               {([
-                ['fast', '빠르게 — 혼자 처리', '토큰 적게, 수십 초', Zap, 'text-slate-500', 'text-green-300'],
+                ['fast', '빠르게 — 혼자 처리', '토큰 적게 · 소재가 많으면 몇 분', Zap, 'text-slate-500', 'text-green-300'],
                 ['quality', '고품질 — 팀 처리', '리서치 → 대본 → 검수 → 킷, 토큰 많이', Users, 'text-brand-600', 'text-brand-200'],
               ] as const).map(([key, label, desc, Icon, iconColor, codeColor]) => (
                 <div key={key} className="space-y-1">
@@ -261,12 +297,15 @@ export function PacketCard({ packet, compact }: { packet: PacketInfo; compact?: 
               )}
               {running && (
                 <p className="flex items-center gap-1.5 text-sm text-slate-500">
-                  <Spinner /> {progress ?? '실행 중…'} — 완료되면 자동으로 표시됩니다
+                  <Spinner />
+                  <span className="tabular-nums">{elapsedText}</span>
+                  · {progress ?? '시작하는 중…'} · 완료되면 자동으로 표시됩니다
                 </p>
               )}
 
               <p className="text-xs text-slate-500">
                 반복 양산은 빠르게, 채널 대표 영상이나 새 포맷 첫 편은 고품질을 권합니다.
+                소재 장면이 많으면 「빠르게」도 몇 분 걸립니다 — 전부 열어보고 씬에 맞춥니다.
               </p>
             </div>
           )}
