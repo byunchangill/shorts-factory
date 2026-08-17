@@ -1,7 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Packet } from '@shared/types';
-import { cliArgs, cliFailureMessage } from './cliRunner.js';
-import { packetCommands, packetSlashCommand } from './packets.js';
+
+// 실행 자체는 막고 「같은 요청서가 둘 뜨는가」만 본다
+const runMock = vi.hoisted(() => vi.fn(() => new Promise(() => {})));
+vi.mock('../util/exec.js', () => ({
+  run: runMock,
+  checkTool: vi.fn(async () => ({ available: true })),
+  PYTHON_CLI_ENV: {},
+}));
+
+const { cliArgs, cliFailureMessage, runPacketWithCli, isRunning } = await import('./cliRunner.js');
+const { packetCommands, packetSlashCommand } = await import('./packets.js');
 
 const packet = {
   id: 'p06-script',
@@ -67,6 +76,29 @@ describe('cliArgs', () => {
   it('명령을 셸 문자열로 조립하지 않는다 — 경로에 공백·한글이 들어온다', () => {
     // 인자 배열이므로 따옴표를 우리가 붙일 일이 없다
     expect(cliArgs(packet, 'fast').some((a) => a.includes('"'))).toBe(false);
+  });
+});
+
+/**
+ * 요청서 상태로는 못 막는다 — `waiting`은 `.done`이 떨어져야 풀리므로 실행이 도는
+ * 20분 내내 「대기」다. 화면을 새로 고치면 버튼 잠금도 날아가서, 같은 요청서에 CLI가
+ * 둘 붙어 같은 `result/`에 동시에 쓴다. 실제로 두 개가 떴다.
+ */
+describe('같은 요청서를 두 번 실행하지 않는다', () => {
+  it('돌고 있는 동안 다시 부르면 거부한다', async () => {
+    const p = { ...packet, id: 'p99-dup' } as Packet;
+    void runPacketWithCli(p, 'fast').catch(() => {}); // 첫 실행 — 끝나지 않게 잡아둔다
+    expect(isRunning(p.id)).toBe(true);
+    await expect(runPacketWithCli(p, 'fast')).rejects.toThrow('이미 실행 중');
+    // 거부된 쪽이 남의 자리를 치우고 나가면 안 된다
+    expect(isRunning(p.id)).toBe(true);
+  });
+
+  it('끝나면 자리를 비운다 — 실패해도', async () => {
+    const p = { ...packet, id: 'p98-fail' } as Packet;
+    runMock.mockImplementationOnce(() => Promise.reject(new Error('boom')));
+    await expect(runPacketWithCli(p, 'fast')).rejects.toThrow();
+    expect(isRunning(p.id)).toBe(false);
   });
 });
 

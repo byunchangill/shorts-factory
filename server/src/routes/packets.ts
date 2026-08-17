@@ -10,7 +10,7 @@ import { getProject, listProductFiles } from '../store/projects.js';
 import { availableProviders } from '../ai/providers.js';
 import { runPacketWithApi, applyPastedResult } from '../ai/packetRunner.js';
 import { runPacketQuality } from '../ai/qualityRunner.js';
-import { runPacketWithCli, claudeCliAvailable } from '../claude/cliRunner.js';
+import { runPacketWithCli, claudeCliAvailable, isRunning } from '../claude/cliRunner.js';
 import { broadcast } from '../sse.js';
 
 const router = asyncRouter();
@@ -174,6 +174,10 @@ router.post('/packets/:pkid/run-cli', async (req, res) => {
   const packet = await packets.readPacket(req.params.pkid);
   if (!packet) return res.status(404).json({ error: '패킷 없음' });
   if (packet.status !== 'waiting') return res.status(400).json({ error: '대기 상태가 아님' });
+  // 상태만으로는 못 막는다 — 실행이 도는 20분 내내 `waiting`이다
+  if (isRunning(packet.id)) {
+    return res.status(409).json({ error: '이미 실행 중입니다 — 끝날 때까지 기다리세요' });
+  }
   if (!(await claudeCliAvailable())) {
     return res.status(400).json({
       error: 'Claude Code CLI를 찾지 못했습니다 — 설치 후 서버를 다시 시작하세요',

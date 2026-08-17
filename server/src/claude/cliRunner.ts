@@ -52,6 +52,20 @@ export async function claudeCliAvailable(): Promise<boolean> {
   return (await checkTool(CLI_BIN, ['--version'])).available;
 }
 
+/**
+ * 지금 돌고 있는 요청서.
+ *
+ * 요청서 상태만 보고 막을 수 없다 — `waiting`은 `.done`이 떨어져야 풀리므로,
+ * 실행이 도는 20분 내내 「대기」다. 그 사이 버튼을 다시 누르거나 화면을 새로 고치면
+ * (버튼 잠금은 그 카드의 화면 상태라 새로고침에 날아간다) **같은 요청서에 CLI가 둘 붙어**
+ * 같은 `result/`에 동시에 쓴다. 실제로 그렇게 두 개가 떴다 (2026-08-17).
+ */
+const inFlight = new Set<string>();
+
+export function isRunning(packetId: string): boolean {
+  return inFlight.has(packetId);
+}
+
 export function cliArgs(packet: Packet, mode: 'fast' | 'quality'): string[] {
   return [
     '-p', packetSlashCommand(packet, mode),
@@ -64,6 +78,11 @@ export async function runPacketWithCli(
   mode: 'fast' | 'quality',
   onProgress?: (line: string) => void,
 ): Promise<void> {
+  if (inFlight.has(packet.id)) {
+    throw new Error('이 요청서는 이미 실행 중입니다 — 끝날 때까지 기다리세요.');
+  }
+  inFlight.add(packet.id);
+
   const tail: string[] = [];
   const keep = (line: string) => {
     tail.push(line);
@@ -79,6 +98,8 @@ export async function runPacketWithCli(
     });
   } catch (e) {
     throw new Error(cliFailureMessage(tail, e));
+  } finally {
+    inFlight.delete(packet.id);
   }
 
   /*
