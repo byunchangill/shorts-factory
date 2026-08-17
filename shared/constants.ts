@@ -16,7 +16,12 @@ export const MENU_A_STATES = [
   'cleaning',
   'scripting',
   'script_approved',
-  'trimming',
+  /*
+    `trimming`(컷 선택)은 흐름에서 뺐다 (2026-08-18). 쓸 구간은 그 앞
+    「자막·워터마크 지우기」의 **쓸 장면 고르기**에서 이미 정해진다 — 같은 일을 두 번
+    시키는 단계였다. 상태 이름 자체는 `JobStateSchema`에 남겨 뒀다.
+    지난 잡의 `job.json`에 그 값이 적혀 있어서, 빼면 그 잡이 화면에서 통째로 사라진다.
+  */
   'voicing',
   'assembling',
   'review',
@@ -36,7 +41,14 @@ export const MENU_B_STATES = [
   'done',
 ] as const;
 
-export const EXTRA_STATES = ['failed', 'paused'] as const;
+/**
+ * 흐름 밖의 상태.
+ *
+ * `trimming`은 흐름에서 뺀 옛 단계다. 지난 잡의 `job.json`에 남아 있으므로 타입에서까지
+ * 지우면 그 파일을 읽은 값이 `JobState`에 안 맞아 컴파일이 깨진다.
+ * 읽을 때 `migrateState()`가 음성 단계로 바꿔주므로 화면에는 안 나타난다.
+ */
+export const EXTRA_STATES = ['failed', 'paused', 'trimming'] as const;
 
 export type JobState =
   | (typeof MENU_A_STATES)[number]
@@ -76,8 +88,8 @@ export const STATE_NEXT_ACTION: Record<string, string> = {
   analyzing: '분석 진행 중…',
   cleaning: '쓸 장면 고르기',
   scripting: '대본 맡기거나 직접 쓰기',
-  script_approved: '컷 선택하기',
-  trimming: '컷 마킹하기',
+  script_approved: '음성 만들기',
+  trimming: '음성 만들기', // 흐름에서 뺀 단계 — 지난 잡이 이 값을 들고 있다
   scening: '씬 이미지 준비하기',
   format_selected: '대본 맡기거나 직접 쓰기',
   voicing: '음성 생성하기',
@@ -143,9 +155,9 @@ export const STATE_GUIDE: Record<string, StateGuide> = {
     next: '대본을 승인하면 다음 단계로 넘어갑니다.',
   },
   script_approved: {
-    what: '대본이 확정됐습니다. 이제 대본에 맞는 화면을 고릅니다.',
-    todo: '각 영상에서 실제로 쓸 구간을 고르세요.',
-    next: '구간을 저장하면 음성 단계로 넘어갑니다.',
+    what: '대본이 확정됐습니다. 쓸 화면은 장면 고르기에서 이미 정해졌습니다.',
+    todo: '대본을 읽어줄 나레이션을 만드세요.',
+    next: '음성이 다 생기면 조립 단계로 넘어갑니다.',
   },
   format_selected: {
     what: '채널 고유 포맷이 정해졌습니다. 그 틀에 맞춰 대본을 씁니다.',

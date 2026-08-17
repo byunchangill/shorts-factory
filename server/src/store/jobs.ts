@@ -88,10 +88,21 @@ export function forgetJob(ref: JobRef): void {
   }
 }
 
+/**
+ * 흐름에서 빠진 단계에 멈춰 있는 지난 잡을 다음 단계로 읽어준다.
+ *
+ * `trimming`(컷 선택)을 없앴는데(2026-08-18) 그 상태로 저장된 잡이 남아 있다. 그대로 두면
+ * 어느 단계 화면도 안 열려서 잡이 갇힌다 — 컷 구간은 이미 장면 고르기에서 정해졌으므로
+ * 음성 단계로 읽는다. 파일은 그대로 두고 **읽을 때만** 바꾼다. 다음 저장에서 자연히 씻긴다.
+ */
+export function migrateState(job: Job): Job {
+  return job.state === 'trimming' ? { ...job, state: 'voicing' } : job;
+}
+
 export async function readJob(ref: JobRef): Promise<Job | null> {
   const raw = await readJson<unknown>(paths.jobJson(ref.menu, ref.projectId, ref.jobId));
   const parsed = JobSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? migrateState(parsed.data) : null;
 }
 
 /** job.json은 서버만 쓴다 (Claude Code는 requests/{packetId}/result/ 에만 씀) */

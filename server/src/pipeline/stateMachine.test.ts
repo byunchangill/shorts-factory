@@ -41,3 +41,23 @@ describe('stateMachine', () => {
     expect(states[0]).toBe('draft');
   });
 });
+
+/**
+ * 컷 선택(`trimming`)을 흐름에서 뺐다. 그 상태로 저장된 지난 잡이 남아 있는데,
+ * 그대로 두면 어느 단계 화면도 안 열려 잡이 갇힌다.
+ */
+describe('migrateState — 없앤 단계에 멈춘 잡', () => {
+  const job = (state: string) => ({ id: 'j1', state } as never);
+
+  it('컷 선택에 멈춰 있으면 음성 단계로 읽는다', async () => {
+    const { migrateState } = await import('../store/jobs.js');
+    expect(migrateState(job('trimming')).state).toBe('voicing');
+  });
+
+  it('나머지 단계는 건드리지 않는다', async () => {
+    const { migrateState } = await import('../store/jobs.js');
+    for (const s of ['draft', 'cleaning', 'scripting', 'voicing', 'done']) {
+      expect(migrateState(job(s)).state).toBe(s);
+    }
+  });
+});
