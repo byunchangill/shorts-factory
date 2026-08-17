@@ -32,6 +32,25 @@ function executablePath(): string | undefined {
   return process.env.SHORTS_CHROMIUM_PATH || undefined;
 }
 
+/**
+ * 크로미움이 이 PC에 받아져 있는지 — **띄우지 않고 파일로만 본다.**
+ *
+ * playwright는 npm 설치만으로 브라우저를 안 받는다(`npx playwright install chromium`이
+ * 따로 필요하다). 새 PC에서 이걸 안 하면 틱톡 소재만 조용히 실패한다 —
+ * 그 순간에야 알게 되지 말고 도구 점검에서 미리 보이게 한다.
+ */
+export async function chromiumAvailable(): Promise<{ available: boolean; path?: string }> {
+  const custom = executablePath();
+  if (custom) return { available: await fsp.access(custom).then(() => true, () => false), path: custom };
+  try {
+    const p = chromium.executablePath();
+    return { available: await fsp.access(p).then(() => true, () => false), path: p };
+  } catch {
+    // 레지스트리에 등록이 없으면 여기서 던진다 — 그것도 "안 받아져 있다"는 뜻이다
+    return { available: false };
+  }
+}
+
 /** 사람이 쓰는 크롬처럼 보이게 — 기본값은 자동화 티가 크게 난다 */
 const CONTEXT_OPTIONS = {
   viewport: { width: 1280, height: 900 },

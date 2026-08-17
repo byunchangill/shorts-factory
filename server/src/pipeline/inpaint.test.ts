@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resetBinCache } from '../util/toolPath.js';
 
 /**
  * 2차 제거(AI 인페인팅) 가용성 판정.
@@ -68,10 +69,26 @@ describe('planFrames — 존이 걸린 프레임만 고른다', () => {
   });
 });
 
+/**
+ * 탐색이 반드시 빈손이어야 하는 테스트가 쓰는 이름.
+ * 진짜 `iopaint`를 쓰면 이 PC에 깔렸느냐(저장소 안 `.venv-inpaint` 포함)에 따라
+ * 결과가 갈려 다른 PC에서 깨진다.
+ */
+const UNFINDABLE = 'iopaint-테스트용-없는이름';
+
 describe('iopaint 가용성', () => {
+  const originalPath = process.env.PATH;
+
   beforeEach(() => {
     checkTool.mockReset();
-    iopaintPath.value = 'iopaint';
+    iopaintPath.value = UNFINDABLE;
+    process.env.PATH = '';
+    resetBinCache();
+  });
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    resetBinCache();
   });
 
   it('설정에 적어둔 절대경로를 본다 — 가상환경에 깔면 PATH에 없다', async () => {
@@ -90,10 +107,10 @@ describe('iopaint 가용성', () => {
     expect(await iopaintProvider.available()).toBe(false);
   });
 
-  it('PATH에서 찾는 이름이면 실행해 확인한다', async () => {
+  it('끝내 파일을 못 찾으면 실행해 확인한다', async () => {
     checkTool.mockResolvedValue({ available: true, version: '1.6.0' });
     expect(await iopaintProvider.available()).toBe(true);
-    expect(checkTool.mock.calls[0][0]).toBe('iopaint');
+    expect(checkTool.mock.calls[0][0]).toBe(UNFINDABLE);
   });
 
   it('--version이 없는 빌드는 --help로 다시 확인한다', async () => {
@@ -107,6 +124,17 @@ describe('iopaint 가용성', () => {
   it('PATH에도 없으면 false', async () => {
     checkTool.mockResolvedValue({ available: false, error: 'ENOENT' });
     expect(await iopaintProvider.available()).toBe(false);
+  });
+
+  it('이름만 적혀 있어도 PATH에서 파일을 찾아내면 실행하지 않는다', async () => {
+    // 설정에는 이름만 남기고 실제 경로는 PC마다 찾게 하는 것이 이식성의 핵심이다.
+    // 찾아낸 이상 절대경로와 똑같이 취급해야 한다 — torch를 올릴 이유가 없다
+    process.env.PATH = path.dirname(process.execPath);
+    iopaintPath.value = path.basename(process.execPath, path.extname(process.execPath));
+    resetBinCache();
+
+    expect(await iopaintProvider.available()).toBe(true);
+    expect(checkTool).not.toHaveBeenCalled();
   });
 });
 

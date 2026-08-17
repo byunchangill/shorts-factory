@@ -1,4 +1,5 @@
 import { execa, type Options, type ResultPromise } from 'execa';
+import { resolveBin } from './toolPath.js';
 
 export interface RunOptions {
   onStdout?: (line: string) => void;
@@ -27,13 +28,19 @@ export const PYTHON_CLI_ENV: NodeJS.ProcessEnv = {
   NO_COLOR: '1',
 };
 
-/** 서브프로세스 실행 — 인자는 배열로만 전달 (셸 미사용, 인젝션 원천 차단) */
-export function run(
+/**
+ * 서브프로세스 실행 — 인자는 배열로만 전달 (셸 미사용, 인젝션 원천 차단).
+ *
+ * 실행 파일 이름은 여기서 `resolveBin`을 거친다. 설정에는 `ffmpeg` 같은 이름만 두고
+ * 실제 경로는 실행하는 PC에서 정해지게 하는 자리다 — 이 한 곳을 지나가므로
+ * 파이프라인 각 단계는 경로 문제를 몰라도 된다.
+ */
+export async function run(
   bin: string,
   args: string[],
   opts: RunOptions = {},
-): ResultPromise<Options> {
-  const child = execa(bin, args, {
+) {
+  const child: ResultPromise<Options> = execa(await resolveBin(bin), args, {
     cwd: opts.cwd,
     timeout: opts.timeoutMs,
     buffer: true,
@@ -108,7 +115,7 @@ export async function checkTool(
   versionArgs: string[] = ['--version'],
   timeoutMs: number = TOOL_CHECK_TIMEOUT_MS,
 ): Promise<{ available: boolean; version?: string; error?: string }> {
-  const child = execa(bin, versionArgs, {
+  const child = execa(await resolveBin(bin), versionArgs, {
     timeout: timeoutMs,
     stdin: 'ignore',
     killSignal: 'SIGKILL',

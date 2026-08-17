@@ -11,6 +11,8 @@ for (const t of report.tools) {
   const mark = t.available ? '✅' : t.required ? '❌' : '⚠️ ';
   const ver = t.version ? ` (${t.version})` : '';
   console.log(`${mark} ${t.name}${ver}${t.required ? '' : ' [선택]'}`);
+  // 어느 파일이 뽑혔는지 — 다른 PC에서 이상하게 굴 때 여기부터 본다
+  if (t.path) console.log(`   ${t.path}`);
   if (!t.available) console.log(`   설치: ${t.installHint}`);
 }
 console.log(report.ok ? '\n필수 도구 모두 준비됨.\n' : '\n❌ 필수 도구가 없습니다. 위 안내대로 설치하세요.\n');
