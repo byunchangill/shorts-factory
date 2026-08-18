@@ -558,10 +558,33 @@ function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Set
   새겨 배포해도 되는지가 라이선스마다 다르다. 서버가 자유 이용이 명시된 것만 골라 준다.
 */
 function FontPicker({ value, onPick }: { value: string; onPick: (path: string) => void }) {
+  const qc = useQueryClient();
   const fonts = useQuery({
     queryKey: ['fonts'],
     queryFn: () => api.get<{ fonts: Array<{ filePath: string; label: string; license: string }> }>('/fonts'),
   });
+  /*
+    구글 폰트에서 받을 수 있는 한국어 글꼴. 눈누 같은 모음 사이트는 글꼴마다 배포처와
+    이용 범위가 달라 한 번에 못 받는다 — 구글 폰트는 전부 OFL이라 통째로 받을 수 있다.
+  */
+  const available = useQuery({
+    queryKey: ['fonts-available'],
+    queryFn: () => api.get<{ families: Array<{ family: string; installed: boolean }> }>('/fonts/available'),
+  });
+  const install = useMutation({
+    mutationFn: () => api.post<{ installed: string[]; skipped: string[]; failed: string[] }>('/fonts/install'),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['fonts'] });
+      void qc.invalidateQueries({ queryKey: ['fonts-available'] });
+      alert(`글꼴 ${r.installed.length}종을 받았습니다.`
+        + (r.skipped.length ? `
+이미 있던 것 ${r.skipped.length}종` : '')
+        + (r.failed.length ? `
+못 받은 것 ${r.failed.length}종: ${r.failed.join(', ')}` : ''));
+    },
+    onError: (e: Error) => alert(e.message),
+  });
+  const notYet = (available.data?.families ?? []).filter((f) => !f.installed).length;
   const list = fonts.data?.fonts ?? [];
   const options = [
     { value: '', label: '자동 (설치된 것 중에서 고름)' },
@@ -585,6 +608,21 @@ function FontPicker({ value, onPick }: { value: string; onPick: (path: string) =
         placeholder="글꼴 이름으로 검색"
         emptyText="그 이름의 무료 글꼴이 없습니다"
       />
+      {notYet > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2">
+          <span className="text-xs text-slate-600">
+            구글 폰트에서 <b>{notYet}종</b>을 더 받을 수 있습니다 (전부 OFL · 약 40MB)
+          </span>
+          <Button
+            variant="secondary"
+            className="ml-auto"
+            onClick={() => install.mutate()}
+            disabled={install.isPending}
+          >
+            {install.isPending ? '받는 중… (1~2분)' : '무료 글꼴 더 받기'}
+          </Button>
+        </div>
+      )}
       <p className="mt-1 text-xs text-slate-500">
         자유 이용이 확인된 글꼴 중 <b>이 PC에 깔린 것</b>만 보입니다. 굵을수록 배경에 안 묻힙니다.
         목록에 없는 글꼴은 아래 「한글 폰트」 칸에 글꼴 파일 경로를 직접 적으면 그대로 씁니다 —
