@@ -16,6 +16,7 @@ import fsp from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readZip } from '../server/src/util/zip.js';
+import { charBudget } from '../shared/constants.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TSX_BIN = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -1045,12 +1046,21 @@ async function main(): Promise<void> {
       'menu-a 대본 스킬이 제품정보리뷰 지침으로 새어 들어옴');
     assert(bGuide.content.includes('대본 지침'), 'menu-b 기본 지침이 깔리지 않음');
 
-    // ① 요청서가 menu-b 기준(22초·162자)과 단점 씬 규칙을 담아야 한다
+    /*
+      ① 요청서가 menu-b 기준(26초)과 그 메뉴의 분량, 단점 씬 규칙을 담아야 한다.
+
+      **글자 수를 여기에 박지 않는다** — 낭독 배속(`settings.speechRate`)이 바뀌면 같이
+      움직이는 값이라, 박아 두면 배속을 조정할 때마다 하네스가 엉뚱하게 터진다.
+      확인해야 할 것은 「메뉴에 맞는 분량이 실렸는가」다.
+    */
+    const { speechRate } = await get<{ speechRate: number }>('/settings');
+    const bBudget = charBudget(speechRate, 'menu-b');
+    const aBudget = charBudget(speechRate, 'menu-a');
     const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
     const req = await get<PacketView>(`/packets/${p1.id}`);
     assert(req.requestMd.includes('26초 이내'), 'menu-b 목표 시간이 요청서에 없음');
-    assert(req.requestMd.includes('162자'), `menu-b 분량 상한이 반영되지 않음`);
-    assert(!req.requestMd.includes('175자'), 'menu-a 분량 상한이 새어 들어옴');
+    assert(req.requestMd.includes(`${bBudget.max}자`), 'menu-b 분량 상한이 반영되지 않음');
+    assert(!req.requestMd.includes(`${aBudget.max}자`), 'menu-a 분량 상한이 새어 들어옴');
     assert(req.requestMd.includes('isDownside'), '단점 씬 규칙이 요청서에 없음');
 
     // ② 단점 씬이 없으면 반려 — 대본이 반영되면 안 된다
@@ -1104,7 +1114,9 @@ async function main(): Promise<void> {
     const aReq = await get<PacketView>(`/packets/${aPacket.id}`);
     // 규칙 문장으로 본다 — 이전 대본이 문맥으로 실리면 isDownside 키 자체는 등장할 수 있다
     assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
-    assert(aReq.requestMd.includes('175자'), 'menu-a 분량 기준이 바뀜');
+    // 여기도 숫자를 박지 않는다 — 배속이 바뀌면 같이 움직이는 값이다
+    const { speechRate: rate } = await get<{ speechRate: number }>('/settings');
+    assert(aReq.requestMd.includes(`${charBudget(rate, 'menu-a').max}자`), 'menu-a 분량 기준이 바뀜');
     assert(aReq.requestMd.includes('28초 이내'), 'menu-a 목표 시간이 바뀜');
 
     return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
