@@ -1193,6 +1193,30 @@ async function main(): Promise<void> {
     return `최종영상 ${name.slice(-24)} · 대본 zip ${names.length}개`;
   });
 
+  /*
+    캡컷에는 공식 연동 API가 없다. 사람이 끌어다 놓는 재료를 만들어 주는데,
+    **이름이 곧 순서**라 번호가 씬 순서와 어긋나면 타임라인이 뒤섞인다.
+  */
+  await step('캡컷 재료 묶음 — 이름이 곧 씬 순서', async () => {
+    const r = await fetch(`${API}/jobs/${jid}/download/capcut`);
+    assert(r.status === 200, `캡컷 묶음 실패: ${r.status}`);
+    const names = readZip(Buffer.from(await r.arrayBuffer())).map((e) => e.name);
+
+    const videos = names.filter((n) => n.startsWith('01_영상/')).sort();
+    const audios = names.filter((n) => n.startsWith('02_음성/')).sort();
+    assert(videos.length === scenes.length, `영상 수가 씬 수와 다름: ${videos.length}/${scenes.length}`);
+    assert(audios.length === scenes.length, `음성 수가 씬 수와 다름: ${audios.length}/${scenes.length}`);
+    // 영상과 음성이 번호로 짝지어야 편집기에서 트랙이 맞는다
+    for (let i = 0; i < videos.length; i++) {
+      const n = String(i + 1).padStart(2, '0');
+      assert(videos[i].includes(`/${n}_`), `영상 번호가 순서와 다름: ${videos[i]}`);
+      assert(audios[i].includes(`/${n}_`), `음성 번호가 순서와 다름: ${audios[i]}`);
+    }
+    assert(names.some((n) => n === '03_자막/자막.srt'), `자막이 없음: ${names.join(', ')}`);
+    assert(names.some((n) => n === '읽어보세요.md'), '안내문이 없음');
+    return `${videos.length}씬 · 영상·음성·자막·안내문`;
+  });
+
   // ── 상태 파일 무결성 ──
   await step('상태 파일 · 감사 로그 무결성', async () => {
     const jobJson = JSON.parse(await fsp.readFile(path.join(jobDir, 'job.json'), 'utf8'));

@@ -1150,6 +1150,20 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             </a>
           ))}
         </div>
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <p className="text-sm font-medium">캡컷에서 직접 편집하기</p>
+          <p className="mt-1 text-xs text-slate-500">
+            컷 영상·나레이션·자막(SRT)을 <b>씬 순서대로 번호를 붙여</b> 묶어 줍니다.
+            캡컷에 통째로 끌어다 놓으면 이름 순으로 트랙에 올라갑니다.
+            좌우반전·색보정·확대는 그쪽에서 직접 거세요.
+          </p>
+          <a
+            href={`/api/jobs/${job.id}/download/capcut`}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-brand-400 hover:text-brand-700"
+          >
+            <Download size={14} /> 캡컷 재료 받기
+          </a>
+        </div>
       </Card>
 
       <Card>

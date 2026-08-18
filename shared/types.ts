@@ -364,6 +364,14 @@ export const SettingsSchema = z.object({
    * 그래서 화면의 글자는 뒤집히지 않는다.
    */
   mirror: z.boolean().default(true),
+  /**
+   * 소재 확대 배율. 1이면 원본 크기.
+   *
+   * 반전·그레이딩과 같은 목적이다 — **픽셀이 원본과 달라져야 재사용 판정을 피한다.**
+   * 화면 가장자리를 조금 잘라내므로 자막이 가장자리에 있는 소재에서는 덤으로 지워진다.
+   * 1.2를 넘기면 화질 손실이 눈에 띈다 — 소재가 이미 크롭으로 확대된 상태일 수 있다.
+   */
+  zoom: z.number().min(1).max(1.2).default(1),
   // 씬 사이 텍스트 카드 삽입 (하이브리드 믹싱)
   insertCards: z.boolean().default(true),
   cardDurationSec: z.number().min(0.5).max(4).default(1.5),

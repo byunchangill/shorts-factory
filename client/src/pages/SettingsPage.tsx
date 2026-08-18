@@ -31,6 +31,7 @@ interface Settings {
   layout: 'fullscreen' | 'framed';
   frameTitle: string;
   mirror: boolean;
+  zoom: number;
   grade: string;
   vsrPath: string;
   vsrPython: string;
@@ -217,6 +218,16 @@ export default function SettingsPage() {
             <input type="checkbox" checked={form.mirror} onChange={(e) => set({ mirror: e.target.checked })} />
             소재 좌우반전 (픽셀이 통째로 달라져 중복 회피에 제일 강함)
           </label>
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">소재 확대</span>
+            <Input
+              type="number" step="0.02" min={1} max={1.2}
+              className="w-24"
+              value={form.zoom}
+              onChange={(e) => set({ zoom: Number(e.target.value) })}
+            />
+            <span className="text-xs text-slate-500">배 — 1이면 원본. 가장자리가 잘려 나갑니다</span>
+          </div>
           <div className="flex items-center gap-2">
             <span className="w-28 shrink-0 text-slate-500">채널 그레이딩</span>
             <Input

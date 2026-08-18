@@ -221,9 +221,18 @@ export function buildLayoutFilter(settings: Settings, fontArg: string | null): s
     자막·카드는 여기가 아니라 다음 인코딩 단계에서 붙으므로 애초에 안 걸린다.
   */
   const flip = settings.mirror ? 'hflip,' : '';
+  /*
+    확대는 반전 **뒤, 레이아웃 앞**이다. 소재만 키우고 우리가 얹는 층은 원래 크기로 둔다 —
+    뒤에 걸면 제목바와 테두리까지 같이 커져 화면 밖으로 밀린다.
+    키운 뒤 원래 크기로 잘라내므로 결과 해상도는 그대로다.
+  */
+  const zoom = settings.zoom > 1
+    ? `scale=iw*${settings.zoom}:ih*${settings.zoom},crop=iw/${settings.zoom}:ih/${settings.zoom},`
+    : '';
+  const pre = `${flip}${zoom}`;
 
   if (settings.layout === 'fullscreen') {
-    return `${flip}scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${base}`;
+    return `${pre}scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${base}`;
   }
 
   // framed — 소스는 가로폭 92%, 세로 중앙 58% 영역에 넣는다
@@ -235,7 +244,7 @@ export function buildLayoutFilter(settings: Settings, fontArg: string | null): s
 
   const parts = [
     // 1) 배경: 소스를 크게 확대·블러 처리해 여백을 채운다
-    `${flip}split=2[bg][fg]`,
+    `${pre}split=2[bg][fg]`,
     `[bg]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=luma_radius=40:luma_power=2,eq=brightness=-0.18[bgb]`,
     // 2) 전경: 소스를 프레임 크기로 맞춤
     `[fg]scale=${inW}:${inH}:force_original_aspect_ratio=increase,crop=${inW}:${inH}[fgc]`,
