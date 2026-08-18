@@ -1,6 +1,9 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
+/** 합성이 끝났다(성공·실패 모두). 진행 표시를 켠 화면이 이걸 듣고 끈다 */
+export const TTS_END_EVENT = 'tts:end';
+
 /**
  * 서버 SSE 구독 — 이벤트 종류에 따라 관련 쿼리를 무효화해 화면을 자동 갱신한다.
  */
@@ -82,8 +85,12 @@ export function useServerEvents(): void {
       alert(`내보내기 실패: ${JSON.parse((e as MessageEvent).data).error}`);
     });
     es.addEventListener('format.saved', () => invalidate('formats'));
-    es.addEventListener('tts.done', () => invalidate('job'));
+    es.addEventListener('tts.done', () => {
+      invalidate('job');
+      window.dispatchEvent(new Event(TTS_END_EVENT));
+    });
     es.addEventListener('tts.failed', (e) => {
+      window.dispatchEvent(new Event(TTS_END_EVENT));
       alert(`TTS 실패: ${JSON.parse((e as MessageEvent).data).error}`);
     });
     es.addEventListener('assemble.done', () => invalidate('job', 'output', 'active-jobs'));

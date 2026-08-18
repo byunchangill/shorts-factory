@@ -277,6 +277,19 @@ export const SettingsSchema = z.object({
   parallelDownloads: z.number().int().min(1).max(8).default(3),
   burnSubtitles: z.boolean().default(true),
   burnDisclosure: z.boolean().default(true), // 쿠팡파트너스 공시 번인
+  /*
+    자막 모양. 기본값은 잘 도는 쇼핑쇼츠 한 편을 프레임 단위로 재서 맞춘 값이다
+    (CLAUDE.md 「자막·낭독 속도는 레퍼런스에서 재서 맞췄다」). 설정 화면에서 미리보며 바꾼다.
+  */
+  subtitleFontSize: z.number().int().min(40).max(200).default(118),
+  /** 화면 **아래에서** 얼마나 띄울지 (0~1). 하단은 쇼츠 UI가 덮으므로 0.35가 기본이다 */
+  subtitleBottomRatio: z.number().min(0.05).max(0.8).default(0.35),
+  subtitleOutline: z.number().int().min(0).max(20).default(7),
+  /** 한 줄에 몇 글자까지. 글자 크기와 같이 움직인다 — 크게 키우면 줄여야 안 넘친다 */
+  subtitleMaxChars: z.number().int().min(6).max(30).default(14),
+  subtitleColor: z.string().default('#FFFFFF'),
+  /** `*키워드*`로 감싼 부분의 색 */
+  subtitleHighlightColor: z.string().default('#FFD800'),
   ytdlpPath: z.string().default('yt-dlp'),
   ffmpegPath: z.string().default('ffmpeg'),
   ffprobePath: z.string().default('ffprobe'),
@@ -334,7 +347,7 @@ export const SettingsSchema = z.object({
    * 합성 음성에만 적용된다 — 첨부 파일은 사용자가 의도한 속도로 본다.
    * 이 값이 대본 분량 기준을 좌우한다 (300자/분 × 배율).
    */
-  speechRate: z.number().min(0.5).max(2).default(1.25),
+  speechRate: z.number().min(0.5).max(2).default(1.33),
   // 한글 폰트 (자막 번인·텍스트 카드에 필요). 비우면 시스템에서 자동 탐색
   fontPath: z.string().default(''),
   /**

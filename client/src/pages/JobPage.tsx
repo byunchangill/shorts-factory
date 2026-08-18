@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
   Download, FileText, Mic, Clapperboard, ShieldCheck, RefreshCw, Wand2, Check,
-  Play, Trash2, FolderOpen, Upload,
+  Play, Trash2, FolderOpen, Upload, Star,
 } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
 import { api } from '@/api/client';
+import { VOICE_KO, voiceLabel } from '@/voiceNames';
+import { TTS_END_EVENT } from '@/api/sse';
 import {
-  Badge, Breadcrumb, Button, Card, ConfirmDialog, PageHeader, Spinner, Textarea,
+  Badge, Breadcrumb, Button, Card, ConfirmDialog, PageHeader, SearchSelect, Spinner, Textarea,
 } from '@/components/ui';
 import { ProgressRail, StepGuide } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
@@ -807,6 +809,23 @@ interface EngineInfo {
   voiceboxUrl: string;
 }
 
+/*
+  자주 쓰는 캐릭터 고정 — 이 PC에서만 쓰는 취향이라 서버 설정에 넣지 않는다.
+*/
+const PIN_KEY = 'typecastPins';
+function readVoicePins(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(PIN_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+function writeVoicePins(pins: string[]): string[] {
+  localStorage.setItem(PIN_KEY, JSON.stringify(pins));
+  return pins;
+}
+
 /** ssfm-v30 감정 프리셋 한글 라벨 */
 const EMOTION_LABELS: Record<string, string> = {
   normal: '기본', happy: '밝게', sad: '차분하게', angry: '강하게',
@@ -827,11 +846,38 @@ function VoicePanel({ job }: { job: JobDetail }) {
   });
 
   const [typecastVoiceId, setTypecastVoiceId] = useState(job.typecastVoiceId ?? '');
+  const [pins, setPins] = useState<string[]>(readVoicePins);
   const [emotion, setEmotion] = useState('');
   const [runningTts, setRunningTts] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  const selectedVoice = (engineInfo.data?.typecastVoices ?? []).find((v) => v.id === typecastVoiceId);
+  const voices = engineInfo.data?.typecastVoices ?? [];
+  const selectedVoice = voices.find((v) => v.id === typecastVoiceId);
+
+  /*
+    캐릭터가 590종이라 목록만 보여 주면 못 찾는다 — 치면서 걸러 고른다.
+    순서는 고정 → 한글 이름 → 나머지. 나레이션이 한국어라 로마자만 있는 캐릭터는 뒤로 간다.
+  */
+  const shownVoices = [...voices]
+    .sort((a, b) => voiceLabel(a.name).localeCompare(voiceLabel(b.name), 'ko'))
+    .sort((a, b) => Number(!VOICE_KO[a.name]) - Number(!VOICE_KO[b.name]))
+    .sort((a, b) => Number(!pins.includes(a.id)) - Number(!pins.includes(b.id)));
+  const pinned = pins.map((id) => voices.find((v) => v.id === id)).filter((v) => !!v);
+
+  const pickVoice = (id: string) => {
+    setTypecastVoiceId(id);
+    setEmotion('');
+  };
+  const togglePin = () => setPins(writeVoicePins(
+    pins.includes(typecastVoiceId) ? pins.filter((p) => p !== typecastVoiceId) : [...pins, typecastVoiceId],
+  ));
+
+  // 합성이 끝나면(성공·실패 모두) 스피너를 끈다 — SSE로만 알 수 있다
+  useEffect(() => {
+    const stop = () => setRunningTts(false);
+    window.addEventListener(TTS_END_EVENT, stop);
+    return () => window.removeEventListener(TTS_END_EVENT, stop);
+  }, []);
 
   const upload = useMutation({
     mutationFn: ({ sceneId, file }: { sceneId: string; file: File }) => {
@@ -917,18 +963,30 @@ function VoicePanel({ job }: { job: JobDetail }) {
                 </p>
               </div>
             ) : (
+              <>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">캐릭터</span>
-                <select
-                  className="min-w-[220px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                <SearchSelect
+                  className="w-64"
+                  options={shownVoices.map((v) => ({
+                    value: v.id,
+                    label: voiceLabel(v.name),
+                    pinned: pins.includes(v.id),
+                  }))}
                   value={typecastVoiceId}
-                  onChange={(e) => { setTypecastVoiceId(e.target.value); setEmotion(''); }}
+                  onPick={pickVoice}
+                  placeholder={`이름으로 검색 (${voices.length}종)`}
+                  emptyText="그 이름의 캐릭터가 없습니다"
+                />
+                <Button
+                  variant="ghost"
+                  className="px-2"
+                  onClick={togglePin}
+                  disabled={!typecastVoiceId}
+                  title={pins.includes(typecastVoiceId) ? '고정 해제' : '자주 쓰는 음성으로 고정'}
                 >
-                  <option value="">선택하세요 ({engineInfo.data?.typecastVoices.length ?? 0}종)</option>
-                  {(engineInfo.data?.typecastVoices ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
+                  <Star size={15} className={pins.includes(typecastVoiceId) ? 'fill-brand-500 text-brand-500' : ''} />
+                </Button>
 
                 {selectedVoice && selectedVoice.emotions.length > 0 && (
                   <select
@@ -950,6 +1008,27 @@ function VoicePanel({ job }: { job: JobDetail }) {
                   <span className="text-xs text-red-600">캐릭터 목록 오류: {engineInfo.data.error}</span>
                 )}
               </div>
+              {pinned.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-slate-500">고정</span>
+                  {pinned.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => pickVoice(v.id)}
+                      className={clsx(
+                        'rounded-full border px-2.5 py-1 text-xs',
+                        v.id === typecastVoiceId
+                          ? 'border-brand-400 bg-brand-50 text-brand-700'
+                          : 'border-slate-300 hover:border-brand-400',
+                      )}
+                    >
+                      {voiceLabel(v.name)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              </>
             )}
           </div>
         )}
@@ -1042,6 +1121,7 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
   });
   const assemble = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/assemble`),
+    onError: (e: Error) => alert(e.message),
   });
   const uploadKit = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/packets`, { kind: 'upload-kit' }),
@@ -1141,13 +1221,14 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             ['script', '대본·자막'],
             ['uploadKit', '업로드킷'],
           ] as const).map(([kind, label]) => (
-            <a
+            <button
               key={kind}
-              href={`/api/jobs/${job.id}/download/${kind}`}
+              type="button"
+              onClick={() => void api.download(`/jobs/${job.id}/download/${kind}`)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-brand-400 hover:text-brand-700"
             >
               <Download size={14} /> {label}
-            </a>
+            </button>
           ))}
         </div>
         <div className="mt-4 border-t border-slate-200 pt-3">
@@ -1157,12 +1238,13 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             캡컷에 통째로 끌어다 놓으면 이름 순으로 트랙에 올라갑니다.
             좌우반전·색보정·확대는 그쪽에서 직접 거세요.
           </p>
-          <a
-            href={`/api/jobs/${job.id}/download/capcut`}
+          <button
+            type="button"
+            onClick={() => void api.download(`/jobs/${job.id}/download/capcut`)}
             className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-brand-400 hover:text-brand-700"
           >
             <Download size={14} /> 캡컷 재료 받기
-          </a>
+          </button>
         </div>
       </Card>
 

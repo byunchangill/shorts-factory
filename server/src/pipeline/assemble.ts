@@ -5,8 +5,9 @@ import { COUPANG_PARTNERS_DISCLOSURE } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
-import { buildAss, buildSrt, wrapKorean, type SubCue } from './subtitles.js';
+import { assStyleOf, buildAss, buildSrt, wrapKorean, type SubCue } from './subtitles.js';
 import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './fonts.js';
+import { familyOfInstalled } from './freeFonts.js';
 import { renderCard } from './cards.js';
 
 const W = 1080;
@@ -160,7 +161,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
       cues.push({
         start: cursor,
         end: cursor + item.dur,
-        text: wrapKorean(scene.subtitle || scene.narration),
+        text: wrapKorean(scene.subtitle || scene.narration, settings.subtitleMaxChars),
       });
     }
     cursor += item.dur;
@@ -179,7 +180,9 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   const assPath = path.join(subsDir, 'final.ass');
   await fsp.writeFile(srtPath, buildSrt(cues), 'utf8');
   // 자막 폰트도 실제로 설치된 것을 지정해야 한글이 깨지지 않는다
-  await fsp.writeFile(assPath, buildAss(cues, { fontName: fontFamilyOf(font) }), 'utf8');
+  // 화면에서 받아 둔 글꼴은 표에 없다 — 받을 때 적어 둔 이름을 먼저 본다
+  const family = (font && await familyOfInstalled(font)) ?? fontFamilyOf(font);
+  await fsp.writeFile(assPath, buildAss(cues, assStyleOf(settings, family)), 'utf8');
 
   // 5) 합치기 (+자막 번인)
   // 자막 파일도 파일명만 필터에 넣고 자막 폴더에서 실행한다 (입출력은 절대경로 그대로)

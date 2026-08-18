@@ -5,8 +5,9 @@ import {
 import { SettingsSchema } from '@shared/types';
 
 describe('대본 분량 계산', () => {
-  it('기본 배속은 1.25배', () => {
-    expect(SettingsSchema.parse({}).speechRate).toBe(1.25);
+  // 레퍼런스 쇼츠(잘 도는 편)를 재서 맞춘 값 — 초당 8자 낭독 (2026-08-18)
+  it('기본 배속은 1.33배', () => {
+    expect(SettingsSchema.parse({}).speechRate).toBe(1.33);
   });
 
   // 기본값(메뉴 미지정)은 해외영상 짜집기 기준이고, 그 기준은 기본 대본 스킬이 정한다

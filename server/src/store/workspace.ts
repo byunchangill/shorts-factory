@@ -22,6 +22,8 @@ export const paths = {
   templates: () => path.join(WORKSPACE_ROOT, 'templates'),
   /** 삭제한 카테고리·작업이 옮겨지는 곳 (`store/remove.ts`) — 지우지 않고 여기 둔다 */
   trash: () => path.join(WORKSPACE_ROOT, '.trash'),
+  /** 화면에서 받은 무료 글꼴 — 설치 없이 여기 두고 바로 쓴다 (`pipeline/googleFonts.ts`) */
+  fonts: () => path.join(WORKSPACE_ROOT, 'fonts'),
   menu: (menu: Menu) => path.join(WORKSPACE_ROOT, menu),
   formats: () => path.join(WORKSPACE_ROOT, 'menu-b', 'formats'),
   format: (formatId: string) => path.join(WORKSPACE_ROOT, 'menu-b', 'formats', formatId),

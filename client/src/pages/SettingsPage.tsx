@@ -2,13 +2,19 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
-import { Badge, Button, Card, Input, PageHeader, Textarea } from '@/components/ui';
+import { Badge, Button, Card, Input, PageHeader, SearchSelect, Textarea } from '@/components/ui';
 import { TARGET_SEC, charBudget } from '@shared/constants';
 
 interface Settings {
   parallelDownloads: number;
   burnSubtitles: boolean;
   burnDisclosure: boolean;
+  subtitleFontSize: number;
+  subtitleBottomRatio: number;
+  subtitleOutline: number;
+  subtitleMaxChars: number;
+  subtitleColor: string;
+  subtitleHighlightColor: string;
   ytdlpPath: string;
   ffmpegPath: string;
   ffprobePath: string;
@@ -118,6 +124,8 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      <SubtitleStyleCard form={form} set={set} />
+
       <Card>
         <h3 className="mb-3 font-medium">산출물 저장 폴더</h3>
         <div className="space-y-3 text-sm">
@@ -175,13 +183,12 @@ export default function SettingsPage() {
             </select>
           </div>
           {(['anthropic', 'openai', 'gemini'] as const).map((p) => (
-            <div key={p} className="flex items-center gap-2">
-              <span className="w-28 shrink-0 text-slate-500">{p} 모델</span>
-              <Input
-                value={form.aiModels[p]}
-                onChange={(e) => set({ aiModels: { ...form.aiModels, [p]: e.target.value } })}
-              />
-            </div>
+            <ModelPicker
+              key={p}
+              provider={p}
+              value={form.aiModels[p]}
+              onPick={(id) => set({ aiModels: { ...form.aiModels, [p]: id } })}
+            />
           ))}
         </div>
       </Card>
@@ -432,6 +439,241 @@ export default function SettingsPage() {
       <Button onClick={() => save.mutate()} disabled={save.isPending}>
         <Save size={15} /> 저장
       </Button>
+    </div>
+  );
+}
+
+/*
+  자막 모양 — 숫자를 만지면서 결과를 바로 본다.
+
+  미리보기는 **서버가 조립과 같은 렌더러(libass)로 그린 진짜 한 장**이다. 화면에서 CSS로
+  흉내 내면 폰트·외곽선이 달라 「미리보기와 다른 영상」이 나온다. 값을 고르라고 만든
+  화면이 거짓말을 하면 안 된다. 배경은 위아래로 어둡고 밝게 갈라 놨다 — 흰 글자가
+  밝은 배경에서 묻히는지 한 장으로 보인다.
+*/
+function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Settings>) => void }) {
+  const [text, setText] = useState('세면용품 *여기 두지* 마세요');
+  const [debounced, setDebounced] = useState(0);
+  useEffect(() => {
+    // 슬라이더를 끌 때마다 ffmpeg를 부르면 끊긴다 — 손을 멈추면 그린다
+    const t = setTimeout(() => setDebounced((n) => n + 1), 250);
+    return () => clearTimeout(t);
+  }, [
+    text, form.subtitleFontSize, form.subtitleBottomRatio, form.subtitleOutline,
+    form.subtitleMaxChars, form.subtitleColor, form.subtitleHighlightColor, form.fontPath,
+  ]);
+
+  const src = `/api/subtitles/preview?${new URLSearchParams({
+    text,
+    subtitleFontSize: String(form.subtitleFontSize),
+    subtitleBottomRatio: String(form.subtitleBottomRatio),
+    subtitleOutline: String(form.subtitleOutline),
+    subtitleMaxChars: String(form.subtitleMaxChars),
+    subtitleColor: form.subtitleColor,
+    subtitleHighlightColor: form.subtitleHighlightColor,
+    fontPath: form.fontPath,
+    v: String(debounced),
+  })}`;
+
+  const slider = (
+    label: string, key: 'subtitleFontSize' | 'subtitleBottomRatio' | 'subtitleOutline' | 'subtitleMaxChars',
+    min: number, max: number, step: number, hint: string, fmt = (v: number) => String(v),
+  ) => (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="font-medium">{label}</span>
+        <span className="text-slate-500">{fmt(form[key])}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={form[key]}
+        onChange={(e) => set({ [key]: Number(e.target.value) } as Partial<Settings>)}
+        className="mt-1 w-full accent-brand-600"
+      />
+      <p className="text-xs text-slate-500">{hint}</p>
+    </div>
+  );
+
+  return (
+    <Card>
+      <h3 className="mb-1 font-medium">자막 모양</h3>
+      <p className="mb-3 text-sm text-slate-500">
+        영상을 만들기 전에 여기서 정합니다. 모든 잡에 같은 값이 쓰입니다 —
+        채널 룩이라 편마다 바꾸지 않습니다.
+      </p>
+      <div className="flex flex-col gap-5 sm:flex-row">
+        <div className="w-full max-w-sm space-y-4 text-sm">
+          {slider('글자 크기', 'subtitleFontSize', 40, 200, 2,
+            '1080 기준. 크게 키우면 한 줄 글자 수를 줄여야 넘치지 않습니다')}
+          {slider('높이 (아래에서)', 'subtitleBottomRatio', 0.05, 0.8, 0.01,
+            '하단 20%는 쇼츠 UI(계정명·설명·버튼)가 덮습니다',
+            (v) => `${Math.round(v * 100)}%`)}
+          {slider('외곽선 두께', 'subtitleOutline', 0, 20, 1,
+            '밝은 배경에서 흰 글자가 묻히면 올립니다')}
+          {slider('한 줄 글자 수', 'subtitleMaxChars', 6, 30, 1,
+            '넘으면 줄을 바꿉니다')}
+          <FontPicker value={form.fontPath} onPick={(fontPath) => set({ fontPath })} />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2">
+              <span className="text-slate-500">글자색</span>
+              <input
+                type="color" value={form.subtitleColor}
+                onChange={(e) => set({ subtitleColor: e.target.value })}
+                className="h-8 w-12 rounded border border-slate-300"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-slate-500">강조색</span>
+              <input
+                type="color" value={form.subtitleHighlightColor}
+                onChange={(e) => set({ subtitleHighlightColor: e.target.value })}
+                className="h-8 w-12 rounded border border-slate-300"
+              />
+            </label>
+          </div>
+          <div>
+            <label className="mb-1 block font-medium">미리보기 문장</label>
+            <Input value={text} onChange={(e) => setText(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">
+              대본에서 <code>*별표*</code>로 감싼 부분이 강조색으로 나갑니다. 낭독에는 영향이 없습니다.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0">
+          <img
+            src={src}
+            alt="자막 미리보기"
+            className="w-[203px] rounded-lg border border-slate-300"
+          />
+          <p className="mt-1 text-center text-xs text-slate-500">실제 조립과 같은 렌더러</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/*
+  글꼴 고르기 — **무료 글꼴만** 목록에 올린다.
+
+  깔린 글꼴을 전부 보여 주면 안 된다. 윈도우에 딸려 오는 글꼴(맑은 고딕 등)은 영상에
+  새겨 배포해도 되는지가 라이선스마다 다르다. 서버가 자유 이용이 명시된 것만 골라 준다.
+*/
+function FontPicker({ value, onPick }: { value: string; onPick: (path: string) => void }) {
+  const qc = useQueryClient();
+  const fonts = useQuery({
+    queryKey: ['fonts'],
+    queryFn: () => api.get<{ fonts: Array<{ filePath: string; label: string; license: string }> }>('/fonts'),
+  });
+  /*
+    구글 폰트에서 받을 수 있는 한국어 글꼴. 눈누 같은 모음 사이트는 글꼴마다 배포처와
+    이용 범위가 달라 한 번에 못 받는다 — 구글 폰트는 전부 OFL이라 통째로 받을 수 있다.
+  */
+  const available = useQuery({
+    queryKey: ['fonts-available'],
+    queryFn: () => api.get<{ families: Array<{ family: string; installed: boolean }> }>('/fonts/available'),
+  });
+  const install = useMutation({
+    mutationFn: () => api.post<{ installed: string[]; skipped: string[]; failed: string[] }>('/fonts/install'),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['fonts'] });
+      void qc.invalidateQueries({ queryKey: ['fonts-available'] });
+      alert(`글꼴 ${r.installed.length}종을 받았습니다.`
+        + (r.skipped.length ? `
+이미 있던 것 ${r.skipped.length}종` : '')
+        + (r.failed.length ? `
+못 받은 것 ${r.failed.length}종: ${r.failed.join(', ')}` : ''));
+    },
+    onError: (e: Error) => alert(e.message),
+  });
+  const notYet = (available.data?.families ?? []).filter((f) => !f.installed).length;
+  const list = fonts.data?.fonts ?? [];
+  const options = [
+    { value: '', label: '자동 (설치된 것 중에서 고름)' },
+    // 표에 없는 글꼴을 경로로 직접 지정했을 수도 있다 — 목록에 없다고 선택을 잃으면 안 된다
+    ...(value && !list.some((f) => f.filePath === value)
+      ? [{ value, label: value.split(/[\/]/).pop() ?? value, hint: '직접 지정' }]
+      : []),
+    ...list.map((f) => ({ value: f.filePath, label: f.label, hint: f.license })),
+  ];
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium">글꼴</span>
+        <span className="text-xs text-slate-500">무료 글꼴 {list.length}종</span>
+      </div>
+      <SearchSelect
+        options={options}
+        value={value}
+        onPick={onPick}
+        placeholder="글꼴 이름으로 검색"
+        emptyText="그 이름의 무료 글꼴이 없습니다"
+      />
+      {notYet > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2">
+          <span className="text-xs text-slate-600">
+            구글 폰트에서 <b>{notYet}종</b>을 더 받을 수 있습니다 (전부 OFL · 약 40MB)
+          </span>
+          <Button
+            variant="secondary"
+            className="ml-auto"
+            onClick={() => install.mutate()}
+            disabled={install.isPending}
+          >
+            {install.isPending ? '받는 중… (1~2분)' : '무료 글꼴 더 받기'}
+          </Button>
+        </div>
+      )}
+      <p className="mt-1 text-xs text-slate-500">
+        자유 이용이 확인된 글꼴 중 <b>이 PC에 깔린 것</b>만 보입니다. 굵을수록 배경에 안 묻힙니다.
+        목록에 없는 글꼴은 아래 「한글 폰트」 칸에 글꼴 파일 경로를 직접 적으면 그대로 씁니다 —
+        이용 범위(영상 삽입·배포)는 직접 확인하세요.
+      </p>
+    </div>
+  );
+}
+
+/*
+  AI 모델 고르기 — 목록을 코드에 박지 않고 **등록된 키로 제공자에게 직접 묻는다.**
+  모델은 몇 달마다 바뀌고, 박아 두면 새 모델이 나와도 화면에서 못 고른다.
+  키가 없으면 목록을 못 받으므로 직접 입력으로 떨어진다.
+*/
+function ModelPicker({ provider, value, onPick }: {
+  provider: 'anthropic' | 'openai' | 'gemini';
+  value: string;
+  onPick: (id: string) => void;
+}) {
+  const models = useQuery({
+    queryKey: ['ai-models', provider],
+    queryFn: () => api.get<{ models: Array<{ id: string; label: string }>; error?: string }>(
+      `/ai/models?provider=${provider}`,
+    ),
+  });
+  const list = models.data?.models ?? [];
+  // 지금 쓰는 모델이 목록에 없어도 (구모델·오프라인) 선택은 잃지 않는다
+  const options = list.some((m) => m.id === value) || !value
+    ? list.map((m) => ({ value: m.id, label: m.label, hint: m.label === m.id ? undefined : m.id }))
+    : [{ value, label: value }, ...list.map((m) => ({ value: m.id, label: m.label }))];
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-slate-500">{provider} 모델</span>
+      {list.length === 0 ? (
+        <div className="flex-1">
+          <Input value={value} onChange={(e) => onPick(e.target.value)} />
+          <p className="mt-1 text-xs text-slate-500">
+            {models.data?.error ?? '모델 목록을 받지 못했습니다'} — 모델 이름을 직접 적으세요.
+          </p>
+        </div>
+      ) : (
+        <SearchSelect
+          className="flex-1"
+          options={options}
+          value={value}
+          onPick={onPick}
+          placeholder={`모델 검색 (${list.length}종)`}
+          emptyText="그 이름의 모델이 없습니다"
+        />
+      )}
     </div>
   );
 }

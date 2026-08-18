@@ -7,6 +7,7 @@ import { broadcast } from '../sse.js';
 import { synthesizeToFile as typecastSynthesize, AUDIO_EXT } from './voice/typecast.js';
 import { synthesizeToFile as voiceboxSynthesize } from './voice/voicebox.js';
 import { shapeAudio } from './voice/shape.js';
+import { plainText } from './subtitles.js';
 
 export interface SceneTiming {
   sceneId: string;
@@ -42,6 +43,8 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
 
   for (let i = 0; i < script.scenes.length; i++) {
     const scene = script.scenes[i];
+    // 자막 강조 표시(`*키워드*`)가 나레이션에 섞여 있어도 「별표」로 읽지 않는다
+    const narration = plainText(scene.narration);
     const uploaded = sceneVoiceFiles[scene.sceneId];
     let fileName: string;
     let source: SceneTiming['source'];
@@ -52,7 +55,7 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
     } else if (settings.voiceProvider === 'voicebox') {
       fileName = `scene_${String(i + 1).padStart(2, '0')}.wav`;
       const out = path.join(voiceDir, fileName);
-      await voiceboxSynthesize(settings, scene.narration, out);
+      await voiceboxSynthesize(settings, narration, out);
       /*
         Voicebox에는 배속 인자가 없다. 말투 지시로는 3%밖에 못 올려서(실측)
         쇼츠 톤은 여기서 만든다 — 배속을 먼저 맞추고 음정을 따로 올린다.
@@ -71,7 +74,7 @@ export async function synthesizeNarration(opts: NarrationOptions): Promise<Scene
       // 확장자는 실제 요청한 오디오 포맷과 일치해야 ffprobe/조립이 오작동하지 않는다
       fileName = `scene_${String(i + 1).padStart(2, '0')}${AUDIO_EXT}`;
       const out = path.join(voiceDir, fileName);
-      await typecastSynthesize(scene.narration, typecastVoiceId, out, {
+      await typecastSynthesize(narration, typecastVoiceId, out, {
         emotion: typecastEmotion,
         tempo: settings.speechRate, // 쇼츠는 빠른 낭독이 유지율에 유리하다
       });

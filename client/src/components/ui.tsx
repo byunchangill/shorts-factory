@@ -1,7 +1,7 @@
 import { clsx } from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Check, Star } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
 
 /**
@@ -310,6 +310,114 @@ export function EmptyState({ message, action }: { message: string; action?: Reac
     <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white/60 px-6 py-14">
       <p className="max-w-md break-keep text-center text-sm text-slate-600">{message}</p>
       {action}
+    </div>
+  );
+}
+
+export interface SearchOption {
+  value: string;
+  label: string;
+  /** 오른쪽에 흐리게 붙는 보조 설명 (라이선스·모델 설명 등) */
+  hint?: string;
+  /** 목록에 별표를 달고 위로 올린다 */
+  pinned?: boolean;
+}
+
+/**
+ * 검색해서 고르는 목록 상자.
+ *
+ * `<select>`·`<datalist>`의 목록은 **브라우저(OS)가 그린다** — 화면 규칙(회색 톤·브랜드 색·
+ * 글자 크기)이 하나도 안 먹고, 항목이 수백 개면 검은 목록이 화면 절반을 덮는다.
+ * 그래서 직접 그린다. 타입캐스트 캐릭터 590종·무료 글꼴·AI 모델이 같은 상자를 쓴다.
+ */
+export function SearchSelect({
+  options, value, onPick, placeholder, className, emptyText = '찾는 항목이 없습니다',
+}: {
+  options: SearchOption[];
+  value: string;
+  onPick: (value: string) => void;
+  placeholder: string;
+  className?: string;
+  emptyText?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const selected = options.find((o) => o.value === value);
+  const q = query.trim().toLowerCase();
+  const hits = q
+    ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(q))
+    : options;
+
+  const close = () => { setOpen(false); setQuery(''); };
+  const choose = (v: string) => { onPick(v); close(); };
+
+  // 키보드로 옮긴 항목이 목록 밖에 있으면 따라 내린다
+  useEffect(() => {
+    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
+  return (
+    <div
+      className={clsx('relative', className)}
+      // 목록 안으로 옮겨간 포커스는 닫지 않는다
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) close(); }}
+    >
+      <input
+        value={open ? query : (selected?.label ?? '')}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        // 포커스가 이미 칸에 있으면 focus가 다시 안 뜬다 — 닫은 뒤 다시 누를 때 열리려면 필요하다
+        onClick={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            setOpen(true);
+            setActive((i) => Math.max(0, Math.min(hits.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1))));
+          } else if (e.key === 'Enter' && open && hits[active]) {
+            e.preventDefault();
+            choose(hits[active].value);
+          } else if (e.key === 'Escape') {
+            close();
+          }
+        }}
+        placeholder={placeholder}
+        className={clsx(
+          'w-full rounded-lg border px-3 py-2 text-sm placeholder:text-slate-400',
+          open ? 'border-brand-500' : 'border-slate-300',
+          focusRing,
+        )}
+      />
+      {open && (
+        <ul
+          ref={listRef}
+          className="absolute z-20 mt-1 max-h-72 w-full min-w-[16rem] overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+        >
+          {hits.length === 0 && <li className="px-3 py-2 text-sm text-slate-500">{emptyText}</li>}
+          {hits.map((o, i) => (
+            <li key={o.value}>
+              <button
+                type="button"
+                // 누르는 순간 blur로 목록이 닫혀 클릭이 사라지는 것을 막는다
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(o.value)}
+                onMouseEnter={() => setActive(i)}
+                className={clsx(
+                  'flex w-full items-center gap-1.5 px-3 py-2 text-left text-sm',
+                  i === active ? 'bg-brand-50 text-brand-700' : 'text-slate-700',
+                )}
+              >
+                {o.pinned && <Star size={12} className="shrink-0 fill-brand-500 text-brand-500" />}
+                <span className="truncate">{o.label}</span>
+                {o.hint && <span className="ml-auto shrink-0 pl-2 text-xs text-slate-400">{o.hint}</span>}
+                {o.value === value && <Check size={14} className="ml-auto shrink-0 text-brand-600" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
