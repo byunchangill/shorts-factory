@@ -90,7 +90,7 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
   it('스킬의 분량 환산표가 앱의 계산과 같다', async () => {
     const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
     const { charBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
-    const b = charBudget(1.25, 'menu-a');
+    const b = charBudget(1.33, 'menu-a'); // 기본 배속 (Settings.speechRate)
     const t = TARGET_SEC_BY_MENU['menu-a'];
     expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}자`);
     expect(body).toContain(`**${b.max}자를 넘지 않는다**`);

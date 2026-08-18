@@ -52,7 +52,7 @@ function sceneVideo(scene: Script['scenes'][number], clips: Clip[], jobDir: stri
  * 써야 편집기에서 밀리지 않으므로 나레이션 길이를 누적해 잡는다.
  */
 export function planCapcut(input: CapcutInput): CapcutItem[] {
-  const { job, productName, jobDir, script, timings, clips } = input;
+  const { settings, job, productName, jobDir, script, timings, clips } = input;
   const items: CapcutItem[] = [];
   const cues: SubCue[] = [];
   const lines: string[] = [
@@ -80,7 +80,7 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
       });
     }
     const text = scene.subtitle || scene.narration;
-    if (text) cues.push({ start: cursor, end: cursor + dur, text: wrapKorean(text) });
+    if (text) cues.push({ start: cursor, end: cursor + dur, text: wrapKorean(text, settings.subtitleMaxChars) });
     cursor += dur;
 
     lines.push(`| ${no(i)} | ${dur.toFixed(1)}초 | ${scene.narration} | ${scene.subtitle} |`);
