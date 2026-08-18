@@ -11,6 +11,7 @@ import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, adva
 import { paths, WORKSPACE_ROOT } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
 import { detectTextZones, ocrAvailable } from './ocrDetect.js';
+import { autoRemovalMethod } from './tier2.js';
 import { toWorkspaceRel } from '../store/workspace.js';
 import { nextSeqId } from '../util/ids.js';
 
@@ -201,8 +202,11 @@ async function detectZonesQuietly(
   try {
     if (!(await ocrAvailable(settings))) return [];
     broadcast('source.progress', { jobId: ref.jobId, clipId, line: '글자 자리 찾는 중…' });
-    return await detectTextZones(settings, filePath, probe, (line) =>
-      broadcast('source.progress', { jobId: ref.jobId, clipId, line }));
+    return await detectTextZones(
+      settings, filePath, probe,
+      (line) => broadcast('source.progress', { jobId: ref.jobId, clipId, line }),
+      1, autoRemovalMethod(),
+    );
   } catch (e) {
     await logJobEvent(ref, { type: 'clip.detect_failed', clipId, error: String(e) }).catch(() => {});
     return [];
