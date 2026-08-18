@@ -103,4 +103,34 @@ export const api = {
   del: <T>(url: string) => request<T>(`/api${url}`, { method: 'DELETE' }),
   upload: <T>(url: string, formData: FormData) =>
     request<T>(`/api${url}`, { method: 'POST', body: formData }),
+  download,
 };
+
+/**
+ * 파일 내려받기 — 실패를 JSON 페이지로 보여주지 않는다.
+ * `<a href>`로 걸면 서버가 낸 오류 JSON이 그대로 새 화면에 뜬다. 받아서 확인한 뒤
+ * 성공일 때만 저장한다.
+ */
+export async function download(url: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${url}`);
+  } catch {
+    alert(OFFLINE_MESSAGE);
+    return;
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}) as { error?: string });
+    alert(body.error ?? `${res.status} ${res.statusText}`);
+    return;
+  }
+  const name = decodeURIComponent(
+    /filename\*=UTF-8''(.+)$/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'download',
+  );
+  const href = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(href);
+}
