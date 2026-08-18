@@ -144,3 +144,82 @@ export async function extractZip(
   }
   return written;
 }
+
+// ── 쓰기 ──────────────────────────────────────────────────────────
+
+/**
+ * 최소 ZIP 라이터 — **압축하지 않고 담기만 한다**(method 0).
+ *
+ * 담는 것이 mp4·mp3라 이미 압축돼 있어서 다시 눌러야 얻을 게 거의 없다.
+ * 압축을 빼면 deflate 스트림도, 그 실패 경로도 없어진다. 대본(md·json)은 몇 KB라
+ * 줄여도 티가 안 난다. 읽기 쪽과 같은 방침으로 **외부 의존성을 쓰지 않는다.**
+ */
+
+/** CRC-32 (ZIP 규격). `zlib.crc32`는 노드 버전을 타서 직접 만든다 */
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c;
+  }
+  return t;
+})();
+
+export function crc32(buf: Buffer): number {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+
+/**
+ * 파일 목록 → ZIP 버퍼.
+ *
+ * 파일명은 UTF-8로 쓰고 그 플래그(비트 11)를 세운다 — 한글 이름이 목적이다.
+ * 안 세우면 압축 푸는 쪽이 CP437로 읽어 이름이 깨진다.
+ */
+export function createZip(entries: ZipEntry[]): Buffer {
+  const locals: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+
+  for (const e of entries) {
+    const name = Buffer.from(e.name.split(String.fromCharCode(92)).join('/'), 'utf8');
+    const crc = crc32(e.data);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(LOCAL_SIG, 0);
+    local.writeUInt16LE(20, 4); // 필요 버전 2.0
+    local.writeUInt16LE(0x0800, 6); // UTF-8 파일명
+    local.writeUInt16LE(0, 8); // 압축 안 함
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(e.data.length, 18);
+    local.writeUInt32LE(e.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, e.data);
+
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(CD_SIG, 0);
+    cd.writeUInt16LE(20, 4);
+    cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(0x0800, 8);
+    cd.writeUInt16LE(0, 10);
+    cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(e.data.length, 20);
+    cd.writeUInt32LE(e.data.length, 24);
+    cd.writeUInt16LE(name.length, 28);
+    cd.writeUInt32LE(offset, 42); // 이 항목의 로컬 헤더 위치
+    central.push(cd, name);
+
+    offset += 30 + name.length + e.data.length;
+  }
+
+  const cdBuf = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(EOCD_SIG, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cdBuf, eocd]);
+}

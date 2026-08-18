@@ -15,6 +15,7 @@ import os from 'node:os';
 import fsp from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { readZip } from '../server/src/util/zip.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TSX_BIN = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -1163,6 +1164,33 @@ async function main(): Promise<void> {
 
     const all = await countFiles(dir);
     return `${dir} · ${all}개 파일`;
+  });
+
+  /*
+    폴더 내보내기는 **이 PC의 폴더**로 복사한다. 브라우저로 쓰는 사람은 그 폴더가 없을 수도
+    있고 원하는 것 하나만 받고 싶을 때가 많다. 같은 목록에서 골라 내려보내므로 폴더에 있는
+    것과 받은 것이 같아야 한다.
+  */
+  await step('산출물 따로 내려받기 — 종류별 · 한글 파일명', async () => {
+    const one = await fetch(`${API}/jobs/${jid}/download/final`);
+    assert(one.status === 200, `최종영상 내려받기 실패: ${one.status}`);
+    const name = decodeURIComponent(
+      (one.headers.get('content-disposition') ?? '').split("filename*=UTF-8''")[1] ?? '');
+    assert(name.endsWith('.mp4'), `하나뿐이면 zip으로 묶지 않는다: ${name}`);
+    assert(name.includes(productName), `한글 파일명이 안 실림: ${name}`);
+
+    const many = await fetch(`${API}/jobs/${jid}/download/script`);
+    assert(many.status === 200, `대본 내려받기 실패: ${many.status}`);
+    const zip = Buffer.from(await many.arrayBuffer());
+    // 여럿이면 zip — 압축 프로그램이 열 수 있어야 한다
+    assert(zip.subarray(0, 2).toString('latin1') === 'PK', 'zip이 아님');
+    const names = readZip(zip).map((e) => e.name);
+    assert(names.some((n) => n.endsWith('.md')), `대본 마크다운 없음: ${names.join(', ')}`);
+    assert(names.every((n) => n.includes(productName)), `한글 파일명이 깨짐: ${names.join(', ')}`);
+
+    const empty = await fetch(`${API}/jobs/${jid}/download/없는묶음`);
+    assert(empty.status === 400 || empty.status === 404, '모르는 묶음인데 200이 나옴');
+    return `최종영상 ${name.slice(-24)} · 대본 zip ${names.length}개`;
   });
 
   // ── 상태 파일 무결성 ──

@@ -3,7 +3,9 @@ import multer from 'multer';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
-import { MENUS, type JobState } from '@shared/constants';
+import {
+  MENUS, type JobState, EXPORT_DIRS,
+} from '@shared/constants';
 import { JobStateSchema, ZoneSchema, SegmentSchema, ProductSchema } from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { trashJob } from '../store/remove.js';
@@ -28,7 +30,8 @@ import {
 } from '../pipeline/voice/typecast.js';
 import { available as voiceboxAvailable, listProfiles as listVoiceboxProfiles } from '../pipeline/voice/voicebox.js';
 import { assembleFinal } from '../pipeline/assemble.js';
-import { exportJob, productDir } from '../pipeline/exporter.js';
+import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
+import { createZip } from '../util/zip.js';
 import { hasKey } from '../store/secrets.js';
 import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
@@ -947,6 +950,81 @@ router.get('/jobs/:jid/output', async (req, res) => {
 // ── 내보내기 (제품별 별도 폴더) ───────────────────────────────────
 
 /** 내보내기 대상 폴더 경로 미리보기 */
+/** 한 번에 묶어 내려보낼 수 있는 크기 — 넘으면 폴더 내보내기로 안내한다 */
+const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+
+/**
+ * 산출물 묶음 내려받기 — 영상·음성·대본을 종류별로 따로.
+ *
+ * 폴더 내보내기(`POST /export`)는 **이 PC의 폴더**로 복사한다. 브라우저로 쓰는 사람에게는
+ * 그 폴더가 없을 수도 있고, 원하는 것 하나만 받고 싶을 때가 많다. 같은 목록(`planExport`)에서
+ * 골라 내려보내므로 폴더에 있는 것과 받은 것이 다르지 않다.
+ *
+ * 파일이 하나면 그대로, 여럿이면 zip으로 묶는다 — mp4 한 개를 zip으로 받게 하지 않는다.
+ */
+router.get('/jobs/:jid/download/:kind', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const kind = req.params.kind as keyof typeof EXPORT_DIRS;
+  const dir = EXPORT_DIRS[kind];
+  if (!dir) return res.status(400).json({ error: `모르는 묶음: ${req.params.kind}` });
+
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '작업 없음' });
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const script = job.script.currentVersion
+    ? await jobs.readScript(ref, job.script.currentVersion) : null;
+  const timings = await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'));
+  const clips = await jobs.listClips(ref);
+
+  const items = (await planExport({
+    settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+  })).filter((i) => i.dir === dir);
+
+  /*
+    목록에는 있어도 아직 안 만들어진 것이 있다 — 실제로 있는 것만 담는다.
+
+    묶는 동안 메모리에 다 올라간다. 정리본 8개가 63MB인 것을 봤는데, 긴 소재가 여럿이면
+    수백 MB가 될 수 있어 상한을 둔다 — 로컬 서버가 메모리로 죽는 것보다 안내가 낫다.
+  */
+  const entries: Array<{ name: string; data: Buffer }> = [];
+  let bytes = 0;
+  for (const i of items) {
+    if (i.text !== undefined) {
+      entries.push({ name: i.name, data: Buffer.from(i.text, 'utf8') });
+      continue;
+    }
+    const data = await fsp.readFile(i.src!).catch(() => null);
+    if (!data) continue;
+    bytes += data.length;
+    if (bytes > MAX_DOWNLOAD_BYTES) {
+      return res.status(413).json({
+        error: `${dir}이(가) ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB를 넘습니다 — `
+          + '「제품 폴더로 내보내기」를 쓰세요 (복사라 크기 제한이 없습니다)',
+      });
+    }
+    entries.push({ name: i.name, data });
+  }
+  if (!entries.length) {
+    return res.status(404).json({ error: `${dir}에 아직 받을 것이 없습니다` });
+  }
+
+  // 한글 파일명은 RFC 5987로 넘긴다 — 그냥 넣으면 브라우저가 깨뜨린다
+  const send = (name: string, body: Buffer) => {
+    res.setHeader('Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.setHeader('Content-Length', String(body.length));
+    res.end(body);
+  };
+
+  if (entries.length === 1) {
+    res.type(path.extname(entries[0].name) || 'application/octet-stream');
+    return send(path.basename(entries[0].name), entries[0].data);
+  }
+  res.type('application/zip');
+  return send(`${ref.projectId}_${dir}.zip`, createZip(entries));
+});
+
 router.get('/jobs/:jid/export', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const settings = await loadSettings();
