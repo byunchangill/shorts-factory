@@ -122,3 +122,32 @@ describe('폰트 유틸', () => {
     expect(toConcatPath('/home/me/jobs/seg_01.mp4')).toBe('/home/me/jobs/seg_01.mp4');
   });
 });
+
+/*
+  확대는 반전 뒤·레이아웃 앞이다. 뒤에 걸면 제목바와 테두리까지 같이 커져 화면 밖으로 밀린다.
+  키운 뒤 원래 크기로 잘라내므로 결과 해상도는 그대로다.
+*/
+describe('buildLayoutFilter — 소재 확대', () => {
+  const base = SettingsSchema.parse({});
+
+  it('1이면 확대 필터를 안 건다', () => {
+    expect(buildLayoutFilter({ ...base, zoom: 1 }, null)).not.toContain('iw*');
+  });
+
+  it('확대는 반전 뒤, 레이아웃 앞에 온다', () => {
+    const f = buildLayoutFilter({ ...base, layout: 'fullscreen', mirror: true, zoom: 1.1 }, null);
+    expect(f.indexOf('hflip')).toBeLessThan(f.indexOf('iw*1.1'));
+    expect(f.indexOf('iw*1.1')).toBeLessThan(f.indexOf('scale=1080:1920'));
+  });
+
+  it('키운 만큼 도로 잘라내 결과 크기가 안 바뀐다', () => {
+    const f = buildLayoutFilter({ ...base, layout: 'fullscreen', zoom: 1.1 }, null);
+    expect(f).toContain('scale=iw*1.1:ih*1.1');
+    expect(f).toContain('crop=iw/1.1:ih/1.1');
+  });
+
+  it('프레임 레이아웃에서도 소재에만 걸린다 — 제목바는 원래 크기다', () => {
+    const f = buildLayoutFilter({ ...base, layout: 'framed', zoom: 1.1 }, null);
+    expect(f.indexOf('iw*1.1')).toBeLessThan(f.indexOf('split=2'));
+  });
+});

@@ -32,6 +32,7 @@ import { available as voiceboxAvailable, listProfiles as listVoiceboxProfiles } 
 import { assembleFinal } from '../pipeline/assemble.js';
 import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
 import { createZip } from '../util/zip.js';
+import { planCapcut } from '../pipeline/capcut.js';
 import { hasKey } from '../store/secrets.js';
 import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
@@ -950,6 +951,48 @@ router.get('/jobs/:jid/output', async (req, res) => {
 // ── 내보내기 (제품별 별도 폴더) ───────────────────────────────────
 
 /** 내보내기 대상 폴더 경로 미리보기 */
+/**
+ * 캡컷 재료 묶음 내려받기.
+ *
+ * 웹에서 합치면 자막·음성·좌우반전·그레이딩·확대가 설정대로 걸린 완성본이 나온다.
+ * 직접 편집하고 싶을 때 쓰는 다른 갈래다 — 캡컷에는 공식 연동 API가 없으므로
+ * **끌어다 놓을 재료**를 이름 순서로 만들어 준다.
+ */
+router.get('/jobs/:jid/download/capcut', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const settings = await loadSettings();
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '작업 없음' });
+  if (!job.script.currentVersion) {
+    return res.status(400).json({ error: '대본이 아직 없습니다' });
+  }
+  const jobDir = paths.job(ref.menu, ref.projectId, ref.jobId);
+  const script = await jobs.readScript(ref, job.script.currentVersion);
+  if (!script) return res.status(400).json({ error: '대본을 읽지 못했습니다' });
+  const timings = (await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'))) ?? [];
+  const clips = await jobs.listClips(ref);
+
+  const entries: Array<{ name: string; data: Buffer }> = [];
+  for (const item of planCapcut({
+    settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+  })) {
+    if (item.text !== undefined) {
+      entries.push({ name: item.name, data: Buffer.from(item.text, 'utf8') });
+      continue;
+    }
+    const data = await fsp.readFile(item.src!).catch(() => null);
+    if (data) entries.push({ name: item.name, data });
+  }
+  if (!entries.length) return res.status(404).json({ error: '아직 담을 것이 없습니다' });
+
+  const zip = createZip(entries);
+  res.type('application/zip');
+  res.setHeader('Content-Disposition',
+    `attachment; filename*=UTF-8''${encodeURIComponent(`${ref.projectId}_캡컷.zip`)}`);
+  res.setHeader('Content-Length', String(zip.length));
+  res.end(zip);
+});
+
 /** 한 번에 묶어 내려보낼 수 있는 크기 — 넘으면 폴더 내보내기로 안내한다 */
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
