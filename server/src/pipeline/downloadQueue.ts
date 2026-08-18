@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import pLimit from 'p-limit';
-import type { Settings, SourceUrl, Clip } from '@shared/types';
+import type { Settings, SourceUrl, Clip, Zone } from '@shared/types';
 import { ClipSchema } from '@shared/types';
 import { run, toolFailureMessage } from '../util/exec.js';
 import { needsBrowserDownload, downloadViaBrowser } from '../sourcing/browserDownload.js';
@@ -10,6 +10,7 @@ import { broadcast } from '../sse.js';
 import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
 import { paths, WORKSPACE_ROOT } from '../store/workspace.js';
 import { probeVideo, extractFrames } from './probe.js';
+import { detectTextZones, ocrAvailable } from './ocrDetect.js';
 import { toWorkspaceRel } from '../store/workspace.js';
 import { nextSeqId } from '../util/ids.js';
 
@@ -180,7 +181,35 @@ async function downloadOne(
   }
 }
 
-/** 다운로드 완료된 소스에 클립 생성 + probe + 프레임 추출 */
+/**
+ * 받자마자 그 소재의 글자 자리를 찾아 둔다.
+ *
+ * 예전에는 「영상 재생성」을 누를 때 클립마다 한꺼번에 찾았다. 소재가 여덟이면 그 버튼
+ * 하나가 몇 분씩 말없이 돌았고, 정작 장면을 고르는 화면에서는 지울 자리가 안 보였다.
+ * 받는 김에 찾아 두면 **장면 고르기 화면이 처음부터 자리를 그려서 연다.**
+ *
+ * 🔴 **찾기가 실패해도 다운로드는 성공이다.** 검출기는 선택 설치고, 이건 편의 기능이다 —
+ * 여기서 던지면 멀쩡히 받은 영상이 실패로 뒤집힌다. 존이 비면 그 다음 단계에서 다시 찾는다.
+ */
+async function detectZonesQuietly(
+  settings: Settings,
+  ref: JobRef,
+  clipId: string,
+  filePath: string,
+  probe: { width: number; height: number; duration: number },
+): Promise<Zone[]> {
+  try {
+    if (!(await ocrAvailable(settings))) return [];
+    broadcast('source.progress', { jobId: ref.jobId, clipId, line: '글자 자리 찾는 중…' });
+    return await detectTextZones(settings, filePath, probe, (line) =>
+      broadcast('source.progress', { jobId: ref.jobId, clipId, line }));
+  } catch (e) {
+    await logJobEvent(ref, { type: 'clip.detect_failed', clipId, error: String(e) }).catch(() => {});
+    return [];
+  }
+}
+
+/** 다운로드 완료된 소스에 클립 생성 + probe + 프레임 추출 + 글자 자리 찾기 */
 async function createClipForSource(
   settings: Settings,
   ref: JobRef,
@@ -203,6 +232,7 @@ async function createClipForSource(
       sourceId,
       probe,
       sceneTimes,
+      zones: await detectZonesQuietly(settings, ref, clipId, filePath, probe),
       frames: frames.map((f) => ({
         file: toWorkspaceRel(f.filePath),
         t: f.t,
