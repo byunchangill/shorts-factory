@@ -49,6 +49,21 @@ export async function vsrPaths(): Promise<{ repo: string; python: string }> {
 }
 
 /**
+ * 존을 얼마나 넓혀 넘길지.
+ *
+ * 🔴 **이모지 행이 여기 걸린다.** 틱톡 자막 밑에는 이모지가 한 줄 더 붙어 있는 일이 흔한데,
+ * 우리 검출기(rapidocr)는 글자만 찾아서 그 행을 통째로 놓친다 — 실측한 소재 8개 중 2개가
+ * 그랬다. 그런데 **VSR의 검출기는 영역 안에 들어오기만 하면 이모지도 잡는다**
+ * (2026-08-18 실측: 자막 아래로 한 줄 넓혀 주니 자막과 이모지가 같이 지워졌다).
+ *
+ * 넓혀도 되는 이유는 VSR이 좌표를 **후보 영역**으로만 쓰기 때문이다 — 그 안에서 제 OCR이
+ * 찾은 글자만 지운다. 상자를 통째로 칠하는 iopaint와 다른 점이고, 그래서 이 패딩은
+ * **VSR로 넘길 때만** 건다. 저장된 존은 그대로 둔다 (화면의 상자와 다른 방식이 어긋나면 안 된다).
+ */
+const PAD_BELOW = 1.6; // 상자 높이의 배수 — 이모지 한 줄 + 검출기가 쓸 여백
+const PAD_AROUND = 0.3;
+
+/**
  * 존 → VSR 좌표 인자.
  *
  * **VSR은 `-c YMIN YMAX XMIN XMAX` 순서다.** 우리 존은 x/y/w/h라 그대로 넘기면
@@ -57,12 +72,22 @@ export async function vsrPaths(): Promise<{ repo: string; python: string }> {
  */
 export function vsrAreaArgs(zones: Zone[], width: number, height: number): string[] {
   return zones.flatMap((z) => {
-    const ymin = Math.max(0, Math.round(z.y));
-    const xmin = Math.max(0, Math.round(z.x));
-    const ymax = Math.min(height, Math.round(z.y + z.h));
-    const xmax = Math.min(width, Math.round(z.x + z.w));
-    if (ymax <= ymin || xmax <= xmin) return [];
-    return ['-c', String(ymin), String(ymax), String(xmin), String(xmax)];
+    // 넓히기 **전에** 화면 안으로 자른다 — 순서를 바꾸면 화면 밖 존이 패딩으로 되살아난다
+    const y0 = Math.max(0, Math.min(height, Math.round(z.y)));
+    const x0 = Math.max(0, Math.min(width, Math.round(z.x)));
+    const y1 = Math.max(0, Math.min(height, Math.round(z.y + z.h)));
+    const x1 = Math.max(0, Math.min(width, Math.round(z.x + z.w)));
+    if (y1 <= y0 || x1 <= x0) return [];
+
+    const h = y1 - y0;
+    const pad = Math.round(h * PAD_AROUND);
+    return [
+      '-c',
+      String(Math.max(0, y0 - pad)),
+      String(Math.min(height, y1 + Math.round(h * PAD_BELOW))),
+      String(Math.max(0, x0 - pad)),
+      String(Math.min(width, x1 + pad)),
+    ];
   });
 }
 
