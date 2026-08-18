@@ -347,6 +347,8 @@ async function main(): Promise<void> {
     return 'http://127.0.0.1:4310';
   });
 
+  // 글자 검출기는 선택 설치다 — 깔린 기계에서만 자동 검출을 검사한다 (CI에는 없다)
+  let hasOcr = false;
   await step('doctor — 필수 도구를 실제로 인식하는지', async () => {
     // 도구가 설치돼 있어도 버전 확인 인자가 틀리면 미설치로 오판된다
     // (ffmpeg는 -version, yt-dlp는 --version). 실제로 발생했던 버그다.
@@ -357,6 +359,7 @@ async function main(): Promise<void> {
     const missing = report.tools.filter((t) => t.required && !t.available).map((t) => t.name);
     assert(missing.length === 0, `필수 도구 미인식: ${missing.join(', ')}`);
     assert(report.ok, 'doctor가 ok=false를 반환');
+    hasOcr = report.tools.some((t) => t.name.startsWith('글자 검출') && t.available);
     const named = report.tools.filter((t) => t.required && t.version).length;
     return `필수 ${report.tools.filter((t) => t.required).length}종 인식 (버전 확인 ${named}종)`;
   });
@@ -507,6 +510,15 @@ async function main(): Promise<void> {
       '프레임 시각이 영상 길이를 벗어남');
     // 시각이 순서대로 증가해야 화면 순서와 영상 순서가 일치한다
     assert(c0.frames.every((f, i) => i === 0 || f.t > c0.frames[i - 1].t), '프레임 시각이 순서대로가 아님');
+    /*
+      글자 자리는 **받는 김에** 찾는다. 예전에는 「영상 재생성」을 눌러야 찾았고, 그래서
+      장면을 고르는 화면이 지울 자리를 모른 채 열렸다. 합성 소재에는 자막을 구워 넣으므로
+      검출기가 깔린 기계에서는 여기서 이미 존이 있어야 한다.
+    */
+    if (hasOcr) {
+      assert(list.some((c) => c.zones.length > 0),
+        '다운로드 직후에 글자 자리가 하나도 안 잡혔다 (검출기는 설치돼 있음)');
+    }
     return [list, `2클립 · ${c0.probe!.width}x${c0.probe!.height} · 프레임 ${c0.frames.length}장(${c0.probe!.duration.toFixed(0)}초)`];
   });
 
