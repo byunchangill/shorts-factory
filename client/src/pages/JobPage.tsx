@@ -143,9 +143,9 @@ export default function JobPage() {
               <ScriptPanel job={j} packets={jobPackets} />
             </>
           )}
-          {panelState === 'trimming' && <TrimPanel job={j} />}
           {panelState === 'scening' && <ScenesPanel job={j} packets={jobPackets} />}
-          {panelState === 'voicing' && <VoicePanel job={j} />}
+          {/* `trimming`은 없앤 단계다 — 지난 잡이 그 값을 들고 오면 음성 화면을 연다 */}
+          {['voicing', 'trimming'].includes(panelState) && <VoicePanel job={j} />}
           {['assembling', 'review', 'done'].includes(panelState) && (
             <ReviewPanel job={j} packets={jobPackets} />
           )}
@@ -749,99 +749,6 @@ function ScriptPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
               ))}
             </tbody>
           </table>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ── 컷 선택 (menu-a) ──────────────────────────────────────────────
-
-function TrimPanel({ job }: { job: JobDetail }) {
-  const qc = useQueryClient();
-  const clips = useQuery({
-    queryKey: ['clips', job.id],
-    queryFn: () => api.get<ClipInfo[]>(`/jobs/${job.id}/clips`),
-  });
-  const [activeClip, setActiveClip] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
-  const save = useMutation({
-    mutationFn: ({ cid, segments }: { cid: string; segments: SegmentDraft[] }) =>
-      api.put<{ warnings?: Array<{ message: string }> }>(
-        `/jobs/${job.id}/clips/${cid}/segments`, { segments },
-      ),
-    onSuccess: (r) => {
-      setWarning(r.warnings?.[0]?.message ?? null);
-      void qc.invalidateQueries({ queryKey: ['clips'] });
-    },
-  });
-  // 자막/워터마크 단계에서 고른 프레임 시각 주변을 구간으로 만들어준다
-  const fromFrames = useMutation({
-    mutationFn: (cid: string) => api.post(`/jobs/${job.id}/clips/${cid}/segments/from-frames`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['clips'] }),
-  });
-  const next = useMutation({
-    mutationFn: () => api.post(`/jobs/${job.id}/transition`, { to: 'voicing' }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
-  });
-
-  const list = clips.data ?? [];
-  const current = list.find((c) => c.id === activeClip) ?? list[0];
-  const keptFrames = current?.frames.length ?? 0;
-  const videoUrl = current
-    ? current.cleanUrls.find((u) => u.v === current.currentCleanVersion)?.url ??
-      `/media/${job.menu}/${job.projectId}/jobs/${job.id}/sources/${current.sourceId}.mp4`
-    : '';
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">컷 선택 — 대본 씬에 맞는 구간을 마킹하세요</h3>
-          <Button onClick={() => next.mutate()} disabled={next.isPending}>컷 선택 완료 → 음성 생성</Button>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {list.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setActiveClip(c.id)}
-              className={`rounded-lg border px-3 py-1.5 text-sm ${current?.id === c.id ? 'border-brand-500 bg-brand-50 font-medium' : 'border-slate-200'}`}
-            >
-              {c.id} {c.segments.length > 0 && <Badge color="brand">{c.segments.length}구간</Badge>}
-            </button>
-          ))}
-        </div>
-      </Card>
-      {warning && (
-        <Card className="border-amber-200 bg-amber-50">
-          <p className="flex items-start gap-2 text-sm text-amber-800">
-            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-amber-600" />
-            {warning}
-          </p>
-        </Card>
-      )}
-
-      {current && videoUrl && (
-        <Card>
-          {keptFrames > 0 && (
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => fromFrames.mutate(current.id)}
-                disabled={fromFrames.isPending}
-              >
-                남은 장면 {keptFrames}개로 구간 채우기
-              </Button>
-              <span className="text-xs text-slate-500">
-                남은 프레임 앞뒤 1.5초씩 구간을 만들고 겹치면 합칩니다. 만든 뒤 아래에서 다듬을 수 있습니다 (기존 구간은 대체됩니다).
-              </span>
-            </div>
-          )}
-          <SegmentPicker
-            videoUrl={videoUrl}
-            segments={current.segments}
-            onChange={(segments) => save.mutate({ cid: current.id, segments })}
-          />
         </Card>
       )}
     </div>

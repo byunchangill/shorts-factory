@@ -682,8 +682,9 @@ router.post('/jobs/:jid/script/approve', async (req, res) => {
     if (!j.script.currentVersion) throw new Error('승인할 대본이 없습니다');
     j.script.approved = true;
   });
-  // 승인 후엔 다음 실제 작업 단계로 보낸다 (menu-a는 컷 선택, menu-b는 씬 이미지)
-  await jobs.advanceTo(ref, job.menu === 'menu-a' ? 'trimming' : 'scening', 'user');
+  // 승인 후엔 다음 실제 작업 단계로 보낸다.
+  // menu-a는 곧장 음성이다 — 쓸 구간은 장면 고르기에서 이미 정해졌다
+  await jobs.advanceTo(ref, job.menu === 'menu-a' ? 'voicing' : 'scening', 'user');
   await jobs.logJobEvent(ref, { type: 'script.approved', version: job.script.currentVersion });
   res.json(await jobView(ref));
 });

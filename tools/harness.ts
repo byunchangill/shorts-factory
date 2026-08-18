@@ -759,12 +759,15 @@ async function main(): Promise<void> {
     await post(`/packets/${packetId}/accept`);
     const j = await post<JobView>(`/jobs/${jid}/script/approve`);
     assert(j.script.approved, '대본이 승인되지 않음');
-    // 승인 후 컷 선택 단계로 넘어가야 한다 (script_approved에 멈추면 음성 단계가 막힌다)
-    assert(j.state === 'trimming', `승인 후 상태가 trimming이 아님: ${j.state}`);
+    // 승인 후 곧장 음성이다 — 쓸 구간은 장면 고르기에서 이미 정해졌으므로 컷 선택 단계가 없다
+    assert(j.state === 'voicing', `승인 후 상태가 voicing이 아님: ${j.state}`);
     return `승인 → ${j.state}`;
   });
 
-  // ── 컷 선택 ──
+  /*
+    컷 구간 API는 남아 있다 — 없앤 것은 「컷 선택」이라는 **단계**지 구간 자체가 아니다.
+    구간은 장면 고르기에서 만들어지고 조립이 그걸 그대로 쓴다.
+  */
   await step('남은 프레임 → 컷 구간 후보 생성', async () => {
     const cid = clips[0].id;
     const r = await post<ClipView>(`/jobs/${jid}/clips/${cid}/segments/from-frames`);

@@ -44,8 +44,15 @@ describe('stateNextAction', () => {
   });
 
   it('대본 승인 뒤 안내가 메뉴마다 다르다', () => {
-    expect(stateNextAction('menu-a', 'script_approved')).toBe('컷 선택하기');
+    // menu-a는 곧장 음성이다 — 쓸 구간은 장면 고르기에서 이미 정해졌다
+    expect(stateNextAction('menu-a', 'script_approved')).toBe('음성 만들기');
     expect(stateNextAction('menu-b', 'script_approved')).toMatch(/씬 이미지/);
+  });
+
+  /** 컷 선택을 없앤 뒤 menu-a 흐름에 그 단계가 남아 있으면 화면에 빈 단계가 뜬다 */
+  it('menu-a 흐름에 컷 선택이 없다', () => {
+    expect(MENU_A_STATES).not.toContain('trimming');
+    expect(MENU_A_STATES.indexOf('voicing')).toBe(MENU_A_STATES.indexOf('script_approved') + 1);
   });
 
   it('모르는 단계에도 빈 화면을 만들지 않는다', () => {
