@@ -20,6 +20,7 @@ import {
 } from '../pipeline/selected.js';
 import { detectTextZones, ocrAvailable } from '../pipeline/ocrDetect.js';
 import { getAvailableInpaintProvider } from '../pipeline/inpaint.js';
+import { runTier2Scoped, autoRemovalMethod } from '../pipeline/tier2.js';
 import { detectZoneRanges } from '../pipeline/detectZone.js';
 import { synthesizeNarration, saveSceneVoiceFile, type SceneTiming } from '../pipeline/tts.js';
 import {
@@ -426,6 +427,8 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
 
   // 검출기 유무는 한 번만 본다 — 클립마다 확인하면 그 자체로 몇 초씩 먹는다
   const useOcr = await ocrAvailable(settings);
+  // 제거 방식도 한 번만 정한다 — 클립마다 도구를 찾으면 그 자체로 시간을 먹는다
+  const autoMethod = autoRemovalMethod();
   res.json({ started: true, clips: clips.length, autoDetect: useOcr }); // 즉시 응답, 진행은 SSE
 
   void (async () => {
@@ -446,8 +449,11 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
       */
       if (clip.zones.length === 0 && clip.probe) {
         if (useOcr) {
-          clip.zones = await detectTextZones(settings, footage, clip.probe, (line) =>
-            broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }));
+          clip.zones = await detectTextZones(
+            settings, footage, clip.probe,
+            (line) => broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+            1, autoMethod,
+          );
         } else if (template && template.id !== clip.id) {
           clip.zones = scaleZones(template.zones, template.probe, clip.probe);
         }
@@ -475,6 +481,24 @@ router.post('/jobs/:jid/regenerate', async (req, res) => {
         });
         clip.currentCleanVersion = r.version;
         footage = r.filePath;
+      }
+
+      /*
+        2차 제거 — 인페인팅으로 지정된 존이 고른 구간에 걸려 있을 때만.
+        도구가 없으면 조용히 건너뛴다 (1차까지만 하고 넘어간다).
+        쓰는 구간만 잘라 돌리고 원래 자리에 이어붙이므로 시간축은 그대로다.
+      */
+      const t2 = await runTier2Scoped(
+        settings, { ...clip, zones: inCut }, footage, inCut, outDir,
+        (line) => broadcast('regenerate.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+      );
+      if (t2) {
+        clip.cleanVersions.push({
+          v: t2.version, tier: 2, params: `inpaint:${t2.provider}`, filePath: t2.filePath,
+          createdAt: new Date().toISOString(),
+        });
+        clip.currentCleanVersion = t2.version;
+        footage = t2.filePath;
       }
 
       clip.selectedVideo = await buildSelectedVideo(
@@ -531,8 +555,11 @@ router.post('/jobs/:jid/clips/:cid/zones/auto', async (req, res) => {
   const source = job?.sources.find((s) => s.id === clip.sourceId);
   if (!source?.filePath) return res.status(400).json({ error: '소스 파일 없음' });
 
-  clip.zones = await detectTextZones(settings, fromWorkspaceRel(source.filePath), clip.probe, (line) =>
-    broadcast('clean.progress', { jobId: ref.jobId, clipId: clip.id, line }));
+  clip.zones = await detectTextZones(
+    settings, fromWorkspaceRel(source.filePath), clip.probe,
+    (line) => broadcast('clean.progress', { jobId: ref.jobId, clipId: clip.id, line }),
+    1, autoRemovalMethod(),
+  );
   await jobs.writeClip(ref, clip);
   res.json(clip);
 });
