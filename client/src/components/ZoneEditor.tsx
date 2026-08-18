@@ -208,6 +208,10 @@ export function ZoneEditor({
               {z.method === 'boxblur' && (
                 <span className="text-xs text-amber-600">가린 자국이 남습니다</span>
               )}
+              {/* 자막 밑 이모지 행은 자동으로 안 잡힌다 — 인페인팅이 덤으로 지워준다 */}
+              {z.method === 'inpaint' && (
+                <span className="text-xs text-slate-500">바로 아래 이모지 줄도 같이 지웁니다</span>
+              )}
               <TimeRange
                 zone={z}
                 frameTime={frameTime}
