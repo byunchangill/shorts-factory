@@ -7,6 +7,8 @@ import { REPO_ROOT, WORKSPACE_ROOT } from './store/workspace.js';
 import { addClient } from './sse.js';
 import { bootState, isReady } from './boot.js';
 import systemRoutes from './routes/system.js';
+import subtitlePreviewRoutes from './routes/subtitlePreview.js';
+import catalogRoutes from './routes/catalog.js';
 import projectRoutes from './routes/projects.js';
 import jobRoutes from './routes/jobs.js';
 import packetRoutes from './routes/packets.js';
@@ -63,6 +65,8 @@ export function createApp(): express.Express {
   });
 
   app.use('/api', systemRoutes);
+  app.use('/api', subtitlePreviewRoutes);
+  app.use('/api', catalogRoutes);
   app.use('/api', projectRoutes);
   app.use('/api', jobRoutes);
   app.use('/api', packetRoutes);

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { exists } from '../util/fsx.js';
+import { matchFreeFont } from './freeFonts.js';
 
 /**
  * 한글 폰트 탐색.
@@ -18,7 +19,8 @@ const CANDIDATES: string[] = [
   // macOS
   '/System/Library/Fonts/AppleSDGothicNeo.ttc',
   '/Library/Fonts/AppleGothic.ttf',
-  // Windows
+  // Windows — 본고딕 Black이 깔려 있으면 그것부터. 쇼츠 자막은 획이 굵어야 배경에 안 묻힌다
+  'C:/Windows/Fonts/NotoSansKR-Black.otf',
   'C:/Windows/Fonts/malgunbd.ttf',
   'C:/Windows/Fonts/malgun.ttf',
   'C:/Windows/Fonts/NanumGothicBold.ttf',
@@ -60,10 +62,14 @@ export async function findKoreanFont(override?: string): Promise<string | null> 
 /** ASS 자막에 넣을 폰트 패밀리명 — 파일명에서 유추한다 */
 export function fontFamilyOf(fontPath: string | null): string {
   if (!fontPath) return 'Sans';
+  // 화면에서 고를 수 있는 무료 글꼴은 표에 패밀리명이 적혀 있다
+  const free = matchFreeFont(fontPath);
+  if (free) return free.family;
   const base = path.basename(fontPath).toLowerCase();
   if (base.includes('nanumbarun')) return 'NanumBarunGothic';
   if (base.includes('nanumsquare')) return 'NanumSquare';
   if (base.includes('nanum')) return 'NanumGothic';
+  if (base.includes('notosanskr-black')) return 'Noto Sans KR Black';
   if (base.includes('notosanscjk') || base.includes('noto')) return 'Noto Sans CJK KR';
   if (base.includes('applesdgothic')) return 'Apple SD Gothic Neo';
   if (base.includes('malgun')) return 'Malgun Gothic';
