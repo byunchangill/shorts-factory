@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import { readZip, safeEntryPath, extractZip } from './zip.js';
+import { readZip, safeEntryPath, extractZip, createZip, crc32 } from './zip.js';
 
 /**
  * 고정 데이터는 파이썬 zipfile로 만든 진짜 ZIP이다 —
@@ -96,5 +96,33 @@ describe('extractZip', () => {
     expect(written).toEqual([]);
     expect(await fsp.readdir(base)).toEqual(['a']); // 바깥에 evil.txt가 생기지 않음
     await fsp.rm(base, { recursive: true, force: true });
+  });
+});
+
+describe('createZip — 만든 것을 도로 읽을 수 있나', () => {
+  it('한글 이름과 내용이 왕복한다', () => {
+    const entries = [
+      { name: '대본/소파-틈새-테이블_대본_v1.md', data: Buffer.from('# 제목\n내용', 'utf8') },
+      { name: '음성/s01.mp3', data: Buffer.from([0, 1, 2, 255, 254]) },
+    ];
+    const back = readZip(createZip(entries));
+    expect(back.map((e) => e.name)).toEqual(entries.map((e) => e.name));
+    expect(back[0].data.toString('utf8')).toBe('# 제목\n내용');
+    expect([...back[1].data]).toEqual([0, 1, 2, 255, 254]);
+  });
+
+  it('빈 목록도 유효한 zip이다', () => {
+    expect(readZip(createZip([]))).toEqual([]);
+  });
+
+  /** 경로 구분자가 역슬래시면 압축 푸는 쪽이 폴더로 못 본다 (윈도우에서 만들면 이렇게 된다) */
+  it('윈도우 경로 구분자를 슬래시로 바꾼다', () => {
+    const winName = ['영상', 'c01.mp4'].join(String.fromCharCode(92));
+    const back = readZip(createZip([{ name: winName, data: Buffer.from('x') }]));
+    expect(back[0].name).toBe('영상/c01.mp4');
+  });
+
+  it('CRC가 실제 값과 맞는다 — 틀리면 압축 프로그램이 손상으로 본다', () => {
+    expect(crc32(Buffer.from('123456789'))).toBe(0xcbf43926); // 규격 표준 시험값
   });
 });

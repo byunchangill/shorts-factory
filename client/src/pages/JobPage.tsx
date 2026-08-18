@@ -1129,6 +1129,30 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
       </Card>
 
       <Card>
+        <h3 className="flex items-center gap-2 font-semibold"><Download size={17} /> 따로 내려받기</h3>
+        <p className="mt-2 text-sm text-slate-500">
+          필요한 것만 브라우저로 바로 받습니다. 여러 개면 zip으로 묶고, 하나면 그대로 받습니다.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {([
+            ['final', '최종영상'],
+            ['video', '영상'],
+            ['audio', '음성'],
+            ['script', '대본·자막'],
+            ['uploadKit', '업로드킷'],
+          ] as const).map(([kind, label]) => (
+            <a
+              key={kind}
+              href={`/api/jobs/${job.id}/download/${kind}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-brand-400 hover:text-brand-700"
+            >
+              <Download size={14} /> {label}
+            </a>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-2 font-semibold"><FolderOpen size={17} /> 제품 폴더로 내보내기</h3>
           <Button variant="secondary" onClick={() => runExport.mutate()} disabled={runExport.isPending}>
