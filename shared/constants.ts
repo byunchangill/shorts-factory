@@ -426,3 +426,16 @@ export const YOUTUBE_QUOTA_COST = {
   playlistItems: 1,
   videoCategories: 1,
 } as const;
+
+/**
+ * 그 글자 크기에서 자막 한 줄에 들어가는 글자 수.
+ *
+ * 이 값보다 길게 잡으면 렌더러가 대신 줄을 접는데, **그 줄에는 시간을 줄 수 없다** —
+ * 줄마다 차례로 띄우려면 줄바꿈을 우리가 해야 한다. 화면과 조립이 같은 값을 쓰도록
+ * 여기 한 곳에 둔다.
+ *
+ * 이송폭 비율 0.64는 굵은 한글 글꼴 실측에서 나왔다 (본고딕 Black 118에 14자 = 916px).
+ */
+export function subtitleCharsPerLine(fontSize: number, width = 1080, marginX = 30): number {
+  return Math.max(4, Math.floor((width - marginX * 2) / (fontSize * 0.64)));
+}

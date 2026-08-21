@@ -5,7 +5,8 @@ import { COUPANG_PARTNERS_DISCLOSURE } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
-import { assStyleOf, buildAss, buildSrt, wrapKorean, type SubCue } from './subtitles.js';
+import { assStyleOf, buildAss, buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
+import { subtitleCharsPerLine } from '@shared/constants';
 import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './fonts.js';
 import { familyOfInstalled } from './freeFonts.js';
 import { renderCard } from './cards.js';
@@ -153,16 +154,25 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   ]);
 
   // 4) 자막 — 카드 시간을 포함한 실제 타임라인 기준으로 시각을 잡는다
+  const lineChars = Math.min(
+    settings.subtitleMaxChars,
+    subtitleCharsPerLine(settings.subtitleFontSize),
+  );
   const cues: SubCue[] = [];
   let cursor = 0;
   for (const item of timeline) {
     if (item.kind === 'scene') {
       const scene = script.scenes[item.sceneIdx!];
-      cues.push({
-        start: cursor,
-        end: cursor + item.dur,
-        text: wrapKorean(scene.subtitle || scene.narration, settings.subtitleMaxChars),
-      });
+      /*
+        두 줄이 되면 한꺼번에 띄우지 않고 음성 길이를 나눠 차례로 보여 준다.
+        줄바꿈은 **반드시 우리가** 해야 한다 — 설정값이 화면 폭보다 크면 렌더러가 대신
+        접는데, 그렇게 접힌 줄에는 시간을 줄 수 없어 두 줄이 한꺼번에 떠 버린다.
+      */
+      cues.push(...splitLines(
+        wrapKorean(scene.subtitle || scene.narration, lineChars),
+        cursor,
+        item.dur,
+      ));
     }
     cursor += item.dur;
   }

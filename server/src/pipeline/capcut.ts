@@ -1,7 +1,8 @@
 import path from 'node:path';
 import type { Job, Script, Clip, Settings } from '@shared/types';
 import type { SceneTiming } from './tts.js';
-import { buildSrt, wrapKorean, type SubCue } from './subtitles.js';
+import { buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
+import { subtitleCharsPerLine } from '@shared/constants';
 import { exportFileName } from './exporter.js';
 
 /**
@@ -80,7 +81,8 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
       });
     }
     const text = scene.subtitle || scene.narration;
-    if (text) cues.push({ start: cursor, end: cursor + dur, text: wrapKorean(text, settings.subtitleMaxChars) });
+    // 캡컷 SRT도 같은 규칙 — 웹 조립과 자막이 어긋나면 안 된다
+    if (text) cues.push(...splitLines(wrapKorean(text, Math.min(settings.subtitleMaxChars, subtitleCharsPerLine(settings.subtitleFontSize))), cursor, dur));
     cursor += dur;
 
     lines.push(`| ${no(i)} | ${dur.toFixed(1)}초 | ${scene.narration} | ${scene.subtitle} |`);

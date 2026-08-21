@@ -22,6 +22,29 @@ export function buildSrt(cues: SubCue[]): string {
     .join('\n');
 }
 
+/**
+ * 줄바꿈된 자막을 **줄 단위 큐**로 쪼갠다 — 두 줄이 한꺼번에 뜨지 않고 차례로 지나간다.
+ *
+ * 씬 안의 낱말 단위 타이밍은 없다(합성 API가 씬 하나의 길이만 준다). 그래서 그 길이를
+ * **글자 수 비례**로 나눠 갖는다 — 낭독 속도가 일정하다는 가정이라 실제와 거의 맞는다.
+ * 마지막 줄은 계산 오차를 흡수해 씬 끝에 정확히 닿게 한다.
+ */
+export function splitLines(text: string, start: number, dur: number): SubCue[] {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return [{ start, end: start + dur, text }];
+
+  // 공백은 빼고 센다 — 낭독 시간은 음절 수를 따라가지 띄어쓰기를 따라가지 않는다
+  const weights = lines.map((l) => Math.max(1, plainText(l).replace(/\s/g, '').length));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let t = start;
+  return lines.map((line, i) => {
+    const end = i === lines.length - 1 ? start + dur : t + (dur * weights[i]) / total;
+    const cue = { start: t, end, text: line };
+    t = end;
+    return cue;
+  });
+}
+
 /** 강조 표시(`*키워드*`)를 뗀 맨 글자 — SRT처럼 색을 못 싣는 곳에 쓴다 (캡컷 재료도 이걸 받는다) */
 export function plainText(text: string): string {
   return text.replace(/\*(.+?)\*/g, '$1');
@@ -65,6 +88,9 @@ export function assHighlight(text: string, highlight: string, body: string): str
  * 9:16 쇼츠용 스타일 ASS.
  *
  * 화면 **아래에서 35% 지점**에 굵은 흰 글씨 + 두꺼운 검정 외곽선, 그림자 없음.
+ *
+ * `WrapStyle: 1`은 **첫 줄부터 채우고 넘기기**다. 기본값 0은 두 줄 길이를 「균형 맞춰」
+ * 나눠서 「여기 두지 / 마세요」처럼 구를 쪼갠다 — 한국어 자막에서는 문장이 끊겨 읽힌다.
  * 바닥이 아니라 중간 아래인 것은 쇼츠 UI(계정명·설명·버튼)가 하단을 덮기 때문이다.
  * 값은 잘 도는 쇼핑쇼츠 한 편을 프레임 단위로 재서 맞췄다 (2026-08-18).
  */
@@ -113,7 +139,7 @@ export function buildAss(cues: SubCue[], opts: AssStyle = {}): string {
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
-WrapStyle: 0
+WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
