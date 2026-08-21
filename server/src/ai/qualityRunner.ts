@@ -1,8 +1,10 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { RESULT_SCHEMAS, type Script } from '@shared/types';
-import { charBudget, TARGET_SEC_BY_MENU, type AiProvider, type Menu } from '@shared/constants';
-import { packetMenu, scriptRuleErrors } from '../claude/scriptRules.js';
+import { syllableBudget, TARGET_SEC_BY_MENU, type AiProvider, type Menu } from '@shared/constants';
+import {
+  packetMenu, scriptRuleErrors, scriptRuleContext, type ScriptRuleContext,
+} from '../claude/scriptRules.js';
 import { REPO_ROOT, loadSettings } from '../store/workspace.js';
 import { readPacket, writePacket, resolvePacketDir } from '../claude/packets.js';
 import { runProvider } from './providers.js';
@@ -140,6 +142,7 @@ function validate(
   files: Record<string, string>,
   resultSpec: Array<{ file: string; schema: string }>,
   menu: Menu,
+  ctx: ScriptRuleContext,
 ): string[] {
   const errors: string[] = [];
   for (const spec of resultSpec) {
@@ -152,7 +155,7 @@ function validate(
     if (!parsed.success) {
       errors.push(`${spec.file}: ${parsed.error.issues.slice(0, 4).map((i) => `${i.path.join('.')} — ${i.message}`).join('; ')}`);
     } else if (spec.schema === 'script') {
-      errors.push(...scriptRuleErrors(parsed.data as Script, menu));
+      errors.push(...scriptRuleErrors(parsed.data as Script, menu, ctx));
     }
   }
   return errors;
@@ -168,7 +171,7 @@ export async function runPacketQuality(packetId: string, provider: AiProvider): 
   const requestMd = await fsp.readFile(path.join(dir, 'request.md'), 'utf8');
   const knowledge = await loadStructureKnowledge();
   const menu = packetMenu(packet);
-  const budget = charBudget(settings.speechRate, menu);
+  const budget = syllableBudget(settings.speechRate, menu);
   const target = TARGET_SEC_BY_MENU[menu];
 
   const outputSpec = packet.resultSpec
@@ -213,13 +216,14 @@ JSON은 파싱 가능한 형태여야 하며 설명 문장은 붙이지 마라.`
   let prompt = basePrompt;
   let files: Record<string, string> = {};
   let lastVerdict: QcVerdict | null = null;
+  const ruleCtx = await scriptRuleContext(packet);
 
   for (let attempt = 0; attempt <= MAX_REWRITES; attempt++) {
     const response = await runProvider(provider, { prompt, settings });
     const parsed = parseResultFiles(response, packet.resultSpec);
     const schemaErrors = parsed.errors.length
       ? parsed.errors
-      : validate(parsed.files, packet.resultSpec, menu);
+      : validate(parsed.files, packet.resultSpec, menu, ruleCtx);
 
     if (schemaErrors.length) {
       report(packetId, 'retry', `형식 오류 ${schemaErrors.length}건 — 재작성`);

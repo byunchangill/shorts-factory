@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Input, PageHeader, SearchSelect, Textarea } from '@/components/ui';
-import { TARGET_SEC, charBudget } from '@shared/constants';
+import { TARGET_SEC, syllableBudget } from '@shared/constants';
 
 interface Settings {
   parallelDownloads: number;
@@ -44,6 +44,7 @@ interface Settings {
   vsrMode: string;
   insertCards: boolean;
   cardDurationSec: number;
+  hookMotionMin: number;
   maxClipExposureSec: number;
 }
 interface DoctorTool {
@@ -255,6 +256,10 @@ export default function SettingsPage() {
             />
             씬 사이에 텍스트 카드 삽입 (원본 연속 노출을 끊고 정보 밀도를 올림)
           </label>
+          <p className="-mt-1 pl-6 text-xs text-slate-500">
+            <b>제품정보리뷰에만 들어갑니다.</b> 해외영상 짜집기는 「음성 = 자막」이라
+            말하지 않는 글자를 화면에 띄우지 않습니다 — 켜 둬도 그 메뉴에는 안 붙습니다.
+          </p>
           {form.insertCards && (
             <div className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-slate-500">카드 길이</span>
@@ -267,6 +272,26 @@ export default function SettingsPage() {
               <span className="text-xs text-slate-500">초</span>
             </div>
           )}
+          {/*
+            훅 게이트. 숫자를 감으로 바꾸면 근거를 잃는다 — 발행 14편 실측에서
+            「계속 시청함」과 상관 있는 유일한 변수였고(r=+0.57), 임계 8에서
+            통과 11편 중앙값 33.8% / 미달 3편 19.1%였다.
+          */}
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">훅 변화량 하한</span>
+            <Input
+              type="number" step="1" min={0} max={60}
+              className="w-24"
+              value={form.hookMotionMin}
+              onChange={(e) => set({ hookMotionMin: Number(e.target.value) })}
+            />
+            <span className="text-xs text-slate-500">0이면 끔 (권장 8)</span>
+          </div>
+          <p className="-mt-1 pl-30 text-xs text-slate-500">
+            첫 컷의 <b>0~0.5초 화면 변화량</b>이 이 값에 못 미치면 조립을 렌더 전에 막습니다.
+            발행 14편 실측에서 「계속 시청함」과 상관 있는 유일한 변수였습니다 —
+            <b> 첫 컷 길이로는 걸지 않습니다</b>(표본 7편에서 오판한 적이 있습니다).
+          </p>
           <div className="flex items-center gap-2">
             <span className="w-28 shrink-0 text-slate-500">연속 노출 상한</span>
             <Input
@@ -365,8 +390,9 @@ export default function SettingsPage() {
         </div>
         <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
           이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 {TARGET_SEC.max}초 영상에
-          최대 <b>{charBudget(form.speechRate || 1).max}자</b>
-          (권장 {charBudget(form.speechRate || 1).recommended}자)까지 쓸 수 있습니다.
+          최대 <b>{syllableBudget(form.speechRate || 1).max}음절</b>
+          (권장 {syllableBudget(form.speechRate || 1).recommended}음절)까지 쓸 수 있습니다.
+          글자가 아니라 <b>한글 음절</b>입니다 — 공백·기호는 세지 않습니다.
           첨부한 음성 파일은 원본 속도 그대로 사용됩니다.
         </p>
         <p className="mt-2 text-xs text-slate-500">

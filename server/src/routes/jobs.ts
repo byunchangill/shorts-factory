@@ -30,6 +30,7 @@ import {
 } from '../pipeline/voice/typecast.js';
 import { available as voiceboxAvailable, listProfiles as listVoiceboxProfiles } from '../pipeline/voice/voicebox.js';
 import { assembleFinal } from '../pipeline/assemble.js';
+import { upsertRow } from '../store/metrics.js';
 import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
 import { createZip } from '../util/zip.js';
 import { planCapcut } from '../pipeline/capcut.js';
@@ -732,6 +733,45 @@ router.post('/jobs/:jid/rights-confirm', async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * 발행 기록 — 유튜브 주소를 받아 잡과 성과 대장을 잇는다.
+ *
+ * 발행 자체는 사람이 유튜브에서 한다. 앱이 할 수 있는 건 **그 편이 어느 잡이었는지**를
+ * 붙잡아 두는 것뿐이고, 그게 없으면 대장의 행이 어떤 대본에서 나왔는지 영영 모른다.
+ * 지표는 나중에 `/metrics/refresh`가 채운다 — 발행 직후 숫자는 아직 뜻이 없다.
+ */
+router.post('/jobs/:jid/publish', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({
+    videoId: z.string().min(1),
+    publishedAt: z.string().optional(),
+    hookSeed: z.string().optional(),
+  }).parse(req.body);
+
+  const job = await jobs.readJob(ref);
+  if (!job) return res.status(404).json({ error: '작업 없음' });
+  // 주소를 통째로 붙여넣어도 받는다 — 사람은 11자리 id를 따로 꺼내지 않는다
+  const videoId = body.videoId.match(/[\w-]{11}/)?.[0] ?? body.videoId;
+  const publishedAt = body.publishedAt ?? new Date().toISOString().slice(0, 10);
+
+  await jobs.mutateJob(ref, (j) => {
+    j.videoId = videoId;
+    j.publishedAt = publishedAt;
+    if (body.hookSeed) j.hookSeed = body.hookSeed;
+  });
+
+  const row = await upsertRow({
+    slug: ref.jobId,
+    video_id: videoId,
+    title_published: job.title,
+    published: publishedAt,
+    hook_seed: body.hookSeed ?? job.hookSeed ?? '',
+    chips: '0', // 음성=자막이라 스펙 칩을 쓰지 않는다
+  });
+  await jobs.logJobEvent(ref, { type: 'publish.recorded', videoId, publishedAt });
+  res.json({ ok: true, row });
+});
+
 // ── 음성 (타입캐스트 API 또는 씬별 파일 첨부) ─────────────────────
 
 /** 두 합성 경로의 사용 가능 여부와 목소리 목록 — 화면이 이걸 보고 고르게 한다 */
@@ -915,7 +955,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     const clips = await jobs.listClips(ref);
     const version = (job.output.currentVersion ?? 0) + 1;
     const finalPath = await assembleFinal(settings, {
-      script, timings, clips, jobDir,
+      menu: ref.menu, script, timings, clips, jobDir,
       resolveWorkspacePath: fromWorkspaceRel,
       burnSubtitles: body.burnSubtitles ?? settings.burnSubtitles,
       burnDisclosure: settings.burnDisclosure,

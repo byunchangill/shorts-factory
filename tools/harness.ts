@@ -16,7 +16,7 @@ import fsp from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readZip } from '../server/src/util/zip.js';
-import { charBudget } from '../shared/constants.js';
+import { syllableBudget, TARGET_SEC_BY_MENU } from '../shared/constants.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TSX_BIN = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -96,11 +96,24 @@ async function tailServerLog(lines = 12): Promise<string> {
  * 파이프라인 실패는 잡 상태를 바꾸지 않고 이벤트로만 남으므로,
  * 이걸 보지 않으면 "완료 대기"가 타임아웃까지 계속 돈다.
  */
+let eventsSeen = 0;
+
+/**
+ * 여기까지의 이벤트는 본 것으로 친다.
+ * **일부러 실패시키는 단계**(훅 게이트 차단 확인) 다음에 부른다 — 안 부르면 그 실패가
+ * 로그에 남아 뒤따르는 단계가 남의 실패를 제 것으로 읽고 죽는다.
+ */
+async function markEventsSeen(): Promise<void> {
+  if (!jobDir) return;
+  const text = await fsp.readFile(path.join(jobDir, 'events.ndjson'), 'utf8').catch(() => '');
+  eventsSeen = text.trim() ? text.trim().split('\n').length : 0;
+}
+
 async function jobFailure(...types: string[]): Promise<string | null> {
   if (!jobDir) return null;
   const text = await fsp.readFile(path.join(jobDir, 'events.ndjson'), 'utf8').catch(() => '');
   const lines = text.trim().split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
+  for (let i = lines.length - 1; i >= eventsSeen; i--) {
     if (!lines[i]) continue;
     try {
       const e = JSON.parse(lines[i]) as { type?: string; error?: string };
@@ -391,7 +404,7 @@ async function main(): Promise<void> {
       제목 같은 문구로 검사하면 스킬을 고칠 때마다 하네스가 깨진다.
     */
     const raw = await fsp.readFile(
-      path.join(REPO_ROOT, '.claude/skills/shorts-direct-script/SKILL.md'), 'utf8');
+      path.join(REPO_ROOT, '.claude/skills/temcasting-v33/SKILL.md'), 'utf8');
     const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
     assert(g.content.trim() === body,
       `기본 대본 지침이 스킬과 다름 (지침 ${g.content.length}자 / 스킬 ${body.length}자)`);
@@ -746,12 +759,34 @@ async function main(): Promise<void> {
     return [again.id, `${again.id} · 지침·남은 소재 ${keptFrameTimes.length}장 · 재발행 시 이전 대기건 정리`];
   });
 
-  const scenes = [
-    { sceneId: 's01', narration: '이 충전기 정말 쓸 만할까요?', subtitle: '3만원의 실력',
-      clipRef: { clipId: clips[0].id, suggestedSegment: { in: 1, out: 4 } } },
-    { sceneId: 's02', narration: '직접 테스트해 봤습니다.', subtitle: '실사용 테스트',
-      clipRef: { clipId: clips[1].id, suggestedSegment: { in: 0.5, out: 3 } } },
+  /*
+    교리 v3.3을 지키는 대본이어야 서버가 받아준다 (2026-08-21 이식).
+    음성 = 자막, 씬마다 block 표시, 2인칭 질문형·스펙 숫자 금지, 어미를 번갈아 놓기.
+    **여기가 교리 게이트의 실전 통과 증거다** — 단위 테스트는 함수를 부르지만
+    이 대본은 요청서 → 검증 → 반영 → 조립까지 실제 경로를 다 지나간다.
+  */
+  const NARRATION: Array<[string, string]> = [
+    ['hook', '나가실 때 원상 복구해 주세요'],
+    ['loss', '집주인 한마디에 심장이 철렁했습니다'],
+    ['loss', '견적을 받아 보니 삼십만 원이더라고요'],
+    ['source', '인테리어 하는 형한테 물어봤는데'],
+    ['product', '타공 없이 벽에 딱 붙는 선반이거든요'],
+    ['product', '뗄 때 자국이 하나도 없더라고요'],
+    ['product', '무거운 걸 올려도 끄떡없길래'],
+    ['product', '세탁실이랑 현관에도 하나씩 붙였네요'],
+    ['closing', '전세 사시는 분들 미리 챙겨 두세요'],
+    ['closing', '멘탈 지켜 주는 물건이었어요'],
   ];
+  const scenes = NARRATION.map(([block, text], i) => ({
+    sceneId: `s${String(i + 1).padStart(2, '0')}`,
+    narration: text,
+    subtitle: text, // 음성 = 자막
+    block,
+    clipRef: {
+      clipId: clips[i % clips.length].id,
+      suggestedSegment: { in: 0.5, out: 2.5 },
+    },
+  }));
 
   await step('요청서 결과 반영 — 수동 붙여넣기 경로', async () => {
     const aiReply = `요청하신 대본입니다.\n\n\`\`\`json\n${JSON.stringify(
@@ -853,7 +888,7 @@ async function main(): Promise<void> {
       await fsp.mkdir(tmpAudio, { recursive: true });
       for (const [i, scene] of scenes.entries()) {
         const f = path.join(tmpAudio, `s${i + 1}.mp3`);
-        await makeSilentAudio(f, 3);
+        await makeSilentAudio(f, 2);
         const fd = new FormData();
         fd.append('sceneId', scene.sceneId);
         fd.append('file', new Blob([await fsp.readFile(f)], { type: 'audio/mpeg' }), `s${i + 1}.mp3`);
@@ -892,6 +927,26 @@ async function main(): Promise<void> {
     return '차단 확인 후 권리 확인 처리';
   });
 
+  /*
+    훅 화면 변화량 게이트 — 첫 0.5초가 멈춰 있으면 렌더 전에 막는다.
+    합성 소재는 거의 정지 화면이라 여기서 반드시 걸려야 한다. 걸린 것을 확인한 뒤에야
+    임계를 0으로 내려 조립을 진행한다 — 게이트가 조용히 꺼져 있으면 이 단계가 통과해 버린다.
+  */
+  await step('훅 변화량 게이트 — 멈춘 첫 컷은 렌더 전에 막는다', async () => {
+    await post(`/jobs/${jid}/assemble`, {});
+    const failure = await waitFor('게이트 차단', async () => {
+      const events = await get<Array<{ type: string; error?: string }>>(`/jobs/${jid}/events`);
+      return events.find((e) => e.type === 'assemble.failed') ?? null;
+    }, 60_000);
+    assert(String(failure.error).includes('훅 화면 변화량'),
+      `다른 이유로 실패함: ${failure.error}`);
+
+    const s = await get<Record<string, unknown>>('/settings');
+    await put('/settings', { ...s, hookMotionMin: 0 });
+    await markEventsSeen(); // 이 실패는 의도한 것이다 — 다음 단계가 물려받으면 안 된다
+    return '정지 화면 차단 확인 → 임계 0으로 내리고 진행';
+  });
+
   // ── 조립 ──
   await step('최종 조립 (9:16 · 자막 번인 · 공시문구)', async () => {
     await post(`/jobs/${jid}/assemble`, {});
@@ -915,11 +970,16 @@ async function main(): Promise<void> {
       path.join(workspace, 'menu-a', productName, 'jobs', jid, 'subtitles', 'final.srt'), 'utf8');
     assert(srt.includes('쿠팡 파트너스'), '공시문구가 자막에 없음');
 
-    // 카드가 들어가면 나레이션 총합보다 길어야 한다. 그런데도 오디오가 잘리면 싱크가 깨진 것이다.
+    /*
+      해외영상 짜집기에는 **텍스트 카드를 넣지 않는다** (2026-08-21 교리 v3.3 이식).
+      「말하지 않을 것은 화면에도 없다」가 첫 규칙이라, 무음 구간에 글자만 띄우는 카드는
+      음성=자막을 깬다. 그래서 영상 길이가 나레이션 총합과 **같아야** 한다 —
+      설정에서 카드를 켜 뒀는데도(위 설정 단계) 안 들어가는 것이 정상이다.
+    */
     const narrationTotal = timingsTotal;
     const videoDur = Number(probe.format.duration);
-    assert(videoDur > narrationTotal + 0.5,
-      `카드가 삽입되지 않았거나 길이가 이상함 (영상 ${videoDur.toFixed(1)}초 ≤ 나레이션 ${narrationTotal.toFixed(1)}초)`);
+    assert(Math.abs(videoDur - narrationTotal) < 1.0,
+      `카드가 새어 들어갔거나 싱크가 깨짐 (영상 ${videoDur.toFixed(1)}초 / 나레이션 ${narrationTotal.toFixed(1)}초)`);
     const audioDur = await streamDuration(finalPath, 'a');
     assert(Math.abs(audioDur - videoDur) < 1.0,
       `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(1)}초, 오디오 ${audioDur.toFixed(1)}초)`);
@@ -1054,13 +1114,13 @@ async function main(): Promise<void> {
       확인해야 할 것은 「메뉴에 맞는 분량이 실렸는가」다.
     */
     const { speechRate } = await get<{ speechRate: number }>('/settings');
-    const bBudget = charBudget(speechRate, 'menu-b');
-    const aBudget = charBudget(speechRate, 'menu-a');
+    const bBudget = syllableBudget(speechRate, 'menu-b');
+    const aBudget = syllableBudget(speechRate, 'menu-a');
     const p1 = await post<{ id: string }>(`/jobs/${bJob.id}/packets`, { kind: 'script' });
     const req = await get<PacketView>(`/packets/${p1.id}`);
-    assert(req.requestMd.includes('26초 이내'), 'menu-b 목표 시간이 요청서에 없음');
-    assert(req.requestMd.includes(`${bBudget.max}자`), 'menu-b 분량 상한이 반영되지 않음');
-    assert(!req.requestMd.includes(`${aBudget.max}자`), 'menu-a 분량 상한이 새어 들어옴');
+    assert(req.requestMd.includes('26초'), 'menu-b 목표 시간이 요청서에 없음');
+    assert(req.requestMd.includes(`${bBudget.max}음절`), 'menu-b 분량 상한이 반영되지 않음');
+    assert(!req.requestMd.includes(`${aBudget.max}음절`), 'menu-a 분량 상한이 새어 들어옴');
     assert(req.requestMd.includes('isDownside'), '단점 씬 규칙이 요청서에 없음');
 
     // ② 단점 씬이 없으면 반려 — 대본이 반영되면 안 된다
@@ -1116,8 +1176,10 @@ async function main(): Promise<void> {
     assert(!aReq.requestMd.includes('단점 씬 1개 필수'), '단점 씬 규칙이 menu-a 요청서에 새어 들어감');
     // 여기도 숫자를 박지 않는다 — 배속이 바뀌면 같이 움직이는 값이다
     const { speechRate: rate } = await get<{ speechRate: number }>('/settings');
-    assert(aReq.requestMd.includes(`${charBudget(rate, 'menu-a').max}자`), 'menu-a 분량 기준이 바뀜');
-    assert(aReq.requestMd.includes('28초 이내'), 'menu-a 목표 시간이 바뀜');
+    assert(aReq.requestMd.includes(`${syllableBudget(rate, 'menu-a').max}음절`), 'menu-a 분량 기준이 바뀜');
+    assert(aReq.requestMd.includes(`${TARGET_SEC_BY_MENU['menu-a'].max}초`), 'menu-a 목표 시간이 바뀜');
+    // 교리 v3.3이 요청서에 실려야 한다 (2026-08-21 이식)
+    assert(aReq.requestMd.includes('음성 = 자막'), 'menu-a 교리 규칙이 요청서에 없음');
 
     return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
   });
