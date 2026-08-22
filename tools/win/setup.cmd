@@ -40,9 +40,13 @@ echo  [앱] 준비 중 (처음에는 몇 분 걸립니다)...
 if not exist "node_modules\" call npm install
 call npm run build:fast -w client
 
-rem 2차 AI 인페인팅은 선택 기능이라 맨 마지막에 둔다 —
+rem 틱톡은 yt-dlp로 못 받는다 — 앱의 브라우저가 받는다. npm 설치만으로는 안 딸려 온다.
+rem 이미 받아뒀으면 몇 초 만에 끝난다.
+call npx --yes playwright install chromium
+
+rem 파이썬으로 도는 선택 기능(글자 검출·AI 인페인팅)은 맨 마지막에 둔다 —
 rem 여기서 실패하거나 오래 걸려도 앱 자체는 이미 쓸 수 있는 상태다.
-call :iopaint
+call :python
 
 echo.
 echo  준비가 끝났습니다. 잠시 후 앱이 열립니다.
@@ -63,22 +67,11 @@ winget install -e --id %2 --accept-package-agreements --accept-source-agreements
 set "SF_DID=1"
 exit /b 0
 
-rem 2차 AI 인페인팅(IOPaint). 선택 기능이고 PyTorch가 딸려 와 수 GB를 받는다.
+rem 파이썬으로 도는 선택 기능 둘. 가벼운 글자 검출(ONNX)을 먼저 깔고,
+rem PyTorch가 딸려 와 수 GB를 받는 iopaint를 뒤에 둔다 — 앞이 뒤에 발목 잡히지 않게.
 rem 한 번 시도한 뒤에는 성공하든 실패하든 표시를 남겨 매번 다시 붙잡지 않는다.
-:iopaint
+:python
 if not exist "workspace\" mkdir "workspace"
-where iopaint >nul 2>&1
-if not errorlevel 1 (
-  echo  [있음] iopaint (2차 AI 인페인팅)
-  echo done> "workspace\.iopaint-attempted"
-  exit /b 0
-)
-
-echo.
-echo  [설치] iopaint (2차 AI 인페인팅) — 선택 기능입니다.
-echo         PyTorch가 함께 받아져 2GB가 넘습니다. 시간이 꽤 걸립니다.
-echo         실패해도 앱은 정상 동작합니다 (1차 제거는 ffmpeg로 됩니다).
-echo.
 
 rem Python 3.13은 PyTorch 지원이 아직 안 따라온 경우가 있어 3.12를 쓴다
 where py >nul 2>&1
@@ -100,13 +93,32 @@ if not defined SF_PY (
 )
 
 if not defined SF_PY (
-  echo  [건너뜀] Python을 찾지 못해 iopaint를 설치하지 못했습니다.
+  echo  [건너뜀] Python을 찾지 못해 글자 검출·iopaint를 설치하지 못했습니다.
   echo           나중에 필요하면 tools\install-inpaint.md 를 참고하세요.
   echo skipped> "workspace\.iopaint-attempted"
   exit /b 0
 )
 
 %SF_PY% -m pip install --upgrade pip
+
+rem 자막 자리 자동 찾기 — 없으면 존을 매번 직접 드래그해야 한다. 가볍다(ONNX).
+echo.
+echo  [설치] 글자 검출 (자막 자리 자동 찾기) ...
+%SF_PY% -m pip install rapidocr-onnxruntime
+
+where iopaint >nul 2>&1
+if not errorlevel 1 (
+  echo  [있음] iopaint (2차 AI 인페인팅)
+  echo done> "workspace\.iopaint-attempted"
+  exit /b 0
+)
+
+echo.
+echo  [설치] iopaint (2차 AI 인페인팅) — 선택 기능입니다.
+echo         PyTorch가 함께 받아져 2GB가 넘습니다. 시간이 꽤 걸립니다.
+echo         실패해도 앱은 정상 동작합니다 (1차 제거는 ffmpeg로 됩니다).
+echo.
+
 %SF_PY% -m pip install iopaint
 call "%~dp0refresh-path.cmd"
 
