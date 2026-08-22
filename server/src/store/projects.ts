@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { ProjectSchema, type Project, ProductSchema, type Product } from '@shared/types';
 import {
-  GUIDELINE_FILES, charBudget, TARGET_SEC_BY_MENU, type Menu, type GuidelineFile,
+  GUIDELINE_FILES, syllableBudget, TARGET_SEC_BY_MENU, type Menu, type GuidelineFile,
 } from '@shared/constants';
 import { paths, loadSettings } from './workspace.js';
 import type { JobRef } from './jobs.js';
@@ -19,7 +19,7 @@ const RESERVED_DIRS = new Set(['formats', 'templates']);
  */
 async function fillGuideline(template: string, menu: Menu): Promise<string> {
   const { speechRate } = await loadSettings();
-  const budget = charBudget(speechRate, menu);
+  const budget = syllableBudget(speechRate, menu);
   const target = TARGET_SEC_BY_MENU[menu];
   return template
     .replaceAll('{SPEECH_RATE}', String(speechRate))
@@ -88,11 +88,13 @@ const DEFAULT_GUIDELINES: Record<GuidelineFile, string> = {
  */
 const MENU_SKILL: Partial<Record<Menu, string>> = {
   /*
-    해외영상 짜집기는 **직접 화법 4비트**다 (2026-08-17 사용자 결정).
-    갈등 서사(`temcasting-shorts`)는 남겨 뒀지만 기본값에서는 뺐다 — 두 포맷은 톤이
-    정반대라 섞이면 대본이 흔들린다. 그 톤이 필요한 카테고리는 화면에서 지침을 바꾼다.
+    해외영상 짜집기는 **템캐스팅 교리 v3.3**이다 (2026-08-21 이식).
+    앞서 쓰던 직접 화법(`shorts-direct-script`)은 2인칭 질문형 훅과 질문형 CTA를
+    권했는데, 발행 20편 원장에서 그 형태가 채널 최하위(563회·계속시청 12.4%)였다.
+    스킬은 남겨 뒀지만 기본값에서는 뺐다 — 두 포맷은 톤이 정반대라 섞이면 대본이 흔들린다.
+    그 톤이 필요한 카테고리는 화면에서 지침을 바꾼다.
   */
-  'menu-a': fileURLToPath(new URL('../../../.claude/skills/shorts-direct-script/SKILL.md', import.meta.url)),
+  'menu-a': fileURLToPath(new URL('../../../.claude/skills/temcasting-v33/SKILL.md', import.meta.url)),
 };
 
 /** 스킬 문서의 앞머리(name/description)는 지침이 아니다 — 본문만 쓴다 */

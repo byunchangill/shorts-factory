@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { skillBody } from './projects.js';
 
 const SKILL = fileURLToPath(
-  new URL('../../../.claude/skills/shorts-direct-script/SKILL.md', import.meta.url));
+  new URL('../../../.claude/skills/temcasting-v33/SKILL.md', import.meta.url));
 
 describe('skillBody', () => {
   it('앞머리(name/description)를 떼고 본문만 남긴다', () => {
@@ -89,10 +89,10 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
   */
   it('스킬의 분량 환산표가 앱의 계산과 같다', async () => {
     const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
-    const { charBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
-    const b = charBudget(1.33, 'menu-a'); // 기본 배속 (Settings.speechRate)
+    const { syllableBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
+    const b = syllableBudget(1.33, 'menu-a'); // 기본 배속 (Settings.speechRate)
     const t = TARGET_SEC_BY_MENU['menu-a'];
-    expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}자`);
-    expect(body).toContain(`**${b.max}자를 넘지 않는다**`);
+    expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}음절`);
+    expect(body).toContain(`**${b.max}음절을 넘지 않는다**`);
   });
 });

@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { RESULT_SCHEMAS, ScriptSchema, ProductSchema, FormatSchema, type Script } from '@shared/types';
-import { packetMenu, scriptRuleErrors } from './scriptRules.js';
+import { packetMenu, scriptRuleErrors, scriptRuleContext } from './scriptRules.js';
 import { WORKSPACE_ROOT } from '../store/workspace.js';
 import { readJson, exists } from '../util/fsx.js';
 import { listAllPackets, readPacket, writePacket, resolvePacketDir } from './packets.js';
@@ -136,8 +136,12 @@ export async function ingestPacketResult(packetId: string): Promise<void> {
             parsed.error.issues.slice(0, 5).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         );
       } else if (spec.schema === 'script') {
-        // 스키마는 맞지만 메뉴 규칙을 어긴 경우 (제품정보리뷰의 단점 씬 등)
-        errors.push(...scriptRuleErrors(parsed.data as Script, packetMenu(packet)));
+        // 스키마는 맞지만 메뉴 규칙을 어긴 경우 (교리 실격·제품정보리뷰의 단점 씬)
+        errors.push(...scriptRuleErrors(
+          parsed.data as Script,
+          packetMenu(packet),
+          await scriptRuleContext(packet),
+        ));
       }
     }
   }

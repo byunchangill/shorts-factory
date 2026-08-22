@@ -15,6 +15,7 @@ import packetRoutes from './routes/packets.js';
 import formatRoutes from './routes/formats.js';
 import keyRoutes from './routes/keys.js';
 import youtubeRoutes from './routes/youtube.js';
+import metricsRoutes from './routes/metrics.js';
 import sourcingRoutes from './routes/sourcing.js';
 
 export const CLIENT_DIST = path.join(REPO_ROOT, 'client', 'dist');
@@ -73,6 +74,7 @@ export function createApp(): express.Express {
   app.use('/api', formatRoutes);
   app.use('/api', keyRoutes);
   app.use('/api', youtubeRoutes);
+  app.use('/api', metricsRoutes);
   app.use('/api', sourcingRoutes);
 
   // workspace 미디어 서빙 (영상/이미지/음성 미리보기)

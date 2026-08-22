@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '@/api/client';
 import { Badge, Button, Card, Input, PageHeader, SearchSelect, Textarea } from '@/components/ui';
-import { TARGET_SEC, charBudget } from '@shared/constants';
+import { TARGET_SEC, syllableBudget } from '@shared/constants';
 
 interface Settings {
   parallelDownloads: number;
@@ -44,6 +44,7 @@ interface Settings {
   vsrMode: string;
   insertCards: boolean;
   cardDurationSec: number;
+  hookMotionMin: number;
   maxClipExposureSec: number;
 }
 interface DoctorTool {
@@ -255,6 +256,10 @@ export default function SettingsPage() {
             />
             씬 사이에 텍스트 카드 삽입 (원본 연속 노출을 끊고 정보 밀도를 올림)
           </label>
+          <p className="-mt-1 pl-6 text-xs text-slate-500">
+            <b>제품정보리뷰에만 들어갑니다.</b> 해외영상 짜집기는 「음성 = 자막」이라
+            말하지 않는 글자를 화면에 띄우지 않습니다 — 켜 둬도 그 메뉴에는 안 붙습니다.
+          </p>
           {form.insertCards && (
             <div className="flex items-center gap-2">
               <span className="w-28 shrink-0 text-slate-500">카드 길이</span>
@@ -267,6 +272,26 @@ export default function SettingsPage() {
               <span className="text-xs text-slate-500">초</span>
             </div>
           )}
+          {/*
+            훅 게이트. 숫자를 감으로 바꾸면 근거를 잃는다 — 발행 14편 실측에서
+            「계속 시청함」과 상관 있는 유일한 변수였고(r=+0.57), 임계 8에서
+            통과 11편 중앙값 33.8% / 미달 3편 19.1%였다.
+          */}
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-500">훅 변화량 하한</span>
+            <Input
+              type="number" step="1" min={0} max={60}
+              className="w-24"
+              value={form.hookMotionMin}
+              onChange={(e) => set({ hookMotionMin: Number(e.target.value) })}
+            />
+            <span className="text-xs text-slate-500">0이면 끔 (권장 8)</span>
+          </div>
+          <p className="-mt-1 pl-30 text-xs text-slate-500">
+            첫 컷의 <b>0~0.5초 화면 변화량</b>이 이 값에 못 미치면 조립을 렌더 전에 막습니다.
+            발행 14편 실측에서 「계속 시청함」과 상관 있는 유일한 변수였습니다 —
+            <b> 첫 컷 길이로는 걸지 않습니다</b>(표본 7편에서 오판한 적이 있습니다).
+          </p>
           <div className="flex items-center gap-2">
             <span className="w-28 shrink-0 text-slate-500">연속 노출 상한</span>
             <Input
@@ -365,8 +390,9 @@ export default function SettingsPage() {
         </div>
         <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
           이 속도가 <b>대본 분량 기준</b>을 결정합니다. 현재 설정이면 {TARGET_SEC.max}초 영상에
-          최대 <b>{charBudget(form.speechRate || 1).max}자</b>
-          (권장 {charBudget(form.speechRate || 1).recommended}자)까지 쓸 수 있습니다.
+          최대 <b>{syllableBudget(form.speechRate || 1).max}음절</b>
+          (권장 {syllableBudget(form.speechRate || 1).recommended}음절)까지 쓸 수 있습니다.
+          글자가 아니라 <b>한글 음절</b>입니다 — 공백·기호는 세지 않습니다.
           첨부한 음성 파일은 원본 속도 그대로 사용됩니다.
         </p>
         <p className="mt-2 text-xs text-slate-500">
@@ -451,8 +477,43 @@ export default function SettingsPage() {
   화면이 거짓말을 하면 안 된다. 배경은 위아래로 어둡고 밝게 갈라 놨다 — 흰 글자가
   밝은 배경에서 묻히는지 한 장으로 보인다.
 */
+/** 미리보기 예시 문장 — 「한 줄 글자 수」에 맞춰 잘라 쓴다 */
+const SAMPLE = '세면용품 *여기 두지* 마세요 물때가 금방 끼고 나중에 지워지지 않습니다';
+
+/** 강조 표시(`*`)를 뺀, 화면에 보이는 글자 수 */
+const visibleLen = (s: string) => s.replace(/\*/g, '').length;
+
+/**
+ * 글자 수에 맞는 예시 문장 만들기.
+ *
+ * **글자 단위로 자르지 않는다.** 「…금방 끼고 잘」처럼 단어가 끊기거나 한 글자 조각으로
+ * 끝나면 한국어 문장으로 읽히지 않아서, 자막이 그렇게 나갈 것처럼 오해하게 된다.
+ * 단어를 통째로 채우고, 마지막이 한 글자짜리면 뺀다. 자른 자리에서 강조가 열려 있으면
+ * 닫아 준다 — 안 닫으면 별표가 화면에 그대로 찍힌다.
+ */
+export function sampleForChars(text: string, n: number): string {
+  const words = text.split(' ');
+  const picked: string[] = [];
+  for (const w of words) {
+    const next = [...picked, w].join(' ');
+    if (visibleLen(next) > n) break;
+    picked.push(w);
+  }
+  // 「잘」·「안」처럼 한 글자로 끝나면 문장이 끊긴 것처럼 보인다
+  while (picked.length > 1 && visibleLen(picked[picked.length - 1]) <= 1) picked.pop();
+  // 첫 단어부터 넘치면 그 단어만이라도 (글자 수를 아주 작게 잡은 경우)
+  const out = (picked.length ? picked : [words[0]]).join(' ');
+  return (out.match(/\*/g) ?? []).length % 2 === 1 ? `${out}*` : out;
+}
+
 function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Settings>) => void }) {
-  const [text, setText] = useState('세면용품 *여기 두지* 마세요');
+  /*
+    예시 문장은 「한 줄 글자 수」에 맞춰 그 길이로 만든다 — 설정한 글자 수가 한 줄에
+    들어가는지를 눈으로 봐야 하기 때문이다. 사용자가 직접 치면 그 문장을 쓰고,
+    비우면 다시 글자 수에 맞춘 예시로 돌아간다.
+  */
+  const [customText, setCustomText] = useState<string | null>(null);
+  const text = customText ?? sampleForChars(SAMPLE, form.subtitleMaxChars);
   const [debounced, setDebounced] = useState(0);
   useEffect(() => {
     // 슬라이더를 끌 때마다 ffmpeg를 부르면 끊긴다 — 손을 멈추면 그린다
@@ -462,6 +523,15 @@ function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Set
     text, form.subtitleFontSize, form.subtitleBottomRatio, form.subtitleOutline,
     form.subtitleMaxChars, form.subtitleColor, form.subtitleHighlightColor, form.fontPath,
   ]);
+
+  /*
+    이 크기에서 한 줄에 몇 자나 들어가는지.
+    「한 줄 글자 수」는 우리가 접는 기준일 뿐이고, 화면 폭을 넘으면 렌더러가 한 번 더 접는다.
+    두 값이 어긋나면 설정이 아무 일도 안 하는 것처럼 보이므로 한계를 같이 적어 준다.
+    이송폭은 글꼴마다 다르다 — 굵은 한글 글꼴 실측(본고딕 Black 118에 14자)에서 나온 어림값이다.
+  */
+  const usableWidth = 1080 - 30 * 2; // 좌우 여백은 자막 스타일과 같은 값
+  const fitsPerLine = Math.floor(usableWidth / (form.subtitleFontSize * 0.64));
 
   const src = `/api/subtitles/preview?${new URLSearchParams({
     text,
@@ -510,7 +580,10 @@ function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Set
           {slider('외곽선 두께', 'subtitleOutline', 0, 20, 1,
             '밝은 배경에서 흰 글자가 묻히면 올립니다')}
           {slider('한 줄 글자 수', 'subtitleMaxChars', 6, 30, 1,
-            '넘으면 줄을 바꿉니다')}
+            fitsPerLine < form.subtitleMaxChars
+              ? `이 크기에서는 한 줄에 약 ${fitsPerLine}자까지 들어갑니다 — `
+                + '더 크게 잡아도 화면 폭에서 렌더러가 접습니다'
+              : `넘으면 줄을 바꿉니다 (이 크기의 한 줄 한계는 약 ${fitsPerLine}자)`)}
           <FontPicker value={form.fontPath} onPick={(fontPath) => set({ fontPath })} />
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2">
@@ -532,9 +605,15 @@ function SubtitleStyleCard({ form, set }: { form: Settings; set: (p: Partial<Set
           </div>
           <div>
             <label className="mb-1 block font-medium">미리보기 문장</label>
-            <Input value={text} onChange={(e) => setText(e.target.value)} />
+            <Input
+              value={text}
+              onChange={(e) => setCustomText(e.target.value || null)}
+            />
             <p className="mt-1 text-xs text-slate-500">
-              대본에서 <code>*별표*</code>로 감싼 부분이 강조색으로 나갑니다. 낭독에는 영향이 없습니다.
+              한 줄 글자 수({form.subtitleMaxChars}자)에 맞춰 <b>단어 단위로</b> 만든 예시입니다 —
+              이 문장이 한 줄로 나오면 그 글자 수가 실제로 들어간다는 뜻입니다.
+              직접 쳐도 되고, 비우면 예시로 돌아갑니다.
+              대본에서 <code>*별표*</code>로 감싼 부분이 강조색으로 나갑니다(낭독에는 영향 없음).
             </p>
           </div>
         </div>

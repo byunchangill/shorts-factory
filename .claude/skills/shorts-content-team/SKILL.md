@@ -117,7 +117,7 @@ TeamCreate("shorts-content", [shorts-researcher, shorts-scriptwriter, shorts-qc,
 
 1. 리서처가 유튜브 API로 "무선청소기 리뷰" 쇼츠 상위 25개 분석 → 훅 유형 분포 산출
 2. 대본가가 소재 현황의 c01·c02와 프레임을 확인하고 5씬 대본 작성 (261자)
-3. 검수자가 `check-script.mjs` 실행 → 시간 52초 적정, 금칙어 없음 → 소재 대조 통과 → 88점 통과
+3. 검수자가 `check-script.ts` 실행 → 교리 실격 0건, 금칙어 없음 → 소재 대조 통과 → 88점 통과
 4. 패키저가 제목 5개·설명·해시태그·썸네일 문구 작성
 5. `result/script.json` + `result/.done` 생성 → 서버가 감지해 대본 v1 반영
 

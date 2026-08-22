@@ -178,3 +178,34 @@ export async function topVideos(days = 28, limit = 10): Promise<Array<
     };
   });
 }
+
+/**
+ * 영상 한 편의 지표 — 성과 대장을 채우는 자리.
+ *
+ * 🔴 **「계속 시청함」은 여기 없다.** 그건 쇼츠 피드에서 스와이프로 넘기지 않은 비율이고
+ * 유튜브 스튜디오 화면에만 있다. API가 주는 것은 평균 조회율(avgViewPercentage)까지라,
+ * 대장의 `retained_pct`는 사람이 손으로 적는다. 둘은 스케일이 아예 다르다 —
+ * 실제 원장에 계속시청 12.4% / 평균 조회율 80.0%인 편이 있다.
+ */
+export async function videoMetrics(videoId: string, days = 90): Promise<{
+  views: number; avgViewPercentage: number; avgViewDuration: number;
+  likes: number; comments: number; shares: number;
+}> {
+  const { start, end } = rangeDates(days);
+  const url = new URL(ANALYTICS_BASE);
+  url.searchParams.set('ids', 'channel==MINE');
+  url.searchParams.set('startDate', start);
+  url.searchParams.set('endDate', end);
+  url.searchParams.set('metrics', 'views,averageViewPercentage,averageViewDuration,likes,comments,shares');
+  url.searchParams.set('filters', `video==${videoId}`);
+  const data = await authedFetch(url.toString());
+  const row = data.rows?.[0] ?? [];
+  return {
+    views: row[0] ?? 0,
+    avgViewPercentage: row[1] ?? 0,
+    avgViewDuration: row[2] ?? 0,
+    likes: row[3] ?? 0,
+    comments: row[4] ?? 0,
+    shares: row[5] ?? 0,
+  };
+}

@@ -2,13 +2,14 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { PacketSchema, type Packet, type Product, type Clip } from '@shared/types';
 import {
-  PACKET_KIND_LABELS, charBudget, TARGET_SEC_BY_MENU, type PacketKind, type Menu,
+  PACKET_KIND_LABELS, syllableBudget, TARGET_SEC_BY_MENU, type PacketKind, type Menu,
 } from '@shared/constants';
 import { packetMenu } from './scriptRules.js';
 import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
 import { ensureDir, listDirs, readJson, writeJsonAtomic } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
 import { readAllGuidelines, readProduct, listProductFiles } from '../store/projects.js';
+import { recentHooks } from '../store/metrics.js';
 import { getFormat } from '../store/formats.js';
 import { type JobRef, listClips, listJobs, logJobEvent } from '../store/jobs.js';
 import { broadcast } from '../sse.js';
@@ -330,6 +331,26 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     }
   }
 
+  /*
+    script(menu-a): 직전 편들의 훅 유형 — 연속 중복을 막는다.
+    교리는 동일 인물 연속 2편 초과 금지, 10편 중 3회 초과 금지다. 대장이 비어 있으면
+    (아직 발행한 편이 없으면) 아무 말도 하지 않는다 — 빈 표를 실어 봐야 지시만 늘어난다.
+  */
+  if ((packet.kind === 'script' || packet.kind === 'revision') && packetMenu(packet) === 'menu-a') {
+    const recent = await recentHooks();
+    const withSeed = recent.filter((r) => r.hookSeed);
+    if (withSeed.length) {
+      lines.push('## 직전 편 훅 (겹치지 마세요)');
+      for (const r of withSeed) lines.push(`- ${r.slug}: **${r.hookSeed}**${r.note ? ` — ${r.note}` : ''}`);
+      lines.push('');
+      lines.push(
+        '- 훅 유형과 등장 인물이 **직전 편과 겹치지 않게** 고릅니다. '
+        + '같은 인물은 연속 2편까지, 10편 중 3회까지입니다.',
+      );
+      lines.push('');
+    }
+  }
+
   // revision: 반려 사유
   if (packet.kind === 'revision' && opts.revisionNote) {
     lines.push('## 반려 사유 (이 피드백을 반영해 다시 작성)');
@@ -386,19 +407,19 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
   lines.push('## 검증 규칙');
   // 분량 기준은 배속·메뉴에 따라 달라지므로 발행 시점의 값으로 치환한다
   const settings = await loadSettings();
-  const budget = charBudget(settings.speechRate, menu);
+  const budget = syllableBudget(settings.speechRate, menu);
   const target = TARGET_SEC_BY_MENU[menu];
   const fill = (t: string) => t
     .replace('{SPEECH_RATE}', String(settings.speechRate))
     .replace('{CHAR_MIN}', String(budget.min))
     .replace('{CHAR_MAX}', String(budget.max))
     .replace('{CHAR_REC}', String(budget.recommended))
+    .replace('{SEC_MIN}', String(target.min))
     .replace('{SEC_MAX}', String(target.max))
     .replace('{SEC_REC}', String(target.recommended));
   lines.push(fill(VALIDATION_RULES[packet.kind]));
-  if (menu === 'menu-b' && MENU_B_RULES[packet.kind]) {
-    lines.push(fill(MENU_B_RULES[packet.kind]!));
-  }
+  const extra = menu === 'menu-a' ? MENU_A_RULES[packet.kind] : MENU_B_RULES[packet.kind];
+  if (extra) lines.push(fill(extra));
   lines.push('');
   lines.push('---');
   lines.push('파일을 만들 수 있는 도구라면, 작성이 끝난 뒤 마지막에 `result/.done` 빈 파일을 생성하세요.');
@@ -490,12 +511,10 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
 
 const VALIDATION_RULES: Record<PacketKind, string> = {
   'product-extract': '- 첨부 자료에 없는 사실을 지어내지 않는다\n- 효능/성능 주장은 자료 원문 근거가 있는 것만 포함',
-  script: `- **{SEC_MAX}초 이내로 끝낸다.** {SPEECH_RATE}배속 낭독 기준 한국어 {CHAR_MIN}~{CHAR_MAX}자 (권장 {CHAR_REC}자)
-- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
+  script: `- **{SEC_MIN}~{SEC_MAX}초.** {SPEECH_RATE}배속 낭독 기준 한국어 **{CHAR_MIN}~{CHAR_MAX}음절** (권장 {CHAR_REC}음절)
+  — 글자수가 아니라 **한글 음절수**다. 공백·기호·숫자·영문은 세지 않는다
 - 원본 영상의 문장을 그대로 옮기지 않는다 (구조만 참고)
-- 과장 금지: "무조건", "100%", "기적", "완치" 등 사용 금지
-- 첫 씬은 3초 훅
-- 마지막 씬에 CTA 1문장`,
+- 과장 금지: "무조건", "100%", "기적", "완치" 등 사용 금지`,
   'format-create': '- 다른 채널을 그대로 베끼지 않는 고유한 구조일 것\n- beats의 secondsHint 합이 {SEC_MAX}초 이내일 것 (권장 {SEC_REC}초)',
   'scene-images': '- 모든 씬에 동일한 스타일 프롬프트 접두어 적용 (일관성)\n- 실존 인물/브랜드 로고 묘사 금지',
   'upload-kit': '- 제목에 낚시성 허위 표현 금지\n- 공시문구 필수 포함',
@@ -503,11 +522,43 @@ const VALIDATION_RULES: Record<PacketKind, string> = {
 };
 
 /**
+ * 해외영상 짜집기(menu-a)에만 더 붙는 규칙 — 템캐스팅 교리 v3.3.
+ *
+ * 여기 적힌 것은 전부 `shared/doctrine.ts`가 **기계로 검사한다.** 어기면 요청서 반영이
+ * 거부되므로, 문구와 검사기가 어긋나면 대본가가 통과할 수 없는 지시를 받게 된다 —
+ * 규칙을 고칠 때는 두 파일을 같이 고친다 (`doctrine.test.ts`가 잡아준다).
+ */
+const MENU_A_RULES: Partial<Record<PacketKind, string>> = {
+  script: `- 🔴 **음성 = 자막.** \`narration\`과 \`subtitle\`이 글자 하나까지 같아야 한다.
+  자막에만 있는 정보도, 음성에만 있는 정보도 없다. **말하지 않을 것은 화면에도 없다**
+- 🔴 **씬마다 \`block\`을 붙인다** — \`hook\`(①) / \`loss\`(②) / \`source\`(③, 선택) /
+  \`product\`(④) / \`closing\`(⑤). 이 표시가 없으면 선행 구간을 잴 수 없어 반려된다
+- **선행 구간(①②③)은 비율이 아니라 절대 초수다** — 17~19초는 5~8초, 20~23초는 8~12초,
+  24~26초는 12~16초. 상위 4편이 전부 선행 10~16초다
+- **① 훅에 제품·브랜드·기능을 넣지 않는다.** 8종 중 택1 — 대사 인용(최고 성과) / 금지 명령 /
+  판정 선언 / 안도 감탄 / 트렌드 전언 / 감정 선언 / FOMO / 놀람 질문
+- **② 손실 블록 필수** — 금전(견적·보증금·원상복구비) / 시간(대기·매번) / 신체(허리·손목).
+  100만 이상 상위 4편이 **전부** 금전 손실이다
+- **자막 1장은 16음절 이하.** 넘으면 화면에서 두 줄로 감긴다
+- **화자는 남자다.** 시어머니·시누이·시댁·언니·오빠·남편 → 장모님·처제·처가·누나·형·와이프
+- **금지**: 2인칭 질문형(\`~하시나요\`·\`~세요?\`) / 평가 형용사(꿀템·역대급·신박) /
+  광고 어법(지금 바로·필수템). **2인칭 명령형은 허용한다** (\`이제 양면테이프 쓰지 마세요\`)
+- **스펙 숫자·아라비아 숫자 금지.** 치수·하중은 설명란으로 빼고, 손실 금액도 한글로 적는다
+  (30만 원 → 삼십만 원). 음성=자막이라 자막으로 우회할 수 없다
+- **어미를 번갈아 놓는다** — 인접 씬이 같은 어미로 끝나지 않게, 종결어미 3연속 금지,
+  종류 4가지 이상. \`~더라고요\`는 2~3회 (표본 9/10편)`,
+  revision: '- script 패킷의 교리 v3.3 규칙을 동일하게 적용한다 (음성=자막·블록 표시·실격 조건)',
+  'upload-kit': '- 스펙(치수·하중·색상 수)은 **설명란에 적는다** — 음성에서 뺀 것이 여기로 온다',
+};
+
+/**
  * 제품정보리뷰(menu-b)에만 더 붙는 규칙.
  * 해외영상 짜집기는 별도 지침을 따로 세우기로 해서 여기 걸지 않는다.
  */
 const MENU_B_RULES: Partial<Record<PacketKind, string>> = {
-  script: `- **단점 씬 1개 필수.** 제품의 단점·주의사항을 말하는 씬을 반드시 넣고 그 씬에 \`"isDownside": true\`를 표시한다.
+  script: `- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
+- 첫 씬은 3초 훅, 마지막 씬에 CTA 1문장
+- **단점 씬 1개 필수.** 제품의 단점·주의사항을 말하는 씬을 반드시 넣고 그 씬에 \`"isDownside": true\`를 표시한다.
   이 한 줄이 광고와 리뷰를 가른다 — 없으면 반려된다. 지어내지 말고 제품 정보의 cautions/사양에서 근거를 찾는다
   (예: "대신 스테인리스라 지문은 묻습니다", "물걸레 기능은 없습니다")
 - 단점 뒤에 그걸 덮는 마무리를 붙이지 않는다. 단점은 단점으로 끝내야 신뢰가 생긴다`,

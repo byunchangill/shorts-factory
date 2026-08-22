@@ -109,6 +109,8 @@ tools\win\create-shortcut.vbs   ← 더블클릭
 | Node.js | winget `OpenJS.NodeJS.LTS` |
 | ffmpeg · ffprobe | winget `Gyan.FFmpeg` |
 | yt-dlp | winget `yt-dlp.yt-dlp` |
+| 크로미움 (틱톡 소재) | `npx playwright install chromium` |
+| 글자 검출 (자막 자리 자동 찾기) | `pip install rapidocr-onnxruntime` |
 | Python 3.12 | winget `Python.Python.3.12` (iopaint용) |
 | iopaint (2차 AI 인페인팅) | `pip install iopaint` |
 
@@ -128,6 +130,62 @@ tools\win\create-shortcut.vbs   ← 더블클릭
 - Python은 3.13이 아니라 **3.12**를 씁니다 — PyTorch 지원이 아직 안 따라온 경우가 있습니다
 
 배포가 아니라 내 PC의 `localhost`입니다 — 밖에서는 접속되지 않습니다.
+
+## 새 PC로 옮길 때 (소스를 고치는 쪽)
+
+친구용 설치본(`install.ps1`)이 아니라 **개발용 클론**을 새 노트북에 앉히는 순서입니다.
+프로그램 설치는 스크립트가 하고, 사람이 직접 옮겨야 하는 것은 `workspace/` 하나뿐입니다.
+
+### 1. 소스와 프로그램
+
+```bash
+git clone https://github.com/byunchangill/shorts-factory.git
+cd shorts-factory
+```
+
+윈도우면 `tools\win\setup.cmd`를 더블클릭합니다 — Node·ffmpeg·yt-dlp·크로미움·글자
+검출·iopaint를 없는 것만 깝니다 (`winget` 필요, 30분쯤 걸립니다). 없으면 손으로:
+
+```bash
+npm install
+npx playwright install chromium          # 틱톡 소재 (npm 설치만으로는 안 딸려 옵니다)
+pip install rapidocr-onnxruntime         # 자막 자리 자동 찾기
+pip install yt-dlp iopaint               # iopaint는 선택 (2차 제거 2순위)
+```
+
+**VSR만은 자동으로 안 깔립니다** (2차 제거 1순위). 홈 폴더 아래 `vsr` 또는
+`video-subtitle-remover`로 받으면 앱이 알아서 잡습니다 — `tools/install-inpaint.md` 참고.
+
+### 2. 작업 데이터 (`workspace/`)
+
+깃에 올라가지 않습니다. **여기에 API 키와 지금까지의 작업이 전부 들어 있습니다.**
+옛 PC에서 복사해 오면 새 PC가 그대로 이어집니다.
+
+```powershell
+robocopy C:\...\shorts-factory\workspace D:\옮길폴더\workspace /E /XD browser cache logs .trash
+```
+
+| 빼는 폴더 | 왜 |
+|---|---|
+| `browser/` | 크로미움 프로필(255MB). **도우인·샤오홍슈 로그인 세션이 여기 있으니** 로그인을 유지하고 싶으면 이것도 복사하세요. 안 하면 새 PC에서 다시 로그인하면 됩니다 |
+| `cache/` `logs/` `.trash/` | 다시 생깁니다 |
+
+꼭 필요한 것만 챙긴다면 `settings.json`(배속·그레이딩 등 조정값) ·
+`secrets.json`(API 키) · `menu-a/` `menu-b/`(카테고리와 작업) 넷입니다.
+`settings.json`에는 절대경로가 없어 그대로 옮겨도 됩니다 — 도구 경로는 PC마다 그때 찾습니다.
+
+**클라우드 동기화 폴더에는 두지 마세요.** `secrets.json`과 `browser/`가 그대로 올라갑니다.
+
+### 3. 확인
+
+```bash
+npm run doctor     # 도구가 다 잡혔는지 — 뽑힌 경로까지 보여줍니다
+npm test           # 단위 테스트
+npm run harness    # E2E 파이프라인 (합성 영상으로 1편을 실제로 만듭니다)
+npm run dev
+```
+
+`workspace/`를 안 옮겼다면 `npm run seed`로 샘플을 심어 화면을 채울 수 있습니다.
 
 ## 다른 PC에서 열어볼 때
 

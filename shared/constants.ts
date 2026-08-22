@@ -301,24 +301,51 @@ export const COUPANG_PARTNERS_DISCLOSURE =
 
 export const API_PORT = 4310;
 
+/**
+ * 템캐스팅 v3.3의 5블록. 순서가 곧 규칙이다 —
+ * ① 훅 → ② 손실 → ③ 정보원(선택) → ④ 제품+기능 → ⑤ 클로징.
+ * 검사 규칙은 `shared/doctrine.ts`에 있다.
+ */
+export const BLOCKS = ['hook', 'loss', 'source', 'product', 'closing'] as const;
+export type Block = (typeof BLOCKS)[number];
+
+export const BLOCK_LABELS: Record<Block, string> = {
+  hook: '① 훅',
+  loss: '② 손실',
+  source: '③ 정보원',
+  product: '④ 제품+기능',
+  closing: '⑤ 클로징',
+};
+
 // ── 대본 분량 ─────────────────────────────────────────────────────
 
-/** 한국어 TTS 정속 낭독 속도 (분당 글자 수) */
-export const CHARS_PER_MIN = 300;
+/**
+ * 정속 낭독 속도 — 분당 약 300**음절**.
+ *
+ * 🔴 **글자가 아니라 한글 음절이다** (2026-08-21, v3.3 이식). 낭독 시간은 띄어쓰기·문장부호를
+ * 따라가지 않는데 글자로 세면 공백까지 예산에 넣게 되어 같은 대본이 20% 짧게 판정된다.
+ * 기본 배속 1.33에서 300/60×1.33 = **6.65음절/초**로, 레퍼런스 채널 실측 밴드
+ * 6.5~8.0음절/초 안에 든다 (`SYL_PER_SEC` 참고).
+ */
+export const SYLLABLES_PER_MIN = 300;
+
+/** 한글 음절 수 — 공백·기호·숫자·영문은 세지 않는다 (낭독 시간의 실제 단위) */
+export function syllables(text: string): number {
+  return (text.match(/[가-힣]/g) ?? []).length;
+}
 
 /**
  * 메뉴별 목표 영상 길이 (초).
  *
  * 짧게 끝내 완주율을 올리는 전략이라 어느 쪽도 30초를 넘지 않는다.
  * 제품정보리뷰(menu-b)는 소재 흐름에 매일 이유가 없어 더 짧게 끊는다 — 권장 22초.
- * 해외영상 짜집기(menu-a)는 원본 컷의 리듬을 살려야 해서 여유를 둔다.
- * 이 길이는 배속과 함께 계산돼야 한다 — 1.25배속에서 30초는 약 187자다.
+ * 해외영상 짜집기(menu-a)는 템캐스팅 v3.3의 러닝타임 17~29초를 그대로 쓴다
+ * (레퍼런스 10편 실측: 17~29초, 상위 4편은 22~29초).
  */
 export const TARGET_SEC_BY_MENU: Record<Menu, { min: number; recommended: number; max: number }> = {
-  // 해외영상 짜집기의 기준은 기본 대본 스킬(.claude/skills/shorts-direct-script)이 정한다 —
-  // 스킬이 "20~28초, 기본 22초, 28초 초과 금지"라고 말하는데 앱이 30초라고 하면
-  // 요청서 하나에 서로 다른 두 숫자가 실린다
-  'menu-a': { min: 20, recommended: 22, max: 28 },
+  // 해외영상 짜집기의 기준은 기본 대본 스킬(.claude/skills/temcasting-v33)이 정한다 —
+  // 스킬이 "17~29초"라고 말하는데 앱이 다른 숫자를 말하면 요청서 하나에 두 숫자가 실린다
+  'menu-a': { min: 17, recommended: 22, max: 29 },
   'menu-b': { min: 18, recommended: 22, max: 26 },
 };
 
@@ -326,16 +353,16 @@ export const TARGET_SEC_BY_MENU: Record<Menu, { min: number; recommended: number
 export const TARGET_SEC = TARGET_SEC_BY_MENU['menu-a'];
 
 /**
- * 배속을 반영한 글자 수 상·하한.
+ * 배속을 반영한 **음절 수** 상·하한.
  * 상한은 내림, 하한은 올림한다 — 반올림하면 경계에서 목표 시간을 넘긴다
- * (1.25배속 30초는 187.5자라, 반올림 188자는 30.08초가 되어 상한 위반).
+ * (1.33배속 29초는 192.85음절이라, 반올림 193음절은 29.02초가 되어 상한 위반).
  */
-export function charBudget(
+export function syllableBudget(
   speechRate: number,
   menu: Menu = 'menu-a',
 ): { min: number; recommended: number; max: number } {
   const target = TARGET_SEC_BY_MENU[menu];
-  const perSec = (CHARS_PER_MIN * speechRate) / 60;
+  const perSec = (SYLLABLES_PER_MIN * speechRate) / 60;
   return {
     min: Math.ceil(target.min * perSec),
     recommended: Math.round(target.recommended * perSec),
@@ -343,9 +370,9 @@ export function charBudget(
   };
 }
 
-/** 글자 수 → 예상 낭독 시간 (초) */
-export function estimateSeconds(chars: number, speechRate: number): number {
-  return (chars / (CHARS_PER_MIN * speechRate)) * 60;
+/** 음절 수 → 예상 낭독 시간 (초) */
+export function estimateSeconds(syllableCount: number, speechRate: number): number {
+  return (syllableCount / (SYLLABLES_PER_MIN * speechRate)) * 60;
 }
 
 // ── API 키 ────────────────────────────────────────────────────────
@@ -426,3 +453,16 @@ export const YOUTUBE_QUOTA_COST = {
   playlistItems: 1,
   videoCategories: 1,
 } as const;
+
+/**
+ * 그 글자 크기에서 자막 한 줄에 들어가는 글자 수.
+ *
+ * 이 값보다 길게 잡으면 렌더러가 대신 줄을 접는데, **그 줄에는 시간을 줄 수 없다** —
+ * 줄마다 차례로 띄우려면 줄바꿈을 우리가 해야 한다. 화면과 조립이 같은 값을 쓰도록
+ * 여기 한 곳에 둔다.
+ *
+ * 이송폭 비율 0.64는 굵은 한글 글꼴 실측에서 나왔다 (본고딕 Black 118에 14자 = 916px).
+ */
+export function subtitleCharsPerLine(fontSize: number, width = 1080, marginX = 30): number {
+  return Math.max(4, Math.floor((width - marginX * 2) / (fontSize * 0.64)));
+}

@@ -1,20 +1,24 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Script, Clip } from '@shared/types';
-import { COUPANG_PARTNERS_DISCLOSURE } from '@shared/constants';
+import { COUPANG_PARTNERS_DISCLOSURE, type Menu } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
-import { assStyleOf, buildAss, buildSrt, wrapKorean, type SubCue } from './subtitles.js';
+import { assStyleOf, buildAss, buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
+import { subtitleCharsPerLine } from '@shared/constants';
 import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './fonts.js';
 import { familyOfInstalled } from './freeFonts.js';
 import { renderCard } from './cards.js';
+import { hookMotionDelta, hookGateMessage } from './hookGate.js';
 
 const W = 1080;
 const H = 1920;
 const FPS = 30;
 
 export interface AssembleInput {
+  /** 메뉴마다 화면 규칙이 다르다 — 해외영상 짜집기는 음성=자막이라 텍스트 카드를 넣지 않는다 */
+  menu: Menu;
   script: Script;
   timings: SceneTiming[];
   clips: Clip[]; // menu-a: 씬의 clipRef 해석용
@@ -56,12 +60,21 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     const dur = Math.max(1, timing.duration);
     const segOut = path.join(tmpDir, `seg_${String(i + 1).padStart(2, '0')}.mp4`);
 
-    // 하이브리드 믹싱: 씬 앞에 직접 만든 텍스트 카드를 끼운다.
-    // 남의 영상 연속 노출을 끊고 정보 밀도를 올린다. 첫 씬 앞에는 넣지 않는다(훅이 먼저).
-    const cardText = scene.cardText
-      ?? (settings.insertCards && i > 0 && scene.subtitle && scene.subtitle.length <= 20
-        ? scene.subtitle
-        : undefined);
+    /*
+      하이브리드 믹싱: 씬 앞에 직접 만든 텍스트 카드를 끼운다.
+      남의 영상 연속 노출을 끊고 정보 밀도를 올린다. 첫 씬 앞에는 넣지 않는다(훅이 먼저).
+
+      🔴 **해외영상 짜집기에는 카드를 넣지 않는다** (2026-08-21 교리 v3.3 이식).
+      「말하지 않을 것은 화면에도 없다」가 첫 규칙인데 카드는 무음 구간에 글자만 띄운다.
+      재사용 판정 회피는 좌우반전·확대·그레이딩이 이미 맡고 있어 카드가 유일한 장치도 아니다.
+    */
+    const cardsAllowed = input.menu !== 'menu-a';
+    const cardText = cardsAllowed
+      ? scene.cardText
+        ?? (settings.insertCards && i > 0 && scene.subtitle && scene.subtitle.length <= 20
+          ? scene.subtitle
+          : undefined)
+      : undefined;
     if (cardText && font) {
       const cardOut = path.join(tmpDir, `card_${String(i + 1).padStart(2, '0')}.mp4`);
       const made = await renderCard(
@@ -73,6 +86,17 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     }
 
     const visual = await resolveVisual(scene, input);
+    /*
+      훅 게이트 — 첫 씬이 거의 멈춰 있으면 렌더 전에 막는다.
+      몇 분을 인코딩한 뒤 「계속 시청함」이 20% 아래로 나오는 것보다 여기서 끝내는 게 싸다.
+      못 쟀을 때(null)는 통과시킨다 — 검출 실패로 조립이 멈추면 안 된다.
+    */
+    if (i === 0 && visual.type === 'video' && settings.hookMotionMin > 0) {
+      const delta = await hookMotionDelta(settings, visual.path, tmpDir, visual.in ?? 0);
+      if (delta !== null && delta < settings.hookMotionMin) {
+        throw new Error(hookGateMessage(delta, settings.hookMotionMin));
+      }
+    }
     if (visual.type === 'video') {
       const ss = visual.in ?? 0;
       await run(settings.ffmpegPath, [
@@ -153,16 +177,25 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   ]);
 
   // 4) 자막 — 카드 시간을 포함한 실제 타임라인 기준으로 시각을 잡는다
+  const lineChars = Math.min(
+    settings.subtitleMaxChars,
+    subtitleCharsPerLine(settings.subtitleFontSize),
+  );
   const cues: SubCue[] = [];
   let cursor = 0;
   for (const item of timeline) {
     if (item.kind === 'scene') {
       const scene = script.scenes[item.sceneIdx!];
-      cues.push({
-        start: cursor,
-        end: cursor + item.dur,
-        text: wrapKorean(scene.subtitle || scene.narration, settings.subtitleMaxChars),
-      });
+      /*
+        두 줄이 되면 한꺼번에 띄우지 않고 음성 길이를 나눠 차례로 보여 준다.
+        줄바꿈은 **반드시 우리가** 해야 한다 — 설정값이 화면 폭보다 크면 렌더러가 대신
+        접는데, 그렇게 접힌 줄에는 시간을 줄 수 없어 두 줄이 한꺼번에 떠 버린다.
+      */
+      cues.push(...splitLines(
+        wrapKorean(scene.subtitle || scene.narration, lineChars),
+        cursor,
+        item.dur,
+      ));
     }
     cursor += item.dur;
   }

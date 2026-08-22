@@ -4,6 +4,7 @@ import {
   PACKET_KINDS,
   PACKET_STATUSES,
   GUIDELINE_FILES,
+  BLOCKS,
 } from './constants';
 
 // ── 공통 ──────────────────────────────────────────────────────────
@@ -173,6 +174,12 @@ export const SceneLineSchema = z.object({
   durationHint: z.number().optional(),
   bgmCue: z.string().optional(),
   /**
+   * 템캐스팅 v3.3의 5블록 중 어디인가 (해외영상 짜집기 필수).
+   * 선행 구간(①②③)이 러닝타임 연동 표를 지켰는지는 **이 표시가 있어야** 잴 수 있다 —
+   * 문장만 보고 훅과 손실을 갈라내는 것은 기계가 못 한다.
+   */
+  block: z.enum(BLOCKS).optional(),
+  /**
    * 이 씬이 제품의 단점·주의사항을 말하는 씬인가.
    * 제품정보리뷰(menu-b)는 최소 1개가 있어야 한다 — 단점 한 줄이
    * "광고 붙여넣기"와 "리뷰"를 가르고, 재사용 심사에서 제작자의 견해로 인정받는 장치다.
@@ -242,6 +249,14 @@ export const JobSchema = z.object({
   typecastEmotion: z.string().optional(), // ssfm-v30 감정 프리셋
   sceneVoiceFiles: z.record(z.string()).default({}), // sceneId → 업로드된 음성 파일명
   exportedAt: z.string().optional(), // 마지막 내보내기 시각
+  /**
+   * 발행 정보 — 성과 대장(`workspace/metrics.csv`)과 이 잡을 잇는 열쇠다.
+   * 발행은 사람이 유튜브에서 하므로 앱이 알 길이 없다. 화면에서 주소를 붙여넣어 채운다.
+   */
+  videoId: z.string().optional(),
+  publishedAt: z.string().optional(),
+  /** 이 편에 쓴 훅 유형 (대사 인용·금지 명령 등). 다음 편이 연속으로 안 겹치게 하는 재료 */
+  hookSeed: z.string().optional(),
   rightsConfirmed: z.boolean().default(false), // 조립 전 저작권 확인 게이트
   packets: z.array(z.string()).default([]),
   output: z.object({
@@ -387,6 +402,14 @@ export const SettingsSchema = z.object({
   zoom: z.number().min(1).max(1.2).default(1),
   // 씬 사이 텍스트 카드 삽입 (하이브리드 믹싱)
   insertCards: z.boolean().default(true),
+  /**
+   * 훅 화면 변화량 임계. 0이면 게이트를 끈다.
+   *
+   * 발행 14편 실측에서 「계속 시청함」과 상관 있는 유일한 변수였다(r=+0.57).
+   * 8에서 통과 11편 중앙값 33.8% / 미달 3편 19.1%. 표본이 늘면 **다시 재서** 바꾼다 —
+   * 감으로 올리고 내리면 게이트가 근거를 잃는다.
+   */
+  hookMotionMin: z.number().min(0).max(60).default(8),
   cardDurationSec: z.number().min(0.5).max(4).default(1.5),
   /** 한 소스 클립의 연속 노출 상한 (초). 초과 시 컷 선택 화면에서 경고 */
   maxClipExposureSec: z.number().min(1).max(30).default(3),
