@@ -5,6 +5,11 @@ export interface SubCue {
   start: number; // 초
   end: number;
   text: string;
+  /**
+   * `notice`는 나레이션 자막이 아니라 **화면 위쪽에 따로 앉는 고지**다 (쿠팡파트너스 공시).
+   * 자리를 나누면 시간이 겹쳐도 안 포개지므로 나레이션 자막을 잘라낼 필요가 없다.
+   */
+  style?: 'default' | 'notice';
 }
 
 export function formatSrtTime(sec: number): string {
@@ -85,15 +90,18 @@ export function assHighlight(text: string, highlight: string, body: string): str
 }
 
 /**
- * 9:16 쇼츠용 스타일 ASS.
+ * 고지(`notice`) 글자 크기와 자리.
  *
- * 화면 **아래에서 35% 지점**에 굵은 흰 글씨 + 두꺼운 검정 외곽선, 그림자 없음.
+ * 🔴 **화면 아래로 내리지 않는다.** 쇼츠 UI(계정·설명·버튼)가 아래를 덮어 안 보이고,
+ * `banded` 레이아웃에서는 하단 띠가 채널명을 쓰고 있다. 자막은 아래에서 35%에 앉으므로
+ * **위에서 26%** 자리는 어느 레이아웃에서도 비어 있다 (상단 띠는 22%까지다).
  *
- * `WrapStyle: 1`은 **첫 줄부터 채우고 넘기기**다. 기본값 0은 두 줄 길이를 「균형 맞춰」
- * 나눠서 「여기 두지 / 마세요」처럼 구를 쪼갠다 — 한국어 자막에서는 문장이 끊겨 읽힌다.
- * 바닥이 아니라 중간 아래인 것은 쇼츠 UI(계정명·설명·버튼)가 하단을 덮기 때문이다.
- * 값은 잘 도는 쇼핑쇼츠 한 편을 프레임 단위로 재서 맞췄다 (2026-08-18).
+ * 크기가 자막(118)과 다르므로 **줄바꿈 폭도 이 크기로 잡아야 한다** — 자막 폭(13자)으로
+ * 접으면 「쿠팡 / 파트너스」처럼 상호가 두 줄로 갈라진다 (하네스가 이걸 잡았다).
  */
+export const NOTICE_SIZE = 40;
+const NOTICE_TOP_RATIO = 0.26;
+
 export interface AssStyle {
   fontName?: string;
   fontSize?: number;
@@ -122,6 +130,19 @@ export function assStyleOf(
   };
 }
 
+/**
+ * 9:16 쇼츠용 스타일 ASS.
+ *
+ * 화면 **아래에서 35% 지점**에 굵은 흰 글씨 + 두꺼운 검정 외곽선, 그림자 없음.
+ *
+ * `WrapStyle: 1`은 **첫 줄부터 채우고 넘기기**다. 기본값 0은 두 줄 길이를 「균형 맞춰」
+ * 나눠서 「여기 두지 / 마세요」처럼 구를 쪼갠다 — 한국어 자막에서는 문장이 끊겨 읽힌다.
+ * 바닥이 아니라 중간 아래인 것은 쇼츠 UI(계정명·설명·버튼)가 하단을 덮기 때문이다.
+ * 값은 잘 도는 쇼핑쇼츠 한 편을 프레임 단위로 재서 맞췄다 (2026-08-18).
+ *
+ * 스타일이 둘이다 — 나레이션 자막(`Default`)과 고지(`Notice`). 자리가 달라야 시간이
+ * 겹쳐도 안 포개진다 (`NOTICE_TOP_RATIO` 참고).
+ */
 export function buildAss(cues: SubCue[], opts: AssStyle = {}): string {
   const {
     fontName = 'Noto Sans KR',
@@ -144,6 +165,7 @@ WrapStyle: 1
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,${fontName},${fontSize},${body},${body},&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,${outline},0,2,30,30,${Math.round(playResY * bottomRatio)},1
+Style: Notice,${fontName},${NOTICE_SIZE},${body},${body},&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,8,40,40,${Math.round(playResY * NOTICE_TOP_RATIO)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -151,7 +173,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const events = cues
     .map((c) => {
       const text = assHighlight(c.text, highlight, body).replace(/\n/g, '\\N');
-      return `Dialogue: 0,${formatAssTime(c.start)},${formatAssTime(c.end)},Default,,0,0,0,,${text}`;
+      const style = c.style === 'notice' ? 'Notice' : 'Default';
+      return `Dialogue: 0,${formatAssTime(c.start)},${formatAssTime(c.end)},${style},,0,0,0,,${text}`;
     })
     .join('\n');
   return header + events + '\n';
@@ -163,20 +186,98 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
  * 이보다 길게 두면 한 줄이 화면 밖으로 나간다.
  */
 export function wrapKorean(text: string, maxLen = 14): string {
+  /*
+    🔴 **대본이 직접 넣은 줄바꿈이 우선이다** (2026-08-23).
+
+    어디서 끊어야 자연스러운지는 문맥이 정한다 — 「낮에는 소파로 앉고 / 밤에는 침대로 쓰는 건데」
+    처럼 연결어미에서 끊어야 읽힌다. 글자 수만 보는 기계는 그걸 못 가른다. 그래서 대본에
+    `\n`이 있으면 그 자리를 그대로 지키고, **그 안에서 너무 긴 조각만** 폭에 맞춰 접는다.
+  */
+  if (text.includes('\n')) {
+    /*
+      대본이 고른 자리는 한 글자쯤 넘쳐도 그대로 둔다. 폭 추정에는 원래 여유가 있고,
+      「두고 가는 경우도 있다고 함」을 억지로 쪼개면 대본이 잡은 뜻 단위가 깨진다.
+      그보다 더 길면 화면 밖으로 나가므로 그때는 접는다.
+    */
+    return text
+      .split('\n')
+      .map((line) => {
+        const t = line.trim();
+        return plainText(t).length <= maxLen + 1 ? t : wrapKorean(t, maxLen);
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
   // 길이는 **화면에 보이는 글자**로 센다 — 강조 표시(`*`)는 안 보이는데 세면 한 줄이 일찍 접힌다
   const len = (s: string) => plainText(s).length;
   if (len(text) <= maxLen) return text;
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let cur = '';
-  for (const w of words) {
-    if (len((cur + ' ' + w).trim()) > maxLen && cur) {
-      lines.push(cur.trim());
-      cur = w;
-    } else {
-      cur = (cur + ' ' + w).trim();
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return text;
+
+  /*
+    🔴 **앞줄부터 꽉 채우지 않는다** (2026-08-23).
+
+    채워 넣기(greedy)는 마지막 줄에 한 어절만 남긴다 — 실측 자막에서 「의외였음」·「많더라」·
+    「한다고 함」이 홀로 한 줄을 차지했다. 그 줄은 화면에 잠깐 뜨고 사라지는데 글자가 적어
+    허전하고, 앞줄은 꽉 차 있어 균형이 깨진다.
+
+    그래서 **줄 길이가 고르게** 되도록 나눈다. 줄 수는 채워 넣기로 구한 최소값을 그대로 쓰고
+    (줄이 늘면 그만큼 자막이 빨리 넘어간다), 그 줄 수 안에서 「남는 칸의 제곱합」이 가장 작은
+    배치를 고른다. 어절 중간은 자르지 않는다.
+  */
+  const w = words.map(len);
+  const minLines = (() => {
+    let lines = 1;
+    let cur = 0;
+    for (const n of w) {
+      if (cur === 0) cur = n;
+      else if (cur + 1 + n <= maxLen) cur += 1 + n;
+      else { lines++; cur = n; }
     }
+    return lines;
+  })();
+
+  // best[i][k] = 어절 i부터 k줄로 담을 때의 최소 벌점
+  const INF = Infinity;
+  const memo = new Map<string, { cost: number; cut: number }>();
+  const solve = (i: number, k: number): { cost: number; cut: number } => {
+    if (i >= words.length) return { cost: k === 0 ? 0 : INF, cut: i };
+    if (k === 0) return { cost: INF, cut: i };
+    const key = `${i}:${k}`;
+    const hit = memo.get(key);
+    if (hit) return hit;
+    let best = { cost: INF, cut: i + 1 };
+    let lineLen = 0;
+    for (let j = i; j < words.length; j++) {
+      lineLen = j === i ? w[j] : lineLen + 1 + w[j];
+      // 한 어절이 통째로 상한을 넘으면 자를 수 없다 — 그 줄만 넘치게 두고 계속한다
+      if (lineLen > maxLen && j > i) break;
+      /*
+        **마지막 줄도 똑같이 벌한다.** 글 조판에서는 마지막 줄이 짧아도 자연스럽지만
+        자막은 다르다 — 한 줄씩 차례로 뜨고 사라지므로 마지막 줄이 「함」 한 글자면
+        그 순간 화면이 비어 보인다 (실측에서 그렇게 나왔다).
+      */
+      const slack = maxLen - lineLen;
+      const penalty = slack * slack;
+      const rest = solve(j + 1, k - 1);
+      if (rest.cost === INF) continue;
+      const cost = penalty + rest.cost;
+      if (cost < best.cost) best = { cost, cut: j + 1 };
+    }
+    memo.set(key, best);
+    return best;
+  };
+
+  const lines: string[] = [];
+  let i = 0;
+  for (let k = minLines; k > 0; k--) {
+    const { cut } = solve(i, k);
+    lines.push(words.slice(i, cut).join(' '));
+    i = cut;
+    if (i >= words.length) break;
   }
-  if (cur) lines.push(cur);
-  return lines.join('\n');
+  // 안전망 — 위에서 다 못 담았으면 남은 어절을 마지막 줄에 붙인다
+  if (i < words.length) lines.push(words.slice(i).join(' '));
+  return lines.filter(Boolean).join('\n');
 }

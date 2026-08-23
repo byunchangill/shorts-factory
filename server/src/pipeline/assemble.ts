@@ -5,7 +5,9 @@ import { COUPANG_PARTNERS_DISCLOSURE, type Menu } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
-import { assStyleOf, buildAss, buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
+import {
+  assStyleOf, buildAss, buildSrt, splitLines, wrapKorean, NOTICE_SIZE, type SubCue,
+} from './subtitles.js';
 import { subtitleCharsPerLine } from '@shared/constants';
 import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './fonts.js';
 import { familyOfInstalled } from './freeFonts.js';
@@ -38,6 +40,30 @@ export function skipIntroCard(inPoint: number, sceneTimes?: number[]): number {
   if (first === undefined || first <= 0 || first > INTRO_CARD_MAX_SEC) return inPoint;
   // 사용자가 이미 카드 뒤를 골랐으면 건드리지 않는다
   return inPoint >= first ? inPoint : first + INTRO_CARD_PAD_SEC;
+}
+
+/** 공시 번인 노출 시간 (초) */
+const DISCLOSURE_SEC = 2;
+
+/**
+ * 쿠팡파트너스 공시를 영상 끝 2초에 얹는다.
+ *
+ * 🔴 **시간으로 비켜갈 수 없다 — 자리로 비켜간다.** 원래 문제는 공시가 마지막 자막 위에
+ * 포개져 찍힌 것이었다(공시 다섯 줄 아래에 「보여주면 됨」). 그래서 「마지막 자막이 끝난
+ * 뒤로 민다」로 고쳤는데, **씬이 영상 끝까지 꽉 차는 것이 정상**이라 마지막 자막은 언제나
+ * 영상 끝에서 끝난다 — 그 규칙은 공시를 **한 번도 안 넣었다.** 켜 둔 설정이 아무 일도
+ * 안 하고 아무 말도 안 하는 것이 겹치는 것보다 나쁘다 (하네스가 이걸 잡았다).
+ *
+ * 자막을 잘라 자리를 만드는 것도 안 된다. 한 줄이 1초 남짓이라 2초를 만들려면 자막을
+ * 통째로 지워야 한다.
+ *
+ * 그래서 **`notice` 스타일로 화면 위쪽에 따로 앉힌다.** 시간이 겹쳐도 자리가 다르니
+ * 안 포개지고, 나레이션 자막은 손대지 않는다.
+ */
+export function placeDisclosure(cues: SubCue[], totalDur: number, text: string): SubCue[] {
+  const start = Math.max(0, totalDur - DISCLOSURE_SEC);
+  if (totalDur - start < 0.5) return cues;
+  return [...cues, { start, end: totalDur, text, style: 'notice' as const }];
 }
 
 export interface AssembleInput {
@@ -121,45 +147,69 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
       if (made) timeline.push({ kind: 'card', file: made, dur: settings.cardDurationSec });
     }
 
-    const visual = await resolveVisual(scene, input);
+    const visual = await resolveVisual(scene, input, i, dur, settings);
     /*
       훅 게이트 — 첫 씬이 거의 멈춰 있으면 렌더 전에 막는다.
       몇 분을 인코딩한 뒤 「계속 시청함」이 20% 아래로 나오는 것보다 여기서 끝내는 게 싸다.
       못 쟀을 때(null)는 통과시킨다 — 검출 실패로 조립이 멈추면 안 된다.
     */
     if (i === 0 && visual.type === 'video' && settings.hookMotionMin > 0) {
-      const delta = await hookMotionDelta(settings, visual.path, tmpDir, visual.in ?? 0);
+      // 훅은 **첫 컷**이다 — 쪼갠 뒤에도 화면에 처음 나오는 그 조각을 잰다
+      const head = visual.cuts[0];
+      const delta = await hookMotionDelta(settings, head.path, tmpDir, head.in);
       if (delta !== null && delta < settings.hookMotionMin) {
         throw new Error(hookGateMessage(delta, settings.hookMotionMin));
       }
     }
-    const meme = memeOverlayFor(scene, dur, settings, input.assetPaths);
     if (visual.type === 'video') {
-      const ss = visual.in ?? 0;
       const layout = buildLayoutFilter(settings, fontRef?.arg ?? null, input.headline ?? script.title);
-      await run(settings.ffmpegPath, meme
-        ? [
-          '-y',
-          '-ss', String(ss), '-i', visual.path,
-          // gif·webp는 한 장이 아니라 여러 장이다 — 안 풀면 첫 프레임에서 멈춘다
-          ...(meme.animated ? ['-ignore_loop', '0'] : []),
-          '-i', meme.path,
-          '-t', dur.toFixed(3),
-          '-filter_complex', `[0:v]${layout}[base];${meme.filter}`,
-          '-map', '[v]',
-          '-an',
-          '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
-          segOut,
-        ]
-        : [
-          '-y',
-          '-ss', String(ss), '-i', visual.path,
-          '-t', dur.toFixed(3),
-          '-vf', layout,
-          '-an',
-          '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
-          segOut,
-        ], { cwd: fontRef?.cwd });
+      const cutFiles: string[] = [];
+      let from = 0;
+      for (const [k, cut] of visual.cuts.entries()) {
+        /*
+          짤은 씬 기준 시각에 얹히므로, 그 시각을 품은 컷에만 걸린다.
+          컷 경계를 물면 양쪽 컷에 나뉘어 걸려 화면에서는 이어져 보인다.
+        */
+        const meme = memeOverlayFor(scene, dur, settings, input.assetPaths, { from, dur: cut.dur });
+        const cutOut = visual.cuts.length === 1
+          ? segOut
+          : path.join(tmpDir, `seg_${String(i + 1).padStart(2, '0')}_${k + 1}.mp4`);
+        await run(settings.ffmpegPath, meme
+          ? [
+            '-y',
+            '-ss', String(cut.in), '-i', cut.path,
+            // gif·webp는 한 장이 아니라 여러 장이다 — 안 풀면 첫 프레임에서 멈춘다
+            ...(meme.animated ? ['-ignore_loop', '0'] : []),
+            '-i', meme.path,
+            '-t', cut.dur.toFixed(3),
+            '-filter_complex', `[0:v]${layout}[base];${meme.filter}`,
+            '-map', '[v]',
+            '-an',
+            '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
+            cutOut,
+          ]
+          : [
+            '-y',
+            '-ss', String(cut.in), '-i', cut.path,
+            '-t', cut.dur.toFixed(3),
+            '-vf', layout,
+            '-an',
+            '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
+            cutOut,
+          ], { cwd: fontRef?.cwd });
+        cutFiles.push(cutOut);
+        from += cut.dur;
+      }
+      if (cutFiles.length > 1) {
+        // 컷을 씬 하나로 이어 붙인다 — 아래 타임라인·오디오·자막은 씬 단위 그대로다
+        const cutList = path.join(tmpDir, `cuts_${String(i + 1).padStart(2, '0')}.txt`);
+        await fsp.writeFile(
+          cutList, cutFiles.map((f) => `file '${toConcatPath(f)}'`).join('\n'), 'utf8',
+        );
+        await run(settings.ffmpegPath, [
+          '-y', '-f', 'concat', '-safe', '0', '-i', cutList, '-c', 'copy', segOut,
+        ]);
+      }
     } else {
       // 이미지 → Ken Burns 줌인
       const frames = Math.ceil(dur * FPS);
@@ -284,36 +334,18 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     cursor += item.dur;
   }
   const totalDur = cursor;
-  /*
-    쿠팡파트너스 공시 번인.
-
-    🔴 **공시도 줄바꿈을 우리가 한다.** 안 그러면 렌더러가 제멋대로 접는데, 실측에서 다섯 줄로
-    접혀 화면 절반을 덮었다 (2026-08-23). 바로 위 자막 규칙과 같은 이유다.
-
-    🔴 **마지막 자막과 시간이 겹치면 안 된다.** 겹치면 두 자막이 한꺼번에 떠서 포개진다 —
-    공시 다섯 줄 아래에 「보여주면 됨」이 같이 찍혀 나왔다. 그래서 **마지막 자막이 끝난 뒤**로
-    민다. 남는 시간이 없으면 아예 넣지 않는다 (번인은 의무가 아니고, 공시는 설명란이 맡는다).
-  */
-  if (input.burnDisclosure) {
-    const lastEnd = cues.length ? Math.max(...cues.map((c) => c.end)) : 0;
-    const start = Math.max(lastEnd, totalDur - 3);
-    if (totalDur - start >= 0.8) {
-      cues.push({
-        start,
-        end: totalDur,
-        text: wrapKorean(COUPANG_PARTNERS_DISCLOSURE, lineChars),
-      });
-    }
-  }
+  const cuesWithDisclosure = input.burnDisclosure
+    ? placeDisclosure(cues, totalDur, wrapKorean(COUPANG_PARTNERS_DISCLOSURE, subtitleCharsPerLine(NOTICE_SIZE)))
+    : cues;
   const subsDir = path.join(jobDir, 'subtitles');
   await ensureDir(subsDir);
   const srtPath = path.join(subsDir, 'final.srt');
   const assPath = path.join(subsDir, 'final.ass');
-  await fsp.writeFile(srtPath, buildSrt(cues), 'utf8');
+  await fsp.writeFile(srtPath, buildSrt(cuesWithDisclosure), 'utf8');
   // 자막 폰트도 실제로 설치된 것을 지정해야 한글이 깨지지 않는다
   // 화면에서 받아 둔 글꼴은 표에 없다 — 받을 때 적어 둔 이름을 먼저 본다
   const family = (font && await familyOfInstalled(font)) ?? fontFamilyOf(font);
-  await fsp.writeFile(assPath, buildAss(cues, assStyleOf(settings, family)), 'utf8');
+  await fsp.writeFile(assPath, buildAss(cuesWithDisclosure, assStyleOf(settings, family)), 'utf8');
 
   // 5) 합치기 (+자막 번인)
   // 자막 파일도 파일명만 필터에 넣고 자막 폴더에서 실행한다 (입출력은 절대경로 그대로)
@@ -420,14 +452,26 @@ export function memeOverlayFor(
   sceneDur: number,
   settings: Settings,
   paths: Record<string, string> | undefined,
+  /** 씬을 컷으로 쪼갰을 때 이 컷이 덮는 구간 (씬 시작 기준). 없으면 씬 전체 */
+  cut?: { from: number; dur: number },
 ): { path: string; filter: string; animated: boolean } | null {
   const file = scene.memeId ? paths?.[scene.memeId] : undefined;
   if (!file) return null;
 
   const start = Math.max(0, Math.min(scene.memeAt ?? 0, Math.max(0, sceneDur - 0.4)));
   const end = Math.min(sceneDur, start + settings.memeDurationSec);
-  // 의도한 길이의 절반도 못 나오면 넣지 않는다 — 스치듯 지나가는 짤은 못 알아본다
+  /*
+    스치듯 지나가는 짤은 못 알아본다 — 그 판정은 **씬 전체 기준**으로 한 번만 한다.
+    컷마다 다시 재면 경계를 문 짤이 양쪽에서 다 짧다고 떨어져 통째로 사라진다.
+  */
   if (end - start < Math.min(0.4, settings.memeDurationSec)) return null;
+
+  // 이 컷이 덮는 구간으로 옮겨 자른다. 안 걸리는 컷에는 아예 안 넣는다
+  const from = cut?.from ?? 0;
+  const span = cut?.dur ?? sceneDur;
+  const a = Math.max(0, start - from);
+  const b = Math.min(span, end - from);
+  if (b <= a) return null;
 
   const w = Math.round(W * settings.memeWidthRatio);
   // 영상 구간(띠 사이)의 위쪽 — 아래는 자막 자리다
@@ -435,7 +479,7 @@ export function memeOverlayFor(
   const y = videoTop + Math.round(H * 0.04);
   const x = Math.round(W - w - W * 0.05); // 오른쪽에 붙인다
   const filter = `[1:v]scale=${w}:-1[mm];`
-    + `[base][mm]overlay=${x}:${y}:enable='between(t,${start.toFixed(2)},${end.toFixed(2)})'[v]`;
+    + `[base][mm]overlay=${x}:${y}:enable='between(t,${a.toFixed(2)},${b.toFixed(2)})'[v]`;
   return { path: file, filter, animated: isAnimated(file) };
 }
 
@@ -606,33 +650,162 @@ export function toConcatPath(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
+/** 컷 하나가 뽑아 쓸 수 있는 소재 구간 */
+export interface CutSource {
+  path: string;
+  /** 이 소재에서 쓰기 시작할 시각 */
+  in: number;
+  /** `in`부터 쓸 수 있는 길이 (사용자가 고른 구간이 있으면 그 안쪽까지) */
+  avail: number;
+}
+
+/** 실제로 렌더할 컷 하나 */
+export interface Cut {
+  path: string;
+  in: number;
+  dur: number;
+}
+
+/**
+ * 씬 하나를 **여러 컷으로 쪼갠다** (2026-08-23).
+ *
+ * 벤치마킹 쇼츠 3편 실측: 컷 간격 중앙값이 **1.6·1.7·2.0초**다. 우리는 12.1초였다 —
+ * 씬 하나를 클립 하나로 통째로 틀었다.
+ *
+ * 🔴 **앱이 이미 알고 경고하던 것을 조립이 무시하고 있었다.** `maxClipExposureSec`은
+ * 「한 소스가 오래 연속 노출되면 재사용 콘텐츠로 분류될 위험」을 경고하는데, 정작
+ * 조립은 그 상한을 안 봤다. 그래서 상한을 두 곳이 같이 쓴다 — 규칙을 두 벌 두면
+ * 반드시 어긋난다.
+ *
+ * **총 길이는 안 바뀐다.** 컷을 균등하게 나눠 나레이션 길이를 정확히 채운다 —
+ * 길이가 달라지면 오디오·자막이 통째로 밀린다.
+ *
+ * 소재가 모자라면 같은 소재에서 **뒤 구간을 이어 꺼낸다.** 그건 결국 이어 트는 것과
+ * 같아 화면이 안 바뀌지만, 지금 동작보다 나빠지지는 않는다.
+ */
+export function planCuts(sources: CutSource[], total: number, maxCutSec: number): Cut[] {
+  const first = sources[0];
+  if (!first) return [];
+  const single = [{ path: first.path, in: first.in, dur: total }];
+  if (maxCutSec <= 0 || total <= maxCutSec) return single;
+
+  const n = Math.ceil(total / maxCutSec);
+  const cutDur = total / n;
+  // 컷 길이를 못 채우는 소재는 뺀다 — 짧게 끝나면 그만큼 오디오와 어긋난다
+  const usable = sources.filter((s) => s.avail >= cutDur);
+  if (usable.length === 0) return single;
+
+  const taken = new Map<string, number>();
+  const cuts: Cut[] = [];
+  for (let k = 0; k < n; k++) {
+    const s = usable[k % usable.length];
+    const nth = taken.get(s.path) ?? 0;
+    taken.set(s.path, nth + 1);
+    const offset = nth * cutDur;
+    // 소재 끝을 넘으면 처음으로 되감는다
+    const inPoint = offset + cutDur <= s.avail ? s.in + offset : s.in;
+    cuts.push({ path: s.path, in: inPoint, dur: cutDur });
+  }
+  return cuts;
+}
+
+/**
+ * 존 상자가 띠 경계를 스치는 정도는 봐준다 (프레임 높이 비율).
+ * 검출 상자는 글자보다 조금 넓게 잡히고, 실측에서 하단 자막 존이 띠 경계를 1px 물었다.
+ */
+const ZONE_TOLERANCE = 0.02;
+
+/**
+ * 띠가 안 가리는 자리에 글자가 남아 있는 클립인가.
+ *
+ * 🔴 **덤으로 끼워 넣는 소재에만 묻는다.** 컷을 쪼개면서 다른 클립을 끌어다 채웠더니,
+ * 그 클립들의 중국어 자막이 **하단 띠 바로 위**에 있어 화면에 그대로 나왔다 —
+ * 좌우반전까지 걸려 거울 글자로 찍혔다 (2026-08-23 실측). 대본이 고른 클립은 사람이
+ * 판단한 것이라 여기서 안 막는다. 우리가 멋대로 더한 것만 우리가 책임진다.
+ *
+ * 정리본이 있으면 이미 지운 뒤다. 크기를 모르면 못 재므로 안 쓴다 — 없어도 그만인 소재다.
+ */
+export function hasVisibleText(clip: Clip, settings: Settings): boolean {
+  if (clip.currentCleanVersion) return false;
+  const h = clip.probe?.height ?? 0;
+  if (!h) return true;
+  // 띠가 없는 레이아웃에서는 화면 전체가 보인다
+  const banded = settings.layout === 'banded';
+  const top = banded ? settings.topBandRatio : 0;
+  const bottom = banded ? 1 - settings.bottomBandRatio : 1;
+  return clip.zones.some((z) => {
+    const a = z.y / h;
+    const b = (z.y + z.h) / h;
+    return Math.min(b, bottom) - Math.max(a, top) > ZONE_TOLERANCE;
+  });
+}
+
+/** 클립 하나를 컷 소재로 푼다. 정리본이 있으면 그쪽을 쓴다 */
+async function clipToSource(
+  clip: Clip,
+  jobDir: string,
+  preferIn?: number,
+): Promise<CutSource> {
+  let file = path.join(jobDir, 'sources', `${clip.sourceId}.mp4`);
+  if (clip.currentCleanVersion) {
+    const clean = clip.cleanVersions.find((v) => v.v === clip.currentCleanVersion);
+    if (clean && (await exists(clean.filePath))) file = clean.filePath;
+  }
+  /*
+    「쓸 장면 고르기」로 정한 구간이 대본의 제안보다 우선한다 — 사람이 프레임을 보고
+    고른 것이라서다. 정리본 경로도 같은 규칙을 쓴다 (예전엔 여기만 제안을 봤다).
+  */
+  const seg = clip.segments.find((s) => s.used);
+  const inPoint = skipIntroCard(seg?.in ?? preferIn ?? 0, clip.sceneTimes);
+  const total = clip.probe?.duration ?? 0;
+  const end = seg && seg.out > inPoint ? seg.out : total;
+  return { path: file, in: inPoint, avail: Math.max(0, end - inPoint) };
+}
+
+/**
+ * 씬을 채울 소재 목록 — **대본이 고른 클립이 언제나 앞**이다.
+ *
+ * 뒤에 붙는 것은 그 잡의 다른 클립이고, **프레임이 남아 있는 것만** 쓴다.
+ * 프레임을 지우는 것이 「이 소재는 안 쓴다」는 뜻이라서다.
+ * 씬마다 시작 자리를 돌려 같은 클립이 매 씬 두 번째로 나오지 않게 한다.
+ */
+async function sceneCutSources(
+  scene: Script['scenes'][number],
+  input: AssembleInput,
+  sceneIdx: number,
+  settings: Settings,
+): Promise<CutSource[]> {
+  const own = input.clips.find((c) => c.id === scene.clipRef!.clipId);
+  if (!own) throw new Error(`씬 ${scene.sceneId}: 클립 ${scene.clipRef!.clipId} 없음`);
+  const sources = [await clipToSource(own, input.jobDir, scene.clipRef!.suggestedSegment?.in)];
+
+  const others = input.clips.filter(
+    (c) => c.id !== own.id && c.frames.length > 0 && !hasVisibleText(c, settings),
+  );
+  for (let k = 0; k < others.length; k++) {
+    sources.push(await clipToSource(others[(sceneIdx + k) % others.length], input.jobDir));
+  }
+  return sources;
+}
+
 async function resolveVisual(
   scene: Script['scenes'][number],
   input: AssembleInput,
-): Promise<{ type: 'video'; path: string; in?: number } | { type: 'image'; path: string }> {
+  sceneIdx: number,
+  dur: number,
+  settings: Settings,
+): Promise<{ type: 'video'; cuts: Cut[] } | { type: 'image'; path: string }> {
   if (scene.imageRef) {
     return { type: 'image', path: input.resolveWorkspacePath(scene.imageRef) };
   }
   if (scene.clipRef) {
-    const clip = input.clips.find((c) => c.id === scene.clipRef!.clipId);
-    if (!clip) throw new Error(`씬 ${scene.sceneId}: 클립 ${scene.clipRef.clipId} 없음`);
-
-    // 정리본 우선
-    if (clip.currentCleanVersion) {
-      const clean = clip.cleanVersions.find((v) => v.v === clip.currentCleanVersion);
-      if (clean && (await exists(clean.filePath))) {
-        const cleanIn = skipIntroCard(scene.clipRef.suggestedSegment?.in ?? 0, clip.sceneTimes);
-        return { type: 'video', path: clean.filePath, in: cleanIn };
-      }
-    }
-    // 사용자가 선택한 세그먼트가 있으면 그 in 지점 사용
-    const seg = clip.segments.find((s) => s.used);
-    const inPoint = skipIntroCard(
-      seg?.in ?? scene.clipRef.suggestedSegment?.in ?? 0,
-      clip.sceneTimes,
-    );
-    const src = path.join(input.jobDir, 'sources', `${clip.sourceId}.mp4`);
-    return { type: 'video', path: src, in: inPoint };
+    const sources = await sceneCutSources(scene, input, sceneIdx, settings);
+    /*
+      컷 쪼개기는 제품정보리뷰에서만 한다. 해외영상 짜집기는 사용자가 화면에서
+      쓸 구간을 직접 골라 두는 메뉴라, 자동으로 다시 쪼개면 그 선택을 덮어쓴다.
+    */
+    const maxCut = input.menu === 'menu-b' ? settings.maxClipExposureSec : 0;
+    return { type: 'video', cuts: planCuts(sources, dur, maxCut) };
   }
   throw new Error(`씬 ${scene.sceneId}: clipRef도 imageRef도 없음`);
 }

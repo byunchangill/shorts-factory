@@ -487,8 +487,16 @@ export const SettingsSchema = z.object({
    */
   assetsRepoUrl: z.string().default(''),
   cardDurationSec: z.number().min(0.5).max(4).default(1.5),
-  /** 한 소스 클립의 연속 노출 상한 (초). 초과 시 컷 선택 화면에서 경고 */
-  maxClipExposureSec: z.number().min(1).max(30).default(3),
+  /**
+   * 한 소스 클립의 **연속 노출 상한** (초).
+   *
+   * 두 곳이 이 하나를 본다 — 컷 선택 화면의 경고와, 조립의 컷 쪼개기(`planCuts`)다.
+   * 🔴 예전엔 경고만 이 값을 보고 **조립은 무시했다.** 앱이 「3초 넘으면 재사용 판정
+   * 위험」이라 경고해 놓고 씬 하나를 클립 하나로 12초씩 통째로 틀었다 (2026-08-23 실측).
+   *
+   * 기본 2초는 벤치마킹 쇼츠 3편의 컷 간격 중앙값(1.6·1.7·2.0초)에서 왔다.
+   */
+  maxClipExposureSec: z.number().min(1).max(30).default(2),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
