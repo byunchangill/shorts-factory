@@ -4,7 +4,8 @@ import fsp from 'node:fs/promises';
 import { z } from 'zod';
 import { PACKET_KINDS, AI_PROVIDERS } from '@shared/constants';
 import * as packets from '../claude/packets.js';
-import { resolveJob, transition, readJob } from '../store/jobs.js';
+import { resolveJob, transition, advanceTo, readJob } from '../store/jobs.js';
+import { statesFor } from '../pipeline/stateMachine.js';
 import { getFormat } from '../store/formats.js';
 import { getProject, listProductFiles } from '../store/projects.js';
 import { availableProviders } from '../ai/providers.js';
@@ -106,12 +107,24 @@ router.post('/jobs/:jid/packets', async (req, res) => {
     previousPacketId: body.previousPacketId,
   });
 
-  // 대본 요청서 발행 시 잡 상태를 scripting으로
+  /*
+    대본 요청서를 발행하면 잡을 `scripting`으로 옮긴다.
+
+    🔴 **`transition()`으로 한 번에 가지 않는다.** 인접 단계만 허용하는데, 제품정보리뷰의
+    포맷 단계와 대본 단계 사이에 영상 소재 구간이 끼었다(2026-08-23). 소재 없이 대본부터
+    쓰는 잡은 그 구간을 지나가야 하므로 `advanceTo()`로 한 칸씩 전진한다 —
+    안 그러면 "전이 불가: format_selected → scripting"으로 발행 자체가 500으로 터진다.
+
+    되돌아오는 경우(`script_approved`에서 다시 쓰기)는 전진이 아니라 한 칸 후진이라
+    `transition()`이 맡는다.
+  */
   const job = await readJob(ref);
   if (job && (body.kind === 'script' || body.kind === 'revision')) {
-    if (job.state === 'cleaning' || job.state === 'format_selected' || job.state === 'script_approved') {
-      await transition(ref, 'scripting', 'server');
-    }
+    const flow = statesFor(ref.menu);
+    const from = flow.indexOf(job.state);
+    const to = flow.indexOf('scripting');
+    if (from >= 0 && to >= 0 && from < to) await advanceTo(ref, 'scripting', 'server');
+    else if (job.state === 'script_approved') await transition(ref, 'scripting', 'server');
   }
   res.status(201).json({ ...packet, commands: packets.packetCommands(packet), discarded });
 });

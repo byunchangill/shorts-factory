@@ -169,10 +169,35 @@ robocopy C:\...\shorts-factory\workspace D:\옮길폴더\workspace /E /XD browse
 |---|---|
 | `browser/` | 크로미움 프로필(255MB). **도우인·샤오홍슈 로그인 세션이 여기 있으니** 로그인을 유지하고 싶으면 이것도 복사하세요. 안 하면 새 PC에서 다시 로그인하면 됩니다 |
 | `cache/` `logs/` `.trash/` | 다시 생깁니다 |
+| `assets/shared/` | 공용 짤방·효과음. 화면의 「공용 자료 받기」로 다시 받으면 됩니다 (`assets/local/`은 이 PC 것이라 챙겨야 합니다) |
 
 꼭 필요한 것만 챙긴다면 `settings.json`(배속·그레이딩 등 조정값) ·
 `secrets.json`(API 키) · `menu-a/` `menu-b/`(카테고리와 작업) 넷입니다.
 `settings.json`에는 절대경로가 없어 그대로 옮겨도 됩니다 — 도구 경로는 PC마다 그때 찾습니다.
+
+### 3. 편집 재료 공용 저장소 (선택)
+
+짤방·효과음을 여러 PC가 같이 쓰려면 **별도 저장소** 하나를 만들어 이런 구조로 올립니다.
+
+```
+memes/          <- 짤방 (jpg png gif webp jfif bmp mp4 webm)
+sfx/            <- 효과음 (mp3 wav m4a ogg aac flac)
+library.json    <- 선택. 제목·태그를 같이 커밋할 때만
+```
+
+`library.json`은 없어도 됩니다 — 파일만 올려도 파일명이 제목이 됩니다.
+
+```json
+{ "items": [ { "file": "sfx/01-삐삑.mp3", "title": "삐삑", "tags": ["알림", "포인트"] } ] }
+```
+
+주소를 [설정]의 「짤방·효과음 저장소 주소」에 넣고, [편집 재료] 화면에서
+「공용 자료 받기」를 누르면 각 PC가 내려받습니다. **관리자가 올리면 전 PC에 퍼지고,
+각자 올리거나 지운 것은 그 PC에만 남습니다.**
+
+🔴 **이 앱 저장소에 넣지 마세요.** 여기는 public이라 인터넷 짤을 커밋하면 남의 저작물을
+공개 배포하는 셈이 됩니다. private 저장소로 두고, [API 키] 화면의 「자료 저장소 토큰」에
+깃허브 PAT(contents:read)를 넣으면 됩니다.
 
 **클라우드 동기화 폴더에는 두지 마세요.** `secrets.json`과 `browser/`가 그대로 올라갑니다.
 

@@ -12,7 +12,8 @@ import { trashJob } from '../store/remove.js';
 import { getProject, readProduct, writeProduct, listProductFiles } from '../store/projects.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
-import { progressOf, statesFor } from '../pipeline/stateMachine.js';
+import { progressOf, sourceEntryState, statesFor } from '../pipeline/stateMachine.js';
+import { normalizeSourceUrl } from '../sourcing/links.js';
 import {
   downloadAll, retrySource, isDownloading, attachSourceFile, removeSource, reconcileDownloadState,
 } from '../pipeline/downloadQueue.js';
@@ -34,6 +35,7 @@ import { upsertRow } from '../store/metrics.js';
 import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
 import { createZip } from '../util/zip.js';
 import { planCapcut } from '../pipeline/capcut.js';
+import { resolveAssets } from '../store/assets.js';
 import { hasKey } from '../store/secrets.js';
 import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
@@ -151,16 +153,19 @@ router.put('/jobs/:jid/sources', async (req, res) => {
   const body = z.object({ urls: z.array(z.string().url()).min(1) }).parse(req.body);
   const job = await jobs.mutateJob(ref, (j) => {
     const existing = new Set(j.sources.map((s) => s.url));
-    for (const url of body.urls) {
+    // rednote 같은 별칭 도메인은 여기서 정식 주소로 고친다 — 중복 판정도 고친 주소로 해야
+    // 같은 글을 두 도메인으로 넣었을 때 두 번 받지 않는다
+    for (const raw of body.urls) {
+      const url = normalizeSourceUrl(raw);
       if (existing.has(url)) continue;
       const id = nextSeqId('s', j.sources.map((s) => s.id));
       j.sources.push({ id, url, origin: 'url', status: 'queued', attempts: 0, progress: 0 });
       existing.add(url);
     }
   });
-  // `collecting`은 해외영상 짜집기에만 있는 단계다 — 메뉴를 보지 않으면 제품정보리뷰에서
-  // "전이 불가: draft → collecting"으로 터진다 (소재는 이미 들어간 뒤라 반쯤 된 상태가 남는다)
-  if (ref.menu === 'menu-a' && job.state === 'draft') {
+  // 소재를 넣기 시작하는 단계가 메뉴마다 다르다 — 틀리면 "전이 불가"로 터지고
+  // 소재는 이미 들어간 뒤라 반쯤 된 상태가 남는다
+  if (job.state === sourceEntryState(ref.menu)) {
     await jobs.transition(ref, 'collecting', 'server');
   }
   res.json(await jobView(ref));
@@ -225,7 +230,9 @@ router.post('/jobs/:jid/sources/upload', sourceUpload.array('files', 50), async 
   }
 
   const job = await jobs.readJob(ref);
-  if (job?.state === 'draft') await jobs.transition(ref, 'collecting', 'server');
+  if (job?.state === sourceEntryState(ref.menu)) {
+    await jobs.transition(ref, 'collecting', 'server');
+  }
   // 첨부 파일은 받을 것이 없으므로, 남은 URL도 없다면 바로 정리 단계로 보낸다
   await reconcileDownloadState(ref);
   res.json(await jobView(ref));
@@ -721,6 +728,24 @@ router.post('/jobs/:jid/script/approve', async (req, res) => {
   res.json(await jobView(ref));
 });
 
+// ── 편집 재료 (짤방·효과음) ───────────────────────────────────────
+
+/**
+ * 이 편에 쓸 재료 담기.
+ *
+ * 자료실(`/api/assets`)에서 고른 id를 그대로 들고 있다가 캡컷 재료 묶음에 같이 넣는다.
+ * **여기서 파일이 있는지 확인하지 않는다** — 담아둔 뒤 자료실에서 지울 수 있고, 그때
+ * 잡이 통째로 못 쓰게 되면 곤란하다. 없어진 것은 묶는 시점에 조용히 빠진다.
+ */
+router.put('/jobs/:jid/assets', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const body = z.object({ assets: z.array(z.string().max(300)).max(60) }).parse(req.body);
+  await jobs.mutateJob(ref, (j) => {
+    j.assets = [...new Set(body.assets)];
+  });
+  res.json(await jobView(ref));
+});
+
 // ── 저작권 확인 게이트 ────────────────────────────────────────────
 
 router.post('/jobs/:jid/rights-confirm', async (req, res) => {
@@ -954,12 +979,25 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     await jobs.advanceTo(ref, 'assembling');
     const clips = await jobs.listClips(ref);
     const version = (job.output.currentVersion ?? 0) + 1;
+    /*
+      대본이 가리키는 짤·효과음의 실제 경로를 여기서 풀어 넘긴다.
+      조립은 자료실을 직접 뒤지지 않는다 — 자료실이 없는 환경(하네스)에서도 돌아야 한다.
+      자료실에서 지워진 id는 여기서 그냥 빠지고, 조립은 그 씬을 짤 없이 만든다.
+    */
+    const wanted = [...new Set(
+      script.scenes.flatMap((s) => [s.memeId, s.sfxId]).filter((x): x is string => !!x),
+    )];
+    const assetPaths = Object.fromEntries(
+      (await resolveAssets(wanted)).map((a) => [a.id, fromWorkspaceRel(a.file)]),
+    );
     const finalPath = await assembleFinal(settings, {
       menu: ref.menu, script, timings, clips, jobDir,
       resolveWorkspacePath: fromWorkspaceRel,
       burnSubtitles: body.burnSubtitles ?? settings.burnSubtitles,
       burnDisclosure: settings.burnDisclosure,
       version,
+      headline: script.title,
+      assetPaths,
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
@@ -1015,6 +1053,8 @@ router.get('/jobs/:jid/download/capcut', async (req, res) => {
   const entries: Array<{ name: string; data: Buffer }> = [];
   for (const item of planCapcut({
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+    // 담아둔 뒤 자료실에서 지운 것은 여기서 조용히 빠진다 (`resolveAssets`)
+    assets: await resolveAssets(job.assets),
   })) {
     if (item.text !== undefined) {
       entries.push({ name: item.name, data: Buffer.from(item.text, 'utf8') });

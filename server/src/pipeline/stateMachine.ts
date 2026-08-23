@@ -38,6 +38,17 @@ export function statesFor(menu: Menu): readonly JobState[] {
   return menu === 'menu-a' ? MENU_A_STATES : MENU_B_STATES;
 }
 
+/**
+ * 소재를 넣기 시작하는 단계. **메뉴마다 다르다** — 해외영상 짜집기는 잡을 만들자마자
+ * `draft`에서 넣지만, 제품정보리뷰는 포맷을 먼저 고르므로 `format_selected`부터다.
+ *
+ * 소재를 받은 뒤 `collecting`으로 보내는 자리가 두 군데(주소 입력·파일 업로드)라, 여기서
+ * 한 번에 정한다. 한쪽만 고치면 **소재는 들어갔는데 단계는 안 넘어간 잡**이 남는다.
+ */
+export function sourceEntryState(menu: Menu): JobState {
+  return menu === 'menu-a' ? 'draft' : 'format_selected';
+}
+
 /** 진행률 % (대시보드 표시용) */
 export function progressOf(menu: Menu, state: JobState): number {
   const states = statesFor(menu);

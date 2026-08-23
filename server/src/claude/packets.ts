@@ -2,7 +2,8 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { PacketSchema, type Packet, type Product, type Clip } from '@shared/types';
 import {
-  PACKET_KIND_LABELS, syllableBudget, TARGET_SEC_BY_MENU, type PacketKind, type Menu,
+  PACKET_KIND_LABELS, syllableBudget, subtitleCharsPerLine, TARGET_SEC_BY_MENU,
+  type PacketKind, type Menu,
 } from '@shared/constants';
 import { packetMenu } from './scriptRules.js';
 import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
@@ -303,9 +304,20 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     }
   }
 
-  // ④ 소재 현황 (menu-a script 패킷)
-  if (opts.jobRef && (packet.kind === 'script' || packet.kind === 'revision') && opts.jobRef.menu === 'menu-a') {
+  /*
+    ④ 소재 현황.
+
+    **메뉴로 가르지 않는다** (2026-08-23). 제품정보리뷰도 영상을 쓰게 되면서, 여기서 막으면
+    소재를 9개 넣어도 요청서에 안 실려 대본이 클립을 못 가리킨다 — 그 대본으로 조립하면
+    「씬 s01: clipRef도 imageRef도 없음」으로 터진다 (실제로 겪었다).
+
+    가르는 것은 메뉴가 아니라 **클립이 있느냐**다. 소재 없이 이미지로만 만드는 편은
+    이 절이 통째로 빠지고, 예전처럼 `imagePrompt`로 간다.
+  */
+  let hasClips = false;
+  if (opts.jobRef && (packet.kind === 'script' || packet.kind === 'revision')) {
     const clips = await listClips(opts.jobRef);
+    hasClips = clips.length > 0;
     if (clips.length) {
       lines.push('## 4. 소재 현황 (다운로드된 클립)');
       lines.push('| 클립 ID | 길이(초) | 해상도 | 정리 상태 | 사용할 장면 (시각 · 이미지) |');
@@ -326,6 +338,12 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
         'Read로 열어 실제 화면을 확인한 뒤 그 장면들로 대본을 구성하고, ' +
         '각 씬의 `clipRef`에 해당 클립과 프레임 시각 부근을 `suggestedSegment`로 지정하세요. ' +
         '목록에 없는 장면을 대본의 근거로 삼지 마세요.',
+      );
+      lines.push('');
+      lines.push(
+        '🔴 **모든 씬에 `clipRef`를 붙이세요.** 어느 클립으로도 받아낼 수 없는 씬이 있으면 ' +
+        '그 씬만 `imagePrompt`를 쓰고, 둘 다 없는 씬은 만들지 마세요 — ' +
+        '조립이 그 씬에서 「clipRef도 imageRef도 없음」으로 멈춥니다.',
       );
       lines.push('');
     }
@@ -401,6 +419,20 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     lines.push('');
     lines.push(MENU_B_OUTPUT_SPECS[packet.kind]!);
   }
+  /*
+    제품정보리뷰의 씬 재료는 **소재가 있으면 영상, 없으면 이미지**다 (2026-08-23).
+    예전에는 「clipRef 대신 imagePrompt」로 못 박혀 있었는데, 그 문장이 남아 있으면
+    소재를 넣은 잡에서도 AI가 이미지 프롬프트만 쓴다 — 조립할 재료가 없어진다.
+  */
+  if (menu === 'menu-b' && (packet.kind === 'script' || packet.kind === 'revision')) {
+    lines.push('');
+    lines.push(
+      hasClips
+        ? '이 잡에는 **영상 소재가 있습니다.** 위 「소재 현황」의 클립으로 씬을 채우고 '
+          + '`clipRef`를 쓰세요. 클립으로 받아낼 수 없는 씬에만 `imagePrompt`를 씁니다.'
+        : '이 잡에는 영상 소재가 없습니다. 씬마다 `clipRef` 대신 `imagePrompt`를 쓰세요.',
+    );
+  }
   lines.push('');
 
   // ⑥ 검증 규칙
@@ -416,7 +448,16 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
     .replace('{CHAR_REC}', String(budget.recommended))
     .replace('{SEC_MIN}', String(target.min))
     .replace('{SEC_MAX}', String(target.max))
-    .replace('{SEC_REC}', String(target.recommended));
+    .replace('{SEC_REC}', String(target.recommended))
+    /*
+      자막 한 줄 글자 수는 **글자 크기에서 계산된다** — 설정에서 크기를 바꾸면 같이 움직인다.
+      여기 숫자를 박아두면 크기를 키운 뒤에도 옛 값을 지시해, 대본이 화면 밖으로 나가는
+      줄바꿈을 넣는다. 조립이 쓰는 값과 같은 함수에서 뽑는다
+    */
+    .replace('{SUBTITLE_CHARS}', String(Math.min(
+      settings.subtitleMaxChars,
+      subtitleCharsPerLine(settings.subtitleFontSize),
+    )));
   lines.push(fill(VALIDATION_RULES[packet.kind]));
   const extra = menu === 'menu-a' ? MENU_A_RULES[packet.kind] : MENU_B_RULES[packet.kind];
   if (extra) lines.push(fill(extra));
@@ -547,31 +588,63 @@ const MENU_A_RULES: Partial<Record<PacketKind, string>> = {
   (30만 원 → 삼십만 원). 음성=자막이라 자막으로 우회할 수 없다
 - **어미를 번갈아 놓는다** — 인접 씬이 같은 어미로 끝나지 않게, 종결어미 3연속 금지,
   종류 4가지 이상. \`~더라고요\`는 2~3회 (표본 9/10편)`,
-  revision: '- script 패킷의 교리 v3.3 규칙을 동일하게 적용한다 (음성=자막·블록 표시·실격 조건)',
   'upload-kit': '- 스펙(치수·하중·색상 수)은 **설명란에 적는다** — 음성에서 뺀 것이 여기로 온다',
 };
+/*
+  🔴 **수정(revision) 요청서에도 규칙 본문을 통째로 싣는다** (2026-08-23).
+
+  예전에는 「script 패킷의 규칙을 동일하게 적용한다」고 **가리키기만** 했다. 그런데 요청서는
+  자기완결 문서여야 한다 — 파일을 못 여는 경로(API 자동·복사 붙여넣기)에서 그 지시는
+  허공을 가리킨다. 실제로 자막 규칙을 새로 넣었는데 수정 요청서에는 안 실렸다.
+*/
+MENU_A_RULES.revision = MENU_A_RULES.script;
 
 /**
  * 제품정보리뷰(menu-b)에만 더 붙는 규칙.
  * 해외영상 짜집기는 별도 지침을 따로 세우기로 해서 여기 걸지 않는다.
  */
 const MENU_B_RULES: Partial<Record<PacketKind, string>> = {
-  script: `- 씬 4~5개, 씬당 35~45자. 반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
-- 첫 씬은 3초 훅, 마지막 씬에 CTA 1문장
+  script: `- 씬 4~5개, **씬 하나에 문장 하나** (음성 합성이 씬 단위라 두 문장을 넣으면 뒷문장이 잘려 나간다).
+  반전은 1개에 집중 (짧은 분량에 2개를 넣으면 둘 다 약해진다)
+- 말투는 **반말 커뮤니티체** (~했음, ~임, ~다고 함, ~더라). 존댓말은 그 순간 '광고' 경계심을 켠다
+- 첫 씬은 3초 훅이고 **공감이 아니라 호기심**이다 — 제품·브랜드를 언급하지 않는다.
+  2인칭 질문형("아직도 힘들게 닦으세요?")으로 열지 않는다 (발행 원장 최하위 형태)
+- 몸통은 정보여야 한다. **유래·비하인드 / 기발한 쓰임새 / 실사용자 반응 / 비교 평가 / 가격 대비 판단**
+  중 최소 2가지. 내가 알려주는 것이 아니라 "사람들이 그렇게 한다더라"로 푼다
+- 🔴 **정황은 각색해도 제품에 관한 사실은 지어내지 않는다.** 효능·사양·가격·성분은 제품 자료에 있는 값만 쓴다.
+  "~라고 하더라"를 붙여도 근거 없는 효능 주장은 여전히 효능 주장이다
 - **단점 씬 1개 필수.** 제품의 단점·주의사항을 말하는 씬을 반드시 넣고 그 씬에 \`"isDownside": true\`를 표시한다.
   이 한 줄이 광고와 리뷰를 가른다 — 없으면 반려된다. 지어내지 말고 제품 정보의 cautions/사양에서 근거를 찾는다
-  (예: "대신 스테인리스라 지문은 묻습니다", "물걸레 기능은 없습니다")
-- 단점 뒤에 그걸 덮는 마무리를 붙이지 않는다. 단점은 단점으로 끝내야 신뢰가 생긴다`,
-  revision: '- script 패킷의 menu-b 규칙(단점 씬 1개 필수)을 동일하게 적용한다',
+  (예: "근데 지문 개잘 묻는다고 다들 한 마디씩 하더라", "물걸레는 안 된다 함")
+- 단점 뒤에 그걸 덮는 마무리를 붙이지 않는다. 단점은 단점으로 끝내야 신뢰가 생긴다
+- 마지막 씬은 **저장·공유를 부르는 한 문장**. 알고리즘이 보는 건 좋아요가 아니라 저장·공유·완주율이다
+- 🔴 **자막(\`subtitle\`)은 나레이션과 글자까지 같게 쓴다.** 요약하거나 줄이지 않는다 —
+  말하는 것과 화면 글자가 어긋나면 시청자가 둘을 따로 읽느라 어느 쪽도 안 남는다.
+  **딱 하나 예외는 숫자다**: 나레이션은 TTS가 읽으므로 한글로("이백 센티", "육십육만 원대"),
+  자막은 눈에 걸리게 아라비아 숫자로("200cm", "66만원대") 적는다
+- 🔴 **자막 줄바꿈은 대본이 직접 넣는다** (\`subtitle\` 안에 \`\\n\`).
+  어디서 끊어야 읽히는지는 문맥이 정한다 — **연결어미·의미 단위**에서 끊는다.
+  한 줄은 {SUBTITLE_CHARS}자 이내(공백 포함)이며, 넘기면 화면 밖으로 나간다.
+  줄바꿈을 안 넣으면 앱이 글자 수만 보고 접는데, 그러면 뜻이 어중간한 자리에서 갈린다
+  \`\`\`
+  ✅ "낮에는 소파로 앉고\\n밤에는 침대로 쓰는 건데\\n좁은 집에\\n오히려 최적이었다는\\n후기가 많더라"
+  ❌ "낮엔 소파, 밤엔 침대. 좁은 집에 오히려 최적"   ← 나레이션을 요약했다
+  \`\`\``,
   'upload-kit': `- **해시태그는 3~5개까지.** 중복 금지, 유행어 나열 금지 — 이 제품을 찾을 사람이 실제로 칠 단어만 넣는다
   (유튜브는 설명란 해시태그가 15개를 넘으면 그 영상의 해시태그를 **전부 무시**한다)
 - 설명 마지막에 **다음 편 예고 한 줄**을 넣는다 (구독 전환 장치). 시리즈 위치 정보가 위에 있으면 그걸 쓴다
 - 제목은 이전 편과 겹치지 않게 각도를 바꾼다`,
 };
+// 수정 요청서도 규칙 본문을 통째로 싣는다 (위 MENU_A_RULES.revision 주석 참고)
+MENU_B_RULES.revision = MENU_B_RULES.script;
 
 /** menu-b에서만 추가되는 산출물 형식 안내 */
 const MENU_B_OUTPUT_SPECS: Partial<Record<PacketKind, string>> = {
-  script: '제품정보리뷰는 씬마다 `clipRef` 대신 `imagePrompt`를 쓰고, '
-    + '단점을 말하는 씬에는 `"isDownside": true`를 붙인다.',
+  // 씬 재료(clipRef/imagePrompt)는 소재 유무에 따라 갈리므로 여기서 못 박지 않는다 —
+  // 그 안내는 `buildRequestMd`가 클립을 세어 보고 붙인다
+  script: '제품정보리뷰는 단점을 말하는 씬에 `"isDownside": true`를 붙인다.\n'
+    + '`subtitle`은 나레이션과 같은 글자에 줄바꿈(`\\n`)만 넣은 것이다 — 숫자만 아라비아 숫자로 바꾼다.\n'
+    + '예: `"narration": "리모컨 하나로 이백 센티 침대가 되는 전동 소파베드고 육십육만 원대부터임"`,\n'
+    + '`"subtitle": "리모컨 하나로\\n200cm 침대가 되는\\n전동 소파베드고\\n66만원대부터임"`',
   'upload-kit': '설명 구성: 공시문구 → 제품 요약 2~3문장 → 구매 링크 → **다음 편 예고 한 줄**.',
 };
