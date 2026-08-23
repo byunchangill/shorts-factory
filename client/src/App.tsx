@@ -1,6 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Globe, Package, Palette, Settings, Youtube, KeyRound, TrendingUp, Images } from 'lucide-react';
 import { useServerEvents } from '@/api/sse';
 import { focusRing } from '@/components/ui';
 import ApiHealthBanner from '@/components/ApiHealthBanner';
@@ -13,6 +13,7 @@ import SettingsPage from '@/pages/SettingsPage';
 import KeysPage from '@/pages/KeysPage';
 import YouTubePage from '@/pages/YouTubePage';
 import ViralPage from '@/pages/ViralPage';
+import AssetsPage from '@/pages/AssetsPage';
 
 const NAV = [
   { to: '/', label: '대시보드', icon: LayoutDashboard },
@@ -20,6 +21,7 @@ const NAV = [
   { to: '/menu-b', label: '제품정보리뷰', icon: Package },
   { to: '/viral', label: '바이럴 제품', icon: TrendingUp },
   { to: '/youtube', label: '유튜브 리서치', icon: Youtube },
+  { to: '/assets', label: '편집 재료', icon: Images },
   { to: '/formats', label: '고유 포맷', icon: Palette },
   { to: '/keys', label: 'API 키', icon: KeyRound },
   { to: '/settings', label: '설정', icon: Settings },
@@ -30,7 +32,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      {/* 사이드바 항목이 8개라 키보드 사용자는 본문까지 8번을 눌러야 한다 — 한 번에 건너뛴다 */}
+      {/* 사이드바 항목이 9개라 키보드 사용자는 본문까지 9번을 눌러야 한다 — 한 번에 건너뛴다 */}
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-brand-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
@@ -75,6 +77,7 @@ export default function App() {
             <Route path="/menu-b" element={<MenuPage menu="menu-b" />} />
             <Route path="/project/:menu/:pid" element={<ProjectPage />} />
             <Route path="/job/:jid" element={<JobPage />} />
+            <Route path="/assets" element={<AssetsPage />} />
             <Route path="/formats" element={<FormatsPage />} />
             <Route path="/viral" element={<ViralPage />} />
             <Route path="/youtube" element={<YouTubePage />} />

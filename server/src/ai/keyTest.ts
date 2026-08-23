@@ -74,6 +74,20 @@ export async function testKey(name: ApiKeyName, key: string): Promise<KeyTestRes
           : (data.voices?.length ?? data.result?.length ?? data.items?.length ?? 0);
         return { ok: true, detail: `캐릭터 ${count}종 사용 가능` };
       }
+      /*
+        자료 저장소 토큰은 깃허브 PAT다. 여기서는 **토큰이 살아 있는지**만 본다 —
+        그 저장소에 접근되는지는 자료실의 「공용 자료 받기」가 실제로 클론해 보며 확인한다
+        (저장소 주소는 설정에 있고 깃허브가 아닐 수도 있다).
+      */
+      case 'assetsToken': {
+        const r = await fetchWithTimeout('https://api.github.com/user', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${key}`, Accept: 'application/vnd.github+json' },
+        });
+        if (!r.ok) return { ok: false, error: await shortError(r) };
+        const data = await r.json();
+        return { ok: true, detail: `깃허브 계정 ${data.login ?? '(이름 없음)'} 확인됨` };
+      }
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

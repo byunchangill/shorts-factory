@@ -1,9 +1,10 @@
 import path from 'node:path';
-import type { Job, Script, Clip, Settings } from '@shared/types';
+import type { Job, Script, Clip, Settings, Asset } from '@shared/types';
 import type { SceneTiming } from './tts.js';
 import { buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
 import { subtitleCharsPerLine } from '@shared/constants';
 import { exportFileName } from './exporter.js';
+import { fromWorkspaceRel } from '../store/workspace.js';
 
 /**
  * 캡컷에 끌어다 넣을 폴더 만들기.
@@ -24,6 +25,8 @@ export interface CapcutInput {
   script: Script;
   timings: SceneTiming[];
   clips: Clip[];
+  /** 자료실에서 이 잡에 담아둔 편집 재료 (짤방·효과음). 없으면 그 폴더가 안 생긴다 */
+  assets?: Asset[];
 }
 
 export interface CapcutItem {
@@ -36,6 +39,18 @@ export interface CapcutItem {
 
 /** 씬 번호를 두 자리로 — 열 개가 넘어가면 1, 10, 11, 2 순서로 섞인다 */
 const no = (i: number) => String(i + 1).padStart(2, '0');
+
+/**
+ * 묶음 안에서 쓸 재료 파일 이름.
+ *
+ * 제목은 사람이 붙인 값이라 `/`·`:` 같은 글자가 들어올 수 있다 — zip 항목 이름에
+ * 그대로 넣으면 없는 폴더를 만들거나 압축이 깨진다. 확장자는 원본 것을 그대로 쓴다.
+ */
+function assetFileName(a: Asset): string {
+  const ext = path.extname(a.file);
+  const base = a.title.replace(/[\\/:*?"<>|]+/g, '_').trim() || path.basename(a.file, ext);
+  return `${base}${ext}`;
+}
 
 /** 씬에 붙는 영상 — 정리본이 있으면 그것, 없으면 원본 */
 function sceneVideo(scene: Script['scenes'][number], clips: Clip[], jobDir: string): string | null {
@@ -54,6 +69,7 @@ function sceneVideo(scene: Script['scenes'][number], clips: Clip[], jobDir: stri
  */
 export function planCapcut(input: CapcutInput): CapcutItem[] {
   const { settings, job, productName, jobDir, script, timings, clips } = input;
+  const assets = input.assets ?? [];
   const items: CapcutItem[] = [];
   const cues: SubCue[] = [];
   const lines: string[] = [
@@ -96,6 +112,22 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
   lines.push('- `01_영상` — 씬 순서대로. 정리본(자막·워터마크 지운 것)이 있으면 그쪽입니다');
   lines.push('- `02_음성` — 씬별 나레이션. 영상과 번호가 짝입니다');
   lines.push('- `03_자막` — SRT. 캡컷에서 자막 트랙으로 바로 읽힙니다');
+  /*
+    편집 재료는 **번호를 안 붙인다.** 씬 폴더는 이름이 곧 순서지만 짤방·효과음은
+    타임라인에 자동으로 얹힐 것이 아니라 사람이 필요할 때 골라 쓰는 것이다.
+    번호를 붙이면 씬과 짝인 것처럼 보여 오히려 헷갈린다.
+  */
+  const memes = assets.filter((a) => a.kind === 'meme');
+  const sfx = assets.filter((a) => a.kind === 'sfx');
+  for (const a of memes) {
+    items.push({ name: `04_짤방/${assetFileName(a)}`, src: fromWorkspaceRel(a.file) });
+  }
+  for (const a of sfx) {
+    items.push({ name: `05_효과음/${assetFileName(a)}`, src: fromWorkspaceRel(a.file) });
+  }
+  if (memes.length) lines.push(`- \`04_짤방\` — 담아둔 ${memes.length}개. 필요한 자리에 직접 얹으세요`);
+  if (sfx.length) lines.push(`- \`05_효과음\` — 담아둔 ${sfx.length}개`);
+
   lines.push('');
   lines.push('좌우반전·색보정·확대는 캡컷에서 직접 거세요. 웹에서 합치면 설정값이 자동으로 걸립니다.');
   items.push({ name: '읽어보세요.md', text: lines.join('\n') });
