@@ -5,6 +5,7 @@ import {
   PACKET_STATUSES,
   GUIDELINE_FILES,
   BLOCKS,
+  ASSET_KINDS,
 } from './constants';
 
 // ── 공통 ──────────────────────────────────────────────────────────
@@ -187,6 +188,21 @@ export const SceneLineSchema = z.object({
   isDownside: z.boolean().default(false),
   /** 이 씬 앞에 끼울 텍스트 카드 문구 (하이브리드 믹싱) */
   cardText: z.string().optional(),
+  /**
+   * 이 씬 화면 위에 잠깐 얹을 짤 (자료실 자산 id).
+   *
+   * **씬 사이에 끼우지 않고 위에 얹는다** — 끼우면 영상이 그만큼 길어져 18~26초 예산을
+   * 넘긴다. 얹으면 길이가 그대로다 (2026-08-23 사용자 결정).
+   *
+   * 자료실에서 사라진 id는 조용히 무시한다 — 짤 하나 때문에 조립이 멈추면 안 된다.
+   */
+  memeId: z.string().optional(),
+  /** 짤이 뜨는 시점(씬 시작 기준 초). 비면 씬 시작에 맞춘다 */
+  memeAt: z.number().min(0).optional(),
+  /** 이 씬 시작에 깔 효과음 (자료실 자산 id). 나레이션 위에 섞인다 */
+  sfxId: z.string().optional(),
+  /** 효과음이 나는 시점(씬 시작 기준 초). 비면 씬 시작에 맞춘다 */
+  sfxAt: z.number().min(0).optional(),
 });
 export type SceneLine = z.infer<typeof SceneLineSchema>;
 
@@ -257,6 +273,12 @@ export const JobSchema = z.object({
   publishedAt: z.string().optional(),
   /** 이 편에 쓴 훅 유형 (대사 인용·금지 명령 등). 다음 편이 연속으로 안 겹치게 하는 재료 */
   hookSeed: z.string().optional(),
+  /**
+   * 이 편에 쓸 편집 재료(짤방·효과음) — 자료실에서 담은 것들의 id.
+   * 캡컷 재료 묶음에 같이 들어간다. 자료실에서 지워진 것은 조용히 빠진다
+   * (id를 들고 있어도 파일이 없으면 묶음에서 걸러진다).
+   */
+  assets: z.array(z.string()).default([]),
   rightsConfirmed: z.boolean().default(false), // 조립 전 저작권 확인 게이트
   packets: z.array(z.string()).default([]),
   output: z.object({
@@ -358,20 +380,66 @@ export const SettingsSchema = z.object({
    */
   voicePitchSemitones: z.number().min(-12).max(12).default(0),
   /**
-   * 나레이션 속도 배율. 쇼츠는 빠른 낭독이 유지율에 유리해 기본 1.25배.
+   * 나레이션 속도 배율. 쇼츠는 빠른 낭독이 유지율에 유리해 기본 1.6배.
    * 합성 음성에만 적용된다 — 첨부 파일은 사용자가 의도한 속도로 본다.
-   * 이 값이 대본 분량 기준을 좌우한다 (300자/분 × 배율).
+   * 이 값이 대본 분량 기준을 좌우한다 (`SYLLABLES_PER_MIN` × 배율).
+   *
+   * 🔴 **1.6에서 끊는 이유가 있다** (2026-08-23 타입캐스트 실측). 1.33→5.23,
+   * 1.5→6.08, 1.6→6.51, **1.7→6.56음절/초**로 1.6 위에서는 거의 안 빨라진다 —
+   * 앞뒤 무음이 배속을 따라가지 않아서다. 더 올리면 음질만 잃고 분량은 그대로다.
    */
-  speechRate: z.number().min(0.5).max(2).default(1.33),
+  speechRate: z.number().min(0.5).max(2).default(1.6),
   // 한글 폰트 (자막 번인·텍스트 카드에 필요). 비우면 시스템에서 자동 탐색
   fontPath: z.string().default(''),
   /**
    * 화면 구성.
    * fullscreen = 소스를 화면 전체에 채움
-   * framed = 자기 프레임(제목바·하단 정보영역) 안에 소스를 축소 배치 —
-   *          재사용 콘텐츠로 분류될 위험을 낮추고 정보 밀도를 올린다
+   * banded = **기본값.** 소스를 화면 전체로 채우고 상·하단에 불투명 띠를 덮는다.
+   *          상단 띠에 제목, 하단 띠에 채널명이 들어간다 (벤치마킹 채널 레이아웃).
+   * framed = 소스를 세로 52%로 줄여 블러 배경 위에 얹는 옛 구성.
+   *          9:16 소재에서는 화면이 작아지고 파란 강조 바가 눈에 띄어 기본에서 내렸다
+   *
+   * 🔴 **`banded`는 띠가 소스를 「덮는다」.** 줄이지 않는다 — 9:16 소재를 띠 아래로 밀어 넣으면
+   * 영상이 손톱만 해진다. 덮기 때문에 **띠에 가려지는 자리의 원본 자막은 지울 필요가 없다.**
    */
-  layout: z.enum(['fullscreen', 'framed']).default('framed'),
+  layout: z.enum(['fullscreen', 'framed', 'banded']).default('banded'),
+  /** 상·하단 띠 배경색 (ffmpeg 색 표기). 벤치마킹 채널은 둘 다 검정이다 */
+  bandColor: z.string().default('#0A0A0A'),
+  /**
+   * 상단 띠 높이 (화면 높이 대비). 제목 두 줄이 들어가는 크기.
+   *
+   * 제목 글자 크기가 이 값에 비례한다 — 띠를 키우면 글자도 같이 커진다.
+   * 하단 띠(0.26)와 너무 차이 나면 화면이 아래로 쏠려 보인다.
+   */
+  topBandRatio: z.number().min(0).max(0.4).default(0.22),
+  /**
+   * 짤이 화면에 머무는 시간(초). 길면 영상을 가리고 짧으면 못 알아본다.
+   * 1.2초는 짤 한 장을 알아보는 데 걸리는 시간이다.
+   */
+  memeDurationSec: z.number().min(0.3).max(5).default(1.2),
+  /** 짤 가로 폭 (화면 폭 대비) */
+  memeWidthRatio: z.number().min(0.1).max(0.9).default(0.38),
+  /**
+   * 효과음 음량 (나레이션 대비 배율).
+   * 1을 넘기면 나레이션을 덮는다 — 효과음은 거들 뿐 말을 가리면 안 된다.
+   */
+  sfxVolume: z.number().min(0).max(2).default(0.55),
+  /**
+   * 하단 띠 높이 (화면 높이 대비).
+   *
+   * 🔴 **채널명 한 줄에 필요한 크기보다 훨씬 크게 잡는다.** 이 띠의 진짜 일은 소재 하단의
+   * **원본 자막을 덮는 것**이다 — 벤치마킹 채널 실측이 25~36%였고, 우리가 처음 쓴 8.5%로는
+   * 중국어 자막이 그대로 새어 나왔다 (2026-08-23 실측).
+   *
+   * ⚠️ 자막 자리(`subtitleBottomRatio`, 기본 0.35)보다 **작아야 한다.** 크면 우리 자막이
+   * 띠에 먹힌다.
+   */
+  bottomBandRatio: z.number().min(0).max(0.4).default(0.26),
+  /**
+   * 제목 첫 줄 색. 벤치마킹 두 채널 모두 **첫 줄 형광 노랑 + 둘째 줄 흰색**을 쓴다 —
+   * 목록에서 제목이 두 덩이로 읽혀 눈에 걸린다
+   */
+  titleAccentColor: z.string().default('#D9FF00'),
   /**
    * 채널 그레이딩 — 조립할 때 모든 영상에 같은 값으로 걸리는 ffmpeg 색보정 필터.
    *
@@ -410,6 +478,14 @@ export const SettingsSchema = z.object({
    * 감으로 올리고 내리면 게이트가 근거를 잃는다.
    */
   hookMotionMin: z.number().min(0).max(60).default(8),
+  /**
+   * 짤방·효과음 공용 저장소 주소 (`store/assetSync.ts`).
+   *
+   * 관리자가 여기에 올리면 각 PC가 받아 쓴다. **이 저장소가 아니라 별도 저장소**여야 한다 —
+   * 이 리포는 public이라 인터넷 짤을 커밋하면 남의 저작물을 공개 배포하는 셈이 된다.
+   * 비워두면 자료실이 로컬 자료만 보여준다 (기능이 꺼지는 것은 아니다).
+   */
+  assetsRepoUrl: z.string().default(''),
   cardDurationSec: z.number().min(0.5).max(4).default(1.5),
   /** 한 소스 클립의 연속 노출 상한 (초). 초과 시 컷 선택 화면에서 경고 */
   maxClipExposureSec: z.number().min(1).max(30).default(3),
@@ -424,6 +500,8 @@ export const SecretsSchema = z.object({
   openai: z.string().default(''),
   gemini: z.string().default(''),
   typecast: z.string().default(''),
+  /** 짤방·효과음 공용 저장소가 private일 때 쓰는 읽기 토큰 (`store/assetSync.ts`) */
+  assetsToken: z.string().default(''),
   googleOauth: z.object({
     clientId: z.string().default(''),
     clientSecret: z.string().default(''),
@@ -499,3 +577,62 @@ export const RESULT_SCHEMAS: Record<string, z.ZodTypeAny> = {
   json: z.any(),
   markdown: z.string(),
 };
+
+// ── 편집 재료 자료실 (짤방·효과음) ────────────────────────────────
+
+/**
+ * 자료 하나. **파일시스템이 진실이다** — 목록은 폴더를 훑어 만든다.
+ *
+ * 그래서 인덱스 파일이 깨져도 자료가 사라지지 않고, 관리자가 공용 저장소에 파일만
+ * 올려도 각 PC에서 그대로 보인다. `id`는 `{origin}:{kind폴더}/{파일명}` 형태라
+ * 목록을 다시 만들어도 잡이 들고 있던 id가 그대로 맞는다.
+ */
+export const AssetSchema = z.object({
+  id: z.string(),
+  kind: z.enum(ASSET_KINDS),
+  /** shared = 공용 저장소에서 받은 것(모든 PC 공통), local = 이 PC에서만 */
+  origin: z.enum(['shared', 'local']),
+  /** workspace 기준 상대경로 */
+  file: z.string(),
+  /** 미리보기 주소 (`/media/...`) */
+  url: z.string(),
+  title: z.string(),
+  tags: z.array(z.string()).default([]),
+  bytes: z.number().default(0),
+  /**
+   * 이 PC에서 숨긴 공용 자료인가. 목록은 기본으로 숨긴 것을 빼고 주므로 늘 false지만,
+   * 「숨긴 것도 보기」로 받을 때는 어느 것이 숨겨진 것인지 화면이 알아야 한다.
+   */
+  hidden: z.boolean().default(false),
+});
+export type Asset = z.infer<typeof AssetSchema>;
+
+/**
+ * 이 PC에만 남는 덧칠. **공용 자료를 지우거나 고치는 유일한 방법이다** —
+ * 공용 폴더의 파일을 직접 건드리면 다음 동기화에서 되살아나거나 충돌로 동기화가 막힌다.
+ */
+export const AssetLocalStateSchema = z.object({
+  /** 이 PC에서 숨긴 공용 자료의 id */
+  hidden: z.array(z.string()).default([]),
+  /** id별 제목·태그 덧칠 (공용 자료에도 붙일 수 있다) */
+  meta: z.record(z.object({
+    title: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+  })).default({}),
+  syncedAt: z.string().optional(),
+});
+export type AssetLocalState = z.infer<typeof AssetLocalStateSchema>;
+
+/**
+ * 공용 저장소가 같이 커밋하는 목록 (`library.json`, 선택).
+ * 없으면 파일명에서 제목을 만든다 — 관리자가 파일만 올려도 동작해야 한다.
+ */
+export const AssetLibrarySchema = z.object({
+  items: z.array(z.object({
+    file: z.string(),
+    title: z.string().optional(),
+    tags: z.array(z.string()).default([]),
+  })).default([]),
+});
+export type AssetLibrary = z.infer<typeof AssetLibrarySchema>;
+

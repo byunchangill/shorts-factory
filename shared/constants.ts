@@ -28,10 +28,24 @@ export const MENU_A_STATES = [
   'done',
 ] as const;
 
-/** 메뉴 B (제품정보리뷰) 잡 상태 흐름 */
+/**
+ * 메뉴 B (제품정보리뷰) 잡 상태 흐름.
+ *
+ * 2026-08-23에 **영상 소재 구간이 들어왔다** (`collecting`~`cleaning`). 그 전에는 씬 이미지만
+ * 썼는데, 정지 이미지로는 다른 채널과 같은 그림이 안 나온다는 판단이다. 이제 사용자가 하는
+ * 일은 **영상을 넣는 것뿐**이고 컷 선택·변형·짤 배치는 앱이 대본을 보고 정한다.
+ *
+ * `scening`(씬 이미지)은 남겨 둔다 — 지우면 그 상태로 저장된 지난 잡이 화면에서 통째로
+ * 사라진다. 뜻이 바뀌어서, 이제 **클립이 안 붙은 씬만 이미지로 메우는** 단계다.
+ * 모든 씬에 클립이 붙었으면 그냥 지나간다.
+ */
 export const MENU_B_STATES = [
   'draft',
   'format_selected',
+  'collecting',
+  'downloading',
+  'analyzing',
+  'cleaning',
   'scripting',
   'script_approved',
   'scening',
@@ -223,19 +237,31 @@ const MENU_STATE_OVERRIDES: Record<Menu, Record<string, { guide?: StateGuide; ne
   'menu-b': {
     draft: {
       guide: {
-        what: '제품 정보만으로 영상을 만드는 작업입니다. 영상 소재는 쓰지 않습니다.',
+        what: '제품 정보와 영상 소재로 리뷰 영상을 만드는 작업입니다.',
         todo: '카테고리에 지정된 고유 포맷으로 시작하세요.',
-        next: '포맷이 정해지면 대본 단계로 넘어갑니다.',
+        next: '포맷이 정해지면 영상 소재를 넣는 단계로 넘어갑니다.',
       },
       nextAction: '포맷 확인하고 시작하기',
     },
+    /*
+      포맷이 정해진 다음이 **영상을 넣는 자리**다 (2026-08-23).
+      예전에는 여기서 바로 대본으로 갔는데, 이제 소재가 대본의 재료라 순서가 뒤집혔다.
+    */
+    format_selected: {
+      guide: {
+        what: '포맷이 정해졌습니다. 이제 이 편에 쓸 영상 소재를 넣습니다.',
+        todo: '영상 파일을 올리거나 주소를 붙여넣으세요. 여러 개를 넣으면 대본에 맞는 장면을 골라 씁니다.',
+        next: '소재가 준비되면 내려받아 분석합니다.',
+      },
+      nextAction: '영상 소재 넣기',
+    },
     script_approved: {
       guide: {
-        what: '대본이 확정됐습니다. 이제 씬마다 보여줄 이미지를 준비합니다.',
-        todo: '씬 이미지를 만들거나 직접 첨부하세요.',
-        next: '모든 씬에 이미지가 채워지면 음성 단계로 넘어갑니다.',
+        what: '대본이 확정됐습니다. 클립이 안 붙은 씬만 이미지로 메웁니다.',
+        todo: '모든 씬에 영상이 붙었으면 그냥 넘어가세요. 빈 씬이 있으면 이미지를 준비합니다.',
+        next: '씬이 모두 채워지면 음성 단계로 넘어갑니다.',
       },
-      nextAction: '씬 이미지 준비하기',
+      nextAction: '씬 채우고 음성으로',
     },
   },
 };
@@ -320,14 +346,24 @@ export const BLOCK_LABELS: Record<Block, string> = {
 // ── 대본 분량 ─────────────────────────────────────────────────────
 
 /**
- * 정속 낭독 속도 — 분당 약 300**음절**.
+ * 정속 낭독 속도 — 분당 약 245**음절**.
  *
  * 🔴 **글자가 아니라 한글 음절이다** (2026-08-21, v3.3 이식). 낭독 시간은 띄어쓰기·문장부호를
  * 따라가지 않는데 글자로 세면 공백까지 예산에 넣게 되어 같은 대본이 20% 짧게 판정된다.
- * 기본 배속 1.33에서 300/60×1.33 = **6.65음절/초**로, 레퍼런스 채널 실측 밴드
- * 6.5~8.0음절/초 안에 든다 (`SYL_PER_SEC` 참고).
+ *
+ * 🔴 **300은 추정치였고 22% 틀렸다** (2026-08-23 타입캐스트 실측). 배속을 바꿔가며
+ * 같은 문장을 합성해 재니 정속 환산이 배속마다 236·243·244로 모였다.
+ *
+ * ```
+ * 배속 1.33 → 5.23음절/초   1.50 → 6.08   1.60 → 6.51   1.70 → 6.56
+ * ```
+ *
+ * 예산이 6.65라고 말하는데 실제로는 5.23이 나오니, 예산에 맞춰 쓴 대본이 상한을 넘었다
+ * (실측 편: 151음절 예산 통과 → 27.8초, 상한 26초 초과). **1.7에서 거의 안 빨라진다** —
+ * 앞뒤 무음은 배속을 따라가지 않아서다. 그래서 기본 배속을 1.6에서 끊었다.
+ * 1.6에서 245/60×1.6 = **6.53음절/초**로 밴드 6.5~8.0의 바닥에 든다 (`SYL_PER_SEC`).
  */
-export const SYLLABLES_PER_MIN = 300;
+export const SYLLABLES_PER_MIN = 245;
 
 /** 한글 음절 수 — 공백·기호·숫자·영문은 세지 않는다 (낭독 시간의 실제 단위) */
 export function syllables(text: string): number {
@@ -355,7 +391,7 @@ export const TARGET_SEC = TARGET_SEC_BY_MENU['menu-a'];
 /**
  * 배속을 반영한 **음절 수** 상·하한.
  * 상한은 내림, 하한은 올림한다 — 반올림하면 경계에서 목표 시간을 넘긴다
- * (1.33배속 29초는 192.85음절이라, 반올림 193음절은 29.02초가 되어 상한 위반).
+ * (1.6배속 29초는 189.47음절이라, 반올림 189를 올려 190음절로 잡으면 29.08초가 되어 상한 위반).
  */
 export function syllableBudget(
   speechRate: number,
@@ -377,7 +413,7 @@ export function estimateSeconds(syllableCount: number, speechRate: number): numb
 
 // ── API 키 ────────────────────────────────────────────────────────
 
-export const API_KEY_NAMES = ['youtube', 'anthropic', 'openai', 'gemini', 'typecast'] as const;
+export const API_KEY_NAMES = ['youtube', 'anthropic', 'openai', 'gemini', 'typecast', 'assetsToken'] as const;
 export type ApiKeyName = (typeof API_KEY_NAMES)[number];
 
 export const API_KEY_INFO: Record<ApiKeyName, { label: string; desc: string; url: string }> = {
@@ -405,6 +441,16 @@ export const API_KEY_INFO: Record<ApiKeyName, { label: string; desc: string; url
     label: 'Typecast (TTS)',
     desc: '나레이션 음성 합성. 미등록 시 씬별 음성 파일을 직접 첨부해야 합니다',
     url: 'https://typecast.ai/',
+  },
+  /*
+    공용 자료(짤방·효과음) 저장소가 private일 때만 필요하다. 저장소를 public으로 두면
+    비워도 받아진다 — 다만 인터넷 짤·방송 캡처를 public에 올리는 것은 남의 저작물을
+    공개 배포하는 셈이라 권하지 않는다.
+  */
+  assetsToken: {
+    label: '자료 저장소 토큰',
+    desc: '짤방·효과음 공용 저장소가 private일 때. 깃허브 PAT(contents:read)면 됩니다',
+    url: 'https://github.com/settings/personal-access-tokens',
   },
 };
 
@@ -466,3 +512,34 @@ export const YOUTUBE_QUOTA_COST = {
 export function subtitleCharsPerLine(fontSize: number, width = 1080, marginX = 30): number {
   return Math.max(4, Math.floor((width - marginX * 2) / (fontSize * 0.64)));
 }
+
+// ── 편집 재료 자료실 (짤방·효과음) ────────────────────────────────
+
+export const ASSET_KINDS = ['meme', 'sfx'] as const;
+export type AssetKind = (typeof ASSET_KINDS)[number];
+
+export const ASSET_KIND_LABELS: Record<AssetKind, string> = {
+  meme: '짤방',
+  sfx: '효과음',
+};
+
+/** 자료실 폴더 이름 — 공용 저장소와 로컬이 같은 구조를 쓴다 */
+export const ASSET_KIND_DIRS: Record<AssetKind, string> = {
+  meme: 'memes',
+  sfx: 'sfx',
+};
+
+/**
+ * 자료실이 받아들이는 확장자.
+ *
+ * 짤방에 mp4를 넣는다 — 움짤을 mp4로 저장해 두는 경우가 흔하고, 캡컷은 어차피 둘 다 읽는다.
+ * 목록에 없는 것은 업로드에서 막고 폴더에 들어 있어도 무시한다 — 공용 저장소에 딸려 온
+ * README·라이선스 파일이 자료 목록에 섞이면 안 된다.
+ */
+export const ASSET_EXTS: Record<AssetKind, readonly string[]> = {
+  meme: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.jfif', '.bmp', '.mp4', '.webm'],
+  sfx: ['.mp3', '.wav', '.m4a', '.ogg', '.aac', '.flac'],
+};
+
+/** 자료 하나의 크기 상한 — 짤방·효과음은 원래 작다. 영상 소재를 여기 올리는 것을 막는다 */
+export const ASSET_MAX_BYTES = 30 * 1024 * 1024;

@@ -7,7 +7,7 @@
  * 반드시 어긋나는데, 앞선 판(`check-script.mjs`)이 목표 길이를 20~30초로 들고 있는 동안
  * 앱은 20~28초를 썼고 아무도 몰랐다.
  *
- * 사용: npx tsx check-script.ts <script.json 경로> [--rate 1.33] [--menu menu-b]
+ * 사용: npx tsx check-script.ts <script.json 경로> [--rate 1.6] [--menu menu-b]
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -29,7 +29,7 @@ const STRONG_CLAIM = /(치료|완화)(된다|됩니다|해준다|해줍니다)|�
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
 if (!file) {
-  console.error('사용: npx tsx check-script.ts <script.json 경로> [--rate 1.33] [--menu menu-b]');
+  console.error('사용: npx tsx check-script.ts <script.json 경로> [--rate 1.6] [--menu menu-b]');
   process.exit(2);
 }
 
@@ -46,7 +46,7 @@ function resolveRate(): number {
       if (typeof s.speechRate === 'number' && s.speechRate > 0) return s.speechRate;
     } catch { /* 다음 후보 */ }
   }
-  return 1.33;
+  return 1.6;
 }
 
 function resolveMenu(): 'menu-a' | 'menu-b' {

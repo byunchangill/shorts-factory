@@ -16,7 +16,7 @@ description: "쇼핑쇼츠 대본을 100점 만점으로 채점하고 반려 사
 먼저 스크립트를 돌려 기계적으로 셀 수 있는 항목을 처리한다. 손으로 세면 틀린다.
 
 ```bash
-npx tsx .claude/skills/shorts-script-qc/scripts/check-script.ts <script.json 경로> [--rate 1.33] [--menu menu-b]
+npx tsx .claude/skills/shorts-script-qc/scripts/check-script.ts <script.json 경로> [--rate 1.6] [--menu menu-b]
 ```
 
 출력: 메뉴, 씬 수, **총 음절수**, 낭독 배속, 예상 낭독 시간, 교리 실격, 금칙어 적발, 씬별 분포, 단점 씬(menu-b).

@@ -5,9 +5,13 @@ import {
 import { SettingsSchema } from '@shared/types';
 
 describe('대본 분량 계산', () => {
-  // 레퍼런스 쇼츠(잘 도는 편)를 재서 맞춘 값 — 초당 8자 낭독 (2026-08-18)
-  it('기본 배속은 1.33배', () => {
-    expect(SettingsSchema.parse({}).speechRate).toBe(1.33);
+  /*
+    타입캐스트를 배속별로 실제 합성해 맞춘 값 (2026-08-23).
+    1.33→5.23 · 1.5→6.08 · 1.6→6.51 · **1.7→6.56**음절/초 —
+    1.6 위에서는 거의 안 빨라진다. 앞뒤 무음이 배속을 따라가지 않아서다.
+  */
+  it('기본 배속은 1.6배 — 그 위는 음질만 잃고 분량은 그대로다', () => {
+    expect(SettingsSchema.parse({}).speechRate).toBe(1.6);
   });
 
   // 기본값(메뉴 미지정)은 해외영상 짜집기 기준이고, 그 기준은 기본 대본 스킬이 정한다.
@@ -17,11 +21,11 @@ describe('대본 분량 계산', () => {
     expect(TARGET_SEC.min).toBe(17);
   });
 
-  it('1.25배속에서 29초는 181음절', () => {
-    const b = syllableBudget(1.25);
-    expect(b.max).toBe(181);
-    expect(b.min).toBe(107);   // 17초
-    expect(b.recommended).toBe(138); // 22초
+  it('기본 배속 1.6에서 29초는 189음절', () => {
+    const b = syllableBudget(1.6);
+    expect(b.max).toBe(189);
+    expect(b.min).toBe(112);   // 17초
+    expect(b.recommended).toBe(144); // 22초
   });
 
   it('배속이 오르면 같은 시간에 더 많은 음절을 쓸 수 있다', () => {
@@ -29,8 +33,8 @@ describe('대본 분량 계산', () => {
     expect(syllableBudget(1.0).max).toBeLessThan(syllableBudget(1.25).max);
   });
 
-  it('정속(1.0)에서 29초는 145음절', () => {
-    expect(syllableBudget(1.0).max).toBe(145);
+  it('정속(1.0)에서 29초는 118음절', () => {
+    expect(syllableBudget(1.0).max).toBe(118);
   });
 
   it('음절 수 → 시간 환산이 역함수로 맞아떨어진다', () => {
@@ -46,8 +50,19 @@ describe('대본 분량 계산', () => {
     expect(estimateSeconds(287, 1.25)).toBeGreaterThan(TARGET_SEC.max);
   });
 
-  it('정속 낭독 속도는 분당 300음절', () => {
-    expect(SYLLABLES_PER_MIN).toBe(300);
+  /*
+    300은 추정치였고 22% 틀렸다. 배속을 바꿔가며 같은 문장을 합성해 정속으로
+    환산하니 236·243·244로 모였다 (2026-08-23). 예산이 6.65라 말하는데 실제로는
+    5.23이 나와, 예산을 통과한 대본이 상한을 넘었다 (151음절 → 27.8초, 상한 26초).
+  */
+  it('정속 낭독 속도는 분당 245음절 — 실측값이다', () => {
+    expect(SYLLABLES_PER_MIN).toBe(245);
+  });
+
+  it('기본 배속에서 밴드 6.5~8.0음절/초 안에 든다', () => {
+    const perSec = (SYLLABLES_PER_MIN * SettingsSchema.parse({}).speechRate) / 60;
+    expect(perSec).toBeGreaterThanOrEqual(6.5);
+    expect(perSec).toBeLessThanOrEqual(8.0);
   });
 
   describe('메뉴별 목표 길이', () => {
@@ -67,9 +82,9 @@ describe('대본 분량 계산', () => {
     });
 
     it('제품정보리뷰 분량이 해외영상 짜집기보다 짧게 계산된다', () => {
-      expect(syllableBudget(1.25, 'menu-b').max).toBeLessThan(syllableBudget(1.25, 'menu-a').max);
-      expect(syllableBudget(1.25, 'menu-b').recommended).toBe(138); // 22초
-      expect(syllableBudget(1.25, 'menu-b').max).toBe(162);         // 26초
+      expect(syllableBudget(1.6, 'menu-b').max).toBeLessThan(syllableBudget(1.6, 'menu-a').max);
+      expect(syllableBudget(1.6, 'menu-b').recommended).toBe(144); // 22초
+      expect(syllableBudget(1.6, 'menu-b').max).toBe(169);         // 26초
     });
 
     it('메뉴를 안 주면 해외영상 짜집기 기준을 쓴다 (기존 호출부 보호)', () => {
