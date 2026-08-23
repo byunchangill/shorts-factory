@@ -121,3 +121,60 @@ describe('강조 표시', () => {
     expect(ass).toContain(',1,7,0,2,30,30,672,1');
   });
 });
+
+/*
+  줄바꿈은 앞줄부터 꽉 채우지 않는다 (2026-08-23). 채워 넣으면 마지막 줄에 한 어절만
+  남아 — 실측에서 「함」 한 글자가 한 줄을 차지했다 — 그 순간 화면이 비어 보인다.
+*/
+describe('wrapKorean 균형 배분', () => {
+  const REAL = [
+    '침대 없는 신혼집이 늘고 있다는데 이유가 좀 의외였음',
+    '낮엔 소파, 밤엔 침대. 좁은 집에 오히려 최적이었다는 후기가 많더라',
+    '리모컨 하나로 이백 센티 침대. 전동 소파베드, 육십육만 원대부터',
+    '근데 리모컨에서 중국어 음성 나오고, 화물이라 일층에 두고 가기도 한다고 함',
+    '방 한 칸 아쉬운 사람 있으면 저장해뒀다가 보여주면 됨',
+  ];
+
+  it('어떤 줄도 상한을 넘지 않는다', () => {
+    for (const t of REAL) {
+      for (const l of wrapKorean(t, 14).split('\n')) expect(l.length).toBeLessThanOrEqual(14);
+    }
+  });
+
+  it('글자를 잃거나 더하지 않는다', () => {
+    for (const t of REAL) expect(wrapKorean(t, 14).replace(/\n/g, ' ')).toBe(t);
+  });
+
+  it('마지막 줄에 한 어절만 떨어뜨리지 않는다', () => {
+    for (const t of REAL) {
+      const lines = wrapKorean(t, 14).split('\n');
+      if (lines.length > 1) {
+        expect(lines[lines.length - 1].split(' ').length).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it('줄 수는 채워 넣기와 같다 — 균형을 잡자고 줄을 늘리지 않는다', () => {
+    // 늘리면 자막이 그만큼 빨리 넘어가 읽을 시간이 준다
+    expect(wrapKorean('근데 리모컨에서 중국어 음성 나오고, 화물이라 일층에 두고 가기도 한다고 함', 14)
+      .split('\n')).toHaveLength(4);
+    expect(wrapKorean('침대 없는 신혼집이 늘고 있다는데 이유가 좀 의외였음', 14)
+      .split('\n')).toHaveLength(3);
+  });
+
+  it('상한 안에 들면 안 자른다', () => {
+    expect(wrapKorean('짧은 문장', 14)).toBe('짧은 문장');
+  });
+
+  it('한 어절이 상한보다 길면 그 줄만 넘치게 둔다', () => {
+    const out = wrapKorean('가나다라마바사아자차카타파하가나다라 뒤', 14);
+    expect(out.replace(/\n/g, ' ')).toBe('가나다라마바사아자차카타파하가나다라 뒤');
+  });
+
+  it('강조 표시는 길이에 안 센다', () => {
+    // `*`는 화면에 안 보인다 — 세면 한 줄이 일찍 접힌다
+    const withMark = wrapKorean('리모컨 하나로 *이백 센티* 침대', 14).split('\n').length;
+    const without = wrapKorean('리모컨 하나로 이백 센티 침대', 14).split('\n').length;
+    expect(withMark).toBe(without);
+  });
+});
