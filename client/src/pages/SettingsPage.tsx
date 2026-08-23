@@ -21,6 +21,7 @@ interface Settings {
   iopaintPath: string;
   pythonPath: string;
   exportRoot: string;
+  assetsRepoUrl: string;
   exportIncludeSources: boolean;
   exportOnDone: boolean;
   defaultPacketMode: 'claude-code' | 'api' | 'manual';
@@ -126,6 +127,28 @@ export default function SettingsPage() {
       </Card>
 
       <SubtitleStyleCard form={form} set={set} />
+
+      <Card>
+        <h3 className="mb-3 font-medium">편집 재료 공용 저장소</h3>
+        <div className="space-y-3 text-sm">
+          <div>
+            <label className="mb-1 block font-medium">짤방·효과음 저장소 주소</label>
+            <Input
+              value={form.assetsRepoUrl}
+              onChange={(e) => set({ assetsRepoUrl: e.target.value })}
+              placeholder="https://github.com/사용자/shorts-assets.git (비우면 이 PC 자료만)"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              관리자가 이 저장소에 올리면 각 PC에서 <b>편집 재료</b> 화면의 「공용 자료 받기」로
+              내려받습니다. 각자 올리고 지운 것은 그 PC에만 남습니다.
+              <br />
+              이 앱 저장소가 아니라 <b>별도 저장소</b>를 쓰세요 — 이 저장소는 공개라 인터넷
+              짤을 커밋하면 남의 저작물을 공개 배포하는 셈이 됩니다.
+              private으로 두면 [API 키] 화면의 「자료 저장소 토큰」이 필요합니다.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <Card>
         <h3 className="mb-3 font-medium">산출물 저장 폴더</h3>

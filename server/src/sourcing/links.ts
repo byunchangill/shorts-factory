@@ -30,6 +30,41 @@ const BUILDERS: Record<SourcePlatform, (kw: string) => string> = {
   alibaba1688: (kw) => `https://s.1688.com/selloffer/offer_search.htm?keywords=${encodeURIComponent(kw)}`,
 };
 
+/**
+ * 소재 주소를 yt-dlp가 아는 형태로 고친다 (2026-08-23).
+ *
+ * 🔴 **`rednote.com`은 샤오홍슈의 국제판 도메인인데 yt-dlp 추출기에 등록돼 있지 않다.**
+ * 추출기 자체는 있다(`XiaoHongShu`) — 도메인만 못 알아본다. 그대로 넘기면 generic
+ * 추출기로 떨어지고, 앱이 쓰는 포맷 선택자(`-f bv*+ba/b`)와 만나 **`ERROR: Unsupported URL`**
+ * 로 끝난다 (2026-08-23 실측).
+ *
+ * 그래서 도메인과 경로만 `xiaohongshu.com/explore/{id}`로 바꿔 넘긴다. 실측에서 같은 글이
+ * 제목·길이·해상도까지 정상으로 나왔다.
+ *
+ * ⚠️ **쿼리를 잘라내면 안 된다.** `xsec_token`이 없으면 404로 넘어간다 — 토큰이 곧
+ * 열람 권한이다. 그래서 원본 쿼리를 통째로 들고 간다.
+ *
+ * 아는 형태가 아니면 **손대지 않고 그대로 돌려준다.** 여기서 추측해 고치면 멀쩡한 주소를
+ * 망가뜨린다.
+ */
+export function normalizeSourceUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    return raw;
+  }
+  if (!/(^|\.)rednote\.com$/i.test(u.hostname)) return raw;
+
+  // 글 id는 16자리 이상 16진수다. 경로 어디에 있든(search_result·explore·discovery/item) 집어낸다
+  const id = u.pathname.match(/([0-9a-f]{16,})/i)?.[1];
+  if (!id) return raw;
+
+  const out = new URL(`https://www.xiaohongshu.com/explore/${id}`);
+  out.search = u.search; // xsec_token을 반드시 살린다
+  return out.toString();
+}
+
 export function buildSearchUrl(platform: SourcePlatform, keyword: string): string {
   const kw = keyword.trim();
   if (!kw) throw new Error('검색어가 비어 있습니다');

@@ -25,6 +25,8 @@ describe('isWatchIgnored', () => {
       'menu-a/충전기/jobs/j1/output/final_v1.mp4',
       'menu-a/충전기/jobs/j1/voice/scene1.wav',
       'menu-a/충전기/jobs/j1/clips/c1/frames/f1.jpg',
+      // 자료실 — 공용 자료를 받을 때 git이 수백 개 파일을 한꺼번에 쓴다
+      'assets/shared/memes/a.gif',
       'cache\\youtube\\q.json',
     ]) {
       expect(isWatchIgnored(p)).toBe(true);

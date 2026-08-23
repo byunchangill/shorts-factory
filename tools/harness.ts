@@ -459,11 +459,21 @@ async function main(): Promise<void> {
     const bad = `http://127.0.0.1:${MEDIA_PORT}/not-a-video.html`;
     const added = await put<JobView>(`/jobs/${jid}/sources`, { urls: [bad] });
     const badId = added.sources.find((s) => s.url === bad)!.id;
-    // 앞 다운로드가 아직 돌고 있으면 시작 요청이 무시된다 (이중 실행 방지)
+    /*
+      앞 다운로드가 아직 돌고 있으면 시작 요청이 무시된다 (이중 실행 방지).
+
+      🔴 **소스가 「받음」이 된 뒤에도 큐는 한참 더 돈다** — `downloadOne`이 받은 뒤에
+      프레임 추출과 **글자 검출(OCR)**까지 이어서 하기 때문이다. 앞 단계는 상태만 보고
+      통과하므로 여기서 그 뒷일을 기다리게 된다.
+
+      상한이 30초였을 때, 글자 검출기가 **깔려 있는** PC에서만 이 단계가 터졌다
+      (2026-08-23 실측). 검출기가 없으면 그 대목을 건너뛰어 몇 초 만에 끝나서,
+      도구를 다 갖춘 PC일수록 하네스가 실패하는 뒤집힌 상황이었다.
+    */
     await waitFor('다운로드 큐 idle', async () => {
       const j = await get<JobView>(`/jobs/${jid}`);
       return j.downloading ? null : true;
-    }, 30_000);
+    }, 240_000);
     await post(`/jobs/${jid}/download/start`);
     await waitFor('실패 확정', async () => {
       const j = await get<JobView>(`/jobs/${jid}`);
@@ -799,8 +809,15 @@ async function main(): Promise<void> {
     }, 30_000);
     assert(p.validationErrors.length === 0, `스키마 오류: ${p.validationErrors.join(', ')}`);
     assert(p.executionMode === 'manual', `실행 방식 기록 오류: ${p.executionMode}`);
-    const j = await get<JobView>(`/jobs/${jid}`);
-    assert(j.script.currentVersion === 1, '대본 버전이 반영되지 않음');
+    /*
+      요청서가 「받음」이 되는 것과 잡에 대본 버전이 박히는 것은 **다른 쓰기**다.
+      상태만 기다리고 곧바로 잡을 읽으면 그 사이에 걸려 간헐적으로 터진다
+      (실측: 4번 중 2번). 검사하는 값을 그대로 기다린다.
+    */
+    const j = await waitFor('대본 버전 반영', async () => {
+      const v = await get<JobView>(`/jobs/${jid}`);
+      return v.script.currentVersion === 1 ? v : null;
+    }, 30_000);
     return '설명문 섞인 응답에서 JSON 추출 → script_v1 반영';
   });
 
@@ -1099,12 +1116,18 @@ async function main(): Promise<void> {
     // 포맷이 카테고리에 있으니 draft에 머무르지 않고 바로 다음 단계로 간다
     assert(bJob.state === 'format_selected', `menu-b 잡이 draft에 갇힘: ${bJob.state}`);
 
-    // 대본 스킬은 해외영상 짜집기 전용이다 — 제품정보리뷰까지 따라오면 안 된다
+    /*
+      메뉴마다 **다른 대본 스킬**이 깔린다 (`MENU_SKILL`).
+      제품정보리뷰는 썰형 교리 v1, 해외영상 짜집기는 템캐스팅 v3.3이다 —
+      두 포맷은 말투가 정반대라(반말 커뮤니티체 ↔ 존댓말 서사) 섞이면 대본이 흔들린다.
+    */
     const bGuide = await get<{ content: string }>(
       `/projects/menu-b/${encodeURIComponent(bProduct)}/guidelines/script.md`);
     assert(!bGuide.content.includes('템캐스팅'),
       'menu-a 대본 스킬이 제품정보리뷰 지침으로 새어 들어옴');
-    assert(bGuide.content.includes('대본 지침'), 'menu-b 기본 지침이 깔리지 않음');
+    assert(bGuide.content.includes('썰형'), 'menu-b 기본 대본 스킬이 깔리지 않음');
+    assert(bGuide.content.includes('isDownside'),
+      '제품정보리뷰 지침에 단점 씬 규칙이 없음 — 코드가 강제하는 규칙이라 지침에도 있어야 한다');
 
     /*
       ① 요청서가 menu-b 기준(26초)과 그 메뉴의 분량, 단점 씬 규칙을 담아야 한다.
@@ -1289,6 +1312,48 @@ async function main(): Promise<void> {
     assert(names.some((n) => n === '03_자막/자막.srt'), `자막이 없음: ${names.join(', ')}`);
     assert(names.some((n) => n === '읽어보세요.md'), '안내문이 없음');
     return `${videos.length}씬 · 영상·음성·자막·안내문`;
+  });
+
+  /*
+    자료실(짤방·효과음)에서 담은 것은 캡컷 묶음에 같이 들어간다.
+
+    씬 폴더와 달리 **번호를 안 붙인다** — 타임라인에 자동으로 얹힐 것이 아니라
+    사람이 필요할 때 골라 쓰는 것이라, 번호가 붙으면 씬과 짝인 것처럼 보인다.
+  */
+  await step('편집 재료 — 자료실에 올려 잡에 담으면 캡컷 묶음에 들어간다', async () => {
+    const fd = new FormData();
+    fd.append('files', new Blob([Buffer.from('GIF89a')], { type: 'image/gif' }), '놀란 고양이.gif');
+    const up = await fetch(`${API}/assets?kind=meme`, { method: 'POST', body: fd });
+    const upText = await up.text(); // 본문은 한 번만 읽을 수 있다
+    assert(up.ok, `자료 올리기 실패: ${up.status} ${upText}`);
+    const { added } = JSON.parse(upText) as { added: string[] };
+    assert(added.length === 1, `올린 자료 수가 다름: ${added.length}`);
+
+    const listed = await get<{ items: Array<{ id: string; title: string; origin: string }> }>('/assets');
+    const mine = listed.items.find((i) => i.id === added[0]);
+    assert(mine?.origin === 'local', '올린 자료가 이 PC 자료로 잡히지 않음');
+    // 저장 파일명은 슬러그라도 제목은 원래 이름이 남아야 목록에서 알아본다
+    assert(mine!.title === '놀란 고양이', `제목이 원래 이름이 아님: ${mine!.title}`);
+
+    await put(`/jobs/${jid}/assets`, { assets: added });
+    const r = await fetch(`${API}/jobs/${jid}/download/capcut`);
+    assert(r.status === 200, `캡컷 묶음 실패: ${r.status}`);
+    const names = readZip(Buffer.from(await r.arrayBuffer())).map((e) => e.name);
+    assert(names.includes('04_짤방/놀란 고양이.gif'),
+      `담은 짤방이 묶음에 없음: ${names.filter((n) => n.startsWith('04')).join(', ')}`);
+
+    /*
+      담아둔 뒤 자료실에서 지워도 묶음은 나와야 한다 — 담은 것 하나 때문에
+      묶음 전체를 못 받으면 안 된다 (`resolveAssets`가 없어진 id를 조용히 뺀다).
+    */
+    const del = await fetch(`${API}/assets/${encodeURIComponent(added[0])}`, { method: 'DELETE' });
+    assert(del.ok, `자료 삭제 실패: ${del.status}`);
+    const after = await fetch(`${API}/jobs/${jid}/download/capcut`);
+    assert(after.status === 200, `지운 뒤 캡컷 묶음이 깨짐: ${after.status}`);
+    const afterNames = readZip(Buffer.from(await after.arrayBuffer())).map((e) => e.name);
+    assert(!afterNames.some((n) => n.startsWith('04_짤방/')),
+      '자료실에서 지웠는데 묶음에 그대로 들어 있음');
+    return '올리기 → 담기 → 묶음 포함 → 지운 뒤에도 묶음 정상';
   });
 
   // ── 상태 파일 무결성 ──

@@ -95,6 +95,14 @@ const MENU_SKILL: Partial<Record<Menu, string>> = {
     그 톤이 필요한 카테고리는 화면에서 지침을 바꾼다.
   */
   'menu-a': fileURLToPath(new URL('../../../.claude/skills/temcasting-v33/SKILL.md', import.meta.url)),
+  /*
+    제품정보리뷰는 **썰형 교리 v1**이다 (2026-08-23 이식).
+    출처가 둘이라 스킬이 충돌 자리를 먼저 정리한다 — 썰형 가이드(반말 커뮤니티체·간접
+    화법·호기심 훅)와 이 채널이 이미 세워둔 방어선(단점 씬 필수·과장 금지·18~26초)이
+    부딪히는 네 자리다. 곧이곧대로 합치면 「~라고 하더라」가 근거 없는 효능 주장의
+    방패가 된다.
+  */
+  'menu-b': fileURLToPath(new URL('../../../.claude/skills/ssul-shopping/SKILL.md', import.meta.url)),
 };
 
 /** 스킬 문서의 앞머리(name/description)는 지침이 아니다 — 본문만 쓴다 */

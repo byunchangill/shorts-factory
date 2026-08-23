@@ -17,6 +17,7 @@ import { ProgressRail, StepGuide } from '@/components/pipeline';
 import { PacketCard, type PacketInfo } from '@/components/PacketCard';
 import { ZoneEditor, type ZoneDraft } from '@/components/ZoneEditor';
 import { SegmentPicker, type SegmentDraft } from '@/components/SegmentPicker';
+import { AssetPicker } from '@/components/AssetPicker';
 
 interface SourceInfo {
   id: string; url: string; origin: 'url' | 'file'; status: string; attempts: number; progress: number;
@@ -28,6 +29,8 @@ interface JobDetail {
   sources: SourceInfo[];
   script: { currentVersion: number; approved: boolean };
   rightsConfirmed: boolean;
+  /** 자료실에서 이 편에 담아둔 짤방·효과음 id */
+  assets: string[];
   typecastVoiceId?: string;
   sceneVoiceFiles: Record<string, string>;
   exportedAt?: string;
@@ -131,14 +134,26 @@ export default function JobPage() {
           {/* 무엇을 하는 단계이고 지금 뭘 해야 하는지 — 패널보다 먼저 읽히도록 맨 위에 둔다 */}
           <StepGuide menu={j.menu} pipeline={j.pipeline} state={j.state} viewing={viewState ?? undefined} />
           {/*
-            영상 소재는 해외영상 짜집기 전용이다. 메뉴로 가르지 않으면 제품정보리뷰의 `draft`에도
-            이 패널이 떠서 "영상 주소를 넣으세요"라고 시킨다 — 영상을 쓰지 않는 메뉴인데도
+            소재 패널이 열리는 **첫 단계가 메뉴마다 다르다**. 해외영상 짜집기는 `draft`부터지만,
+            제품정보리뷰는 포맷을 먼저 고르므로 `format_selected`부터다 (2026-08-23).
+            단계 이름만 보고 고르면 제품정보리뷰의 `draft`에 영상 패널이 떠서, 포맷도 안 정한
+            잡에 영상을 넣게 된다 — 그 잡은 포맷이 없어 대본을 못 쓴다.
           */}
-          {j.menu === 'menu-a' && ['draft', 'collecting', 'downloading'].includes(panelState) && (
-            <SourcesPanel job={j} />
+          {(j.menu === 'menu-a'
+            ? ['draft', 'collecting', 'downloading']
+            : ['format_selected', 'collecting', 'downloading']
+          ).includes(panelState) && (
+            <>
+              <SourcesPanel job={j} />
+              {/*
+                제품자료도 여기서 받는다 — 소재 넣는 자리가 곧 「재료를 붓는 자리」다.
+                대본 화면에도 그대로 뜨므로 나중에 채워도 된다
+              */}
+              {j.menu === 'menu-b' && <ProductPanel jobId={j.id} />}
+            </>
           )}
           {['analyzing', 'cleaning'].includes(panelState) && <ClipsPanel job={j} />}
-          {['scripting', 'script_approved', 'format_selected'].includes(panelState) && (
+          {['scripting', 'script_approved'].includes(panelState) && (
             <>
               {/* 제품자료는 작업마다 따로다 — 대본의 재료라 대본 화면과 같은 자리에 둔다 */}
               <ProductPanel jobId={j.id} />
@@ -1246,6 +1261,11 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             <Download size={14} /> 캡컷 재료 받기
           </button>
         </div>
+        <AssetPicker
+          jobId={job.id}
+          picked={job.assets ?? []}
+          onChange={() => void qc.invalidateQueries({ queryKey: ['job', job.id] })}
+        />
       </Card>
 
       <Card>

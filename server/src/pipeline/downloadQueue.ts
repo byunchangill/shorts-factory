@@ -5,6 +5,7 @@ import type { Settings, SourceUrl, Clip, Zone } from '@shared/types';
 import { ClipSchema } from '@shared/types';
 import { run, toolFailureMessage } from '../util/exec.js';
 import { needsBrowserDownload, downloadViaBrowser } from '../sourcing/browserDownload.js';
+import { normalizeSourceUrl } from '../sourcing/links.js';
 import { readJson, ensureDir } from '../util/fsx.js';
 import { broadcast } from '../sse.js';
 import { type JobRef, mutateJob, readJob, logJobEvent, writeClip, readClip, advanceTo } from '../store/jobs.js';
@@ -120,11 +121,17 @@ async function downloadOne(
   });
 
   const outTemplate = path.join(sourcesDir, `${sourceId}.%(ext)s`);
+  /*
+    받기 직전에 한 번 더 고친다. 입력할 때도 고치지만, **이미 job.json에 적혀 있는 주소**는
+    그때 못 고쳤다 — 그 잡들이 계속 실패하면 원인이 코드에 있는지 사이트에 있는지 알 수 없다.
+    이 함수는 아는 형태만 건드리고 나머지는 그대로 돌려주므로 두 번 걸어도 안전하다.
+  */
+  const url = normalizeSourceUrl(source.url);
   try {
     // 틱톡은 yt-dlp를 지문으로 걸러낸다 — 앱이 검색에 쓰는 브라우저로 받는다 (browserDownload.ts)
     let browserUploader: string | undefined;
-    if (needsBrowserDownload(source.url)) {
-      const r = await downloadViaBrowser(source.url, path.join(sourcesDir, `${sourceId}.mp4`));
+    if (needsBrowserDownload(url)) {
+      const r = await downloadViaBrowser(url, path.join(sourcesDir, `${sourceId}.mp4`));
       browserUploader = r.uploader;
       // 브라우저 경로는 한 번에 받아 진행률 단계가 없다 — 끝난 것만 알린다
       broadcast('source.progress', { jobId: ref.jobId, sourceId, progress: 100 });
@@ -137,7 +144,7 @@ async function downloadOne(
           '-f', 'bv*[height<=1080]+ba/b',
           '--merge-output-format', 'mp4',
           '-o', outTemplate,
-          source.url,
+          url,
         ],
         {
           onStdout: (line) => {

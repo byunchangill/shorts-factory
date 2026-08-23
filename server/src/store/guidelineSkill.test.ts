@@ -3,6 +3,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { skillBody } from './projects.js';
+import { SettingsSchema } from '@shared/types';
+
+/** 지침과 앱이 같은 배속을 말해야 한다 — 숫자를 박아 두면 이 파일만 옛 값으로 남는다 */
+const RATE = SettingsSchema.parse({}).speechRate;
 
 const SKILL = fileURLToPath(
   new URL('../../../.claude/skills/temcasting-v33/SKILL.md', import.meta.url));
@@ -90,9 +94,69 @@ describe('해외영상 짜집기 기본 대본 스킬', () => {
   it('스킬의 분량 환산표가 앱의 계산과 같다', async () => {
     const body = skillBody(await fsp.readFile(SKILL, 'utf8'));
     const { syllableBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
-    const b = syllableBudget(1.33, 'menu-a'); // 기본 배속 (Settings.speechRate)
+    const b = syllableBudget(RATE, 'menu-a');
     const t = TARGET_SEC_BY_MENU['menu-a'];
     expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}음절`);
     expect(body).toContain(`**${b.max}음절을 넘지 않는다**`);
+  });
+});
+
+const SKILL_B = fileURLToPath(
+  new URL('../../../.claude/skills/ssul-shopping/SKILL.md', import.meta.url));
+
+describe('제품정보리뷰 기본 대본 스킬', () => {
+  it('저장소에 들어 있다 — 어느 PC에서 받아도 같은 지침으로 시작해야 한다', async () => {
+    await expect(fsp.access(SKILL_B)).resolves.toBeUndefined();
+  });
+
+  it('바깥 파일을 읽으라고 시키지 않는다 — 요청서에는 본문만 실린다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body).not.toMatch(/references\//);
+  });
+
+  it('본문만 뽑아도 지침 구실을 한다 (앞머리를 뗀 뒤 내용이 남는다)', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body.startsWith('---')).toBe(false);
+    expect(body.length).toBeGreaterThan(500);
+  });
+
+  it('스킬이 말하는 초 수와 앱의 목표가 어긋나지 않는다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    const { TARGET_SEC_BY_MENU } = await import('@shared/constants');
+    const t = TARGET_SEC_BY_MENU['menu-b'];
+    expect(body).toContain(`${t.min}~${t.max}초`);
+    expect(body).toContain(`${t.max}초를 넘기지 않는다`);
+  });
+
+  it('스킬의 분량 환산표가 앱의 계산과 같다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    const { syllableBudget, TARGET_SEC_BY_MENU } = await import('@shared/constants');
+    const b = syllableBudget(RATE, 'menu-b');
+    const t = TARGET_SEC_BY_MENU['menu-b'];
+    expect(body).toContain(`${t.recommended}초 (기본) | 약 ${b.recommended}음절`);
+    expect(body).toContain(`**${b.max}음절을 넘지 않는다**`);
+    expect(body).toContain(`${b.min}~${b.max}`);
+  });
+
+  it('요청서로 실행할 때는 result/에만 쓰라고 말한다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body).toContain('`result/`에만');
+    expect(body).toContain('result/.done');
+    expect(body).toContain('건너뛴다');
+  });
+
+  it('씬 하나에 한 문장 규칙이 들어 있다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body).toContain('씬 하나에 문장 하나');
+  });
+
+  /*
+    썰형 가이드를 그대로 옮기면 「~라고 하더라」가 근거 없는 효능 주장의 방패가 된다.
+    이 채널이 이미 세워둔 방어선(단점 씬·과장 금지)이 스킬 안에 남아 있어야 한다.
+  */
+  it('단점 씬과 지어내기 금지가 살아 있다 — 썰형이 덮어쓰면 안 되는 자리다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body).toContain('isDownside');
+    expect(body).toContain('제품 자료에 없는 수치·사양을 지어내지 않는다');
   });
 });

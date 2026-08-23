@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { doctrineErrors, doctrineWarnings, endingOf, leadWindow } from './doctrine.js';
 import { syllableBudget, syllables } from './constants.js';
+import { SettingsSchema } from './types.js';
 
 /*
   교리 v3.3 검사기. 게이트가 **통과시켜야 할 대본을 통과시키는지**가 제일 중요하다 —
   너무 빡빡하면 아무 대본도 못 나가고, 그러면 규칙을 끄게 된다.
   아래 통과 대본은 레퍼런스 구조(집주인 대사 인용 훅 + 금전 손실 + 정보원)를 그대로 밟는다.
 */
-const RATE = 1.33;
+/*
+  앱의 기본 배속에서 검사한다. 숫자를 여기 박아 두면 기본값이 바뀔 때 이 파일만
+  옛 값으로 남아, 아무도 안 쓰는 배속에서만 통과하는 대본을 「통과한다」고 증언한다.
+*/
+const RATE = SettingsSchema.parse({}).speechRate;
 
 const GOOD = [
   ['s1', 'hook', '나가실 때 원상 복구해 주세요'],

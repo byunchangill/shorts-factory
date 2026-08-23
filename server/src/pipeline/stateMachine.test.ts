@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { canTransition, progressOf, statesFor } from './stateMachine.js';
+import { MENU_B_STATES } from '@shared/constants';
+import { canTransition, progressOf, sourceEntryState, statesFor } from './stateMachine.js';
 
 describe('stateMachine', () => {
   it('menu-a 순방향 전이 허용', () => {
@@ -29,8 +30,31 @@ describe('stateMachine', () => {
 
   it('menu-b 상태 흐름', () => {
     expect(canTransition('menu-b', 'draft', 'format_selected')).toBe(true);
-    expect(canTransition('menu-b', 'format_selected', 'scripting')).toBe(true);
+    // 포맷 다음은 대본이 아니라 **영상 소재**다 (2026-08-23) — 소재가 대본의 재료라 앞선다
+    expect(canTransition('menu-b', 'format_selected', 'collecting')).toBe(true);
+    expect(canTransition('menu-b', 'format_selected', 'scripting')).toBe(false);
+    expect(canTransition('menu-b', 'cleaning', 'scripting')).toBe(true);
     expect(canTransition('menu-b', 'script_approved', 'scening')).toBe(true);
+  });
+
+  /**
+   * 제품정보리뷰도 영상을 쓴다. 소재 구간이 빠지면 영상을 넣을 자리가 없어지고,
+   * 화면은 「영상 넣기」 버튼을 띄운 채 전이에서 터진다.
+   */
+  it('menu-b 흐름에 영상 소재 구간이 있다', () => {
+    for (const s of ['collecting', 'downloading', 'analyzing', 'cleaning'] as const) {
+      expect(MENU_B_STATES).toContain(s);
+    }
+    expect(MENU_B_STATES.indexOf('collecting')).toBe(MENU_B_STATES.indexOf('format_selected') + 1);
+  });
+
+  it('소재를 넣기 시작하는 단계가 메뉴마다 다르다', () => {
+    expect(sourceEntryState('menu-a')).toBe('draft');
+    expect(sourceEntryState('menu-b')).toBe('format_selected');
+    // 그 단계에서 collecting으로 갈 수 있어야 한다 — 아니면 소재만 들어가고 단계가 멈춘다
+    for (const menu of ['menu-a', 'menu-b'] as const) {
+      expect(canTransition(menu, sourceEntryState(menu), 'collecting')).toBe(true);
+    }
   });
 
   it('진행률 계산', () => {

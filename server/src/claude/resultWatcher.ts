@@ -20,6 +20,12 @@ const SWEEP_INTERVAL_MS = 5_000;
 /** 워처가 들어갈 필요가 없는 무거운 폴더 — 영상·프레임·음성은 감시 대상이 아니다 */
 const HEAVY_DIRS = new Set([
   'sources', 'output', 'clips', 'frames', 'voice', 'subtitles', 'cache', 'product',
+  /*
+    자료실(짤방·효과음). 공용 자료를 받을 때 git이 수백 개 파일을 한꺼번에 쓰는데,
+    요청서와 아무 상관이 없는 이벤트라 통째로 뺀다 — 여기 없는 `.done`을 찾느라
+    동기화 한 번에 워처가 수백 번 헛돈다.
+  */
+  'assets',
   // 삭제한 잡·카테고리가 옮겨지는 곳 (store/remove.ts). 그 안에도 처리 대기 중이던
   // requests/*/result/.done 가 그대로 들어 있어, 감시하면 이미 지운 잡의 결과를 다시 물어온다
   '.trash',
@@ -108,7 +114,31 @@ export function startResultSweep(): void {
   sweepTimer.unref?.();
 }
 
+/**
+ * 지금 반영 중인 요청서.
+ *
+ * 🔴 **한 요청서가 두 번 반영되는 것을 막는다.** 서버가 직접 쓴 결과(붙여넣기·API 자동)는
+ * `writeResultFiles`가 `.done`을 남긴 **뒤** 곧바로 이 함수를 부르는데, 그 `.done`을 워처도
+ * 본다. 아래 `status !== 'waiting'` 검사만으로는 못 막는다 — 둘 다 「받음」을 쓰기 전에
+ * 들어와 둘 다 통과하기 때문이다.
+ *
+ * 그러면 같은 대본이 `script_v1`·`script_v2`로 두 번 저장되고 잡의 현재 버전이 2가 된다
+ * (2026-08-23 실측: 하네스가 약 50% 확률로 여기서 걸렸다). 버전이 조용히 하나씩
+ * 밀리는 것이라 화면만 봐서는 원인을 짚을 수 없다.
+ */
+const ingesting = new Set<string>();
+
 export async function ingestPacketResult(packetId: string): Promise<void> {
+  if (ingesting.has(packetId)) return;
+  ingesting.add(packetId);
+  try {
+    await ingestOnce(packetId);
+  } finally {
+    ingesting.delete(packetId);
+  }
+}
+
+async function ingestOnce(packetId: string): Promise<void> {
   const packet = await readPacket(packetId);
   if (!packet || packet.status !== 'waiting') return;
   const dir = resolvePacketDir(packetId);

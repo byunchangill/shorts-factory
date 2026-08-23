@@ -10,19 +10,28 @@ import {
 */
 
 describe('stateGuide', () => {
-  it('제품정보리뷰의 초안에서 영상을 요구하지 않는다', () => {
+  /*
+    제품정보리뷰도 영상을 쓰지만(2026-08-23), 영상을 받는 자리는 `draft`가 아니라
+    포맷을 고른 **다음**이다. 초안에서 영상부터 요구하면 포맷 없는 잡에 소재가 쌓이고
+    그 잡은 대본을 못 쓴다.
+  */
+  it('제품정보리뷰의 초안은 영상이 아니라 포맷을 요구한다', () => {
     const g = stateGuide('menu-b', 'draft')!;
     expect(g.todo).not.toMatch(/영상 주소|영상 파일/);
     expect(g.todo).toMatch(/포맷/);
+  });
+
+  it('제품정보리뷰는 포맷을 고른 뒤에 영상을 요구한다', () => {
+    expect(stateGuide('menu-b', 'format_selected')!.todo).toMatch(/영상/);
   });
 
   it('해외영상 짜집기의 초안은 영상 주소를 요구한다', () => {
     expect(stateGuide('menu-a', 'draft')!.todo).toMatch(/영상 주소/);
   });
 
-  it('대본 승인 뒤 할 일이 메뉴마다 다르다 (컷 선택 vs 씬 이미지)', () => {
-    expect(stateGuide('menu-a', 'script_approved')!.todo).not.toMatch(/씬 이미지/);
-    expect(stateGuide('menu-b', 'script_approved')!.todo).toMatch(/씬 이미지/);
+  it('대본 승인 뒤 할 일이 메뉴마다 다르다 (곧장 음성 vs 빈 씬 메우기)', () => {
+    expect(stateGuide('menu-a', 'script_approved')!.todo).not.toMatch(/이미지/);
+    expect(stateGuide('menu-b', 'script_approved')!.todo).toMatch(/이미지/);
   });
 
   it('뜻이 같은 단계는 두 메뉴가 같은 문구를 쓴다', () => {
@@ -46,7 +55,8 @@ describe('stateNextAction', () => {
   it('대본 승인 뒤 안내가 메뉴마다 다르다', () => {
     // menu-a는 곧장 음성이다 — 쓸 구간은 장면 고르기에서 이미 정해졌다
     expect(stateNextAction('menu-a', 'script_approved')).toBe('음성 만들기');
-    expect(stateNextAction('menu-b', 'script_approved')).toMatch(/씬 이미지/);
+    // menu-b는 클립이 안 붙은 씬을 먼저 메운다
+    expect(stateNextAction('menu-b', 'script_approved')).toMatch(/씬/);
   });
 
   /** 컷 선택을 없앤 뒤 menu-a 흐름에 그 단계가 남아 있으면 화면에 빈 단계가 뜬다 */
