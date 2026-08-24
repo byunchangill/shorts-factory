@@ -995,11 +995,35 @@ async function main(): Promise<void> {
     */
     const narrationTotal = timingsTotal;
     const videoDur = Number(probe.format.duration);
+    /*
+      카드 한 장이 1.5초라 이 검사는 **카드가 샜는지**만 본다. 여기를 조이면 안 된다 —
+      `timingsTotal`은 첨부한 mp3의 **컨테이너** 길이 합이고, 실제로 조립에 들어가는
+      것은 규격을 맞춰 다시 인코딩한 음성이라 mp3 프레임 패딩만큼(씬당 0.064초) 짧다.
+      길이가 맞는지는 아래에서 영상 자신의 오디오 트랙으로 본다.
+    */
     assert(Math.abs(videoDur - narrationTotal) < 1.0,
       `카드가 새어 들어갔거나 싱크가 깨짐 (영상 ${videoDur.toFixed(1)}초 / 나레이션 ${narrationTotal.toFixed(1)}초)`);
+
+    /*
+      🔴 여기는 **조인다.** 예전엔 1.0초까지 봐줘서 씬마다 0.064초씩 어긋난 것이
+      열 씬 쌓여 0.6초가 돼도 통과했다 — `-shortest`가 짧은 쪽에 맞춰 조용히 잘라내
+      화면만 봐서는 아무 표가 안 났다 (2026-08-24). 조립의 길이 불변식이 이걸 막으므로
+      여기서도 같은 눈으로 봐야 게이트가 실제로 도는지 확인된다.
+    */
     const audioDur = await streamDuration(finalPath, 'a');
-    assert(Math.abs(audioDur - videoDur) < 1.0,
-      `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(1)}초, 오디오 ${audioDur.toFixed(1)}초)`);
+    assert(Math.abs(audioDur - videoDur) < 0.15,
+      `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(3)}초, 오디오 ${audioDur.toFixed(3)}초)`);
+
+    /*
+      자막 시각은 조립이 계획한 길이 위에 잡힌다. 그 계획이 실제 음성보다 길면
+      자막이 통째로 늦게 뜨는데, 마지막 큐가 영상 밖으로 밀려나야 비로소 눈에 띈다.
+      마지막 큐(공시문구)의 끝이 영상 끝을 넘지 않는지로 그 밀림을 잡는다.
+    */
+    const ends = [...srt.matchAll(/--> (\d\d):(\d\d):(\d\d),(\d\d\d)/g)]
+      .map((m) => Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000);
+    const lastCueEnd = Math.max(...ends);
+    assert(lastCueEnd <= videoDur + 0.15,
+      `자막이 영상 밖으로 밀렸습니다 — 마지막 큐 ${lastCueEnd.toFixed(3)}초 / 영상 ${videoDur.toFixed(3)}초`);
 
     const cardCount = Math.round((videoDur - narrationTotal) / 1.5);
     return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
