@@ -92,12 +92,44 @@ export interface AssembleInput {
 }
 
 /**
+ * 씬 하나를 **몇 컷으로 쪼갰고, 그 컷들이 소재를 몇 개 썼는가** (2026-08-24).
+ *
+ * 컷 조각(`tmp/seg_XX_K.mp4`)은 렌더가 끝나면 지워진다 — 나간 편이 몇 컷이었는지
+ * 되짚을 길이 없었다. 성과 대장에서 성적이 갈릴 때 대조할 값이 없다는 뜻이다.
+ *
+ * 🔴 **컷 수보다 `sources`가 중요하다.** 소재가 하나면 컷은 늘어도 같은 영상의 뒤 구간을
+ * 이어 튼 것이라 **화면이 안 바뀐다** — 소재를 더 넣으라는 신호다. 쪼개기를 넣은 이유가
+ * 「컷 간격 중앙값 1.6~2.0초」였으니, 그게 지켜졌는지도 컷 수와 씬 길이로 여기서 나온다.
+ */
+export interface SceneCutPlan {
+  sceneId: string;
+  /** 이 씬을 이룬 컷 수 (이미지 씬은 1) */
+  cuts: number;
+  /** 그 컷들이 실제로 꺼내 쓴 서로 다른 소재 수 */
+  sources: number;
+  /**
+   * 컷 길이의 합 — **나레이션 길이와 같아야 한다.**
+   *
+   * 🔴 **결과물로는 이게 어긋난 걸 못 본다.** 최종 먹싱이 `-shortest`라, 컷 합이 길어지면
+   * 영상 뒤가 조용히 잘려 출력 길이가 **정확히** 나레이션 길이가 된다 — 화면은 누적으로
+   * 밀리고 마지막 씬 뒤는 사라지는데 총 길이만 보면 완벽해 보인다 (2026-08-24 실측:
+   * 컷을 15% 늘려도 출력은 0.02초 차였다). 짧아지는 쪽만 결과에 드러난다.
+   *
+   * 그래서 **계획을 적어 둔다.** 어긋나면 오디오·자막이 통째로 밀린 편이라는 뜻이다.
+   */
+  sec: number;
+}
+
+/**
  * 씬별 비주얼 소스 결정:
  * - menu-a: clipRef → 정리본(clean) 우선, 없으면 원본 다운로드 파일
  * - menu-b: imageRef (씬 이미지) → Ken Burns 줌
  * 나레이션 길이에 맞춰 각 씬을 재단하고 concat → 자막 번인 → 최종 mp4.
  */
-export async function assembleFinal(settings: Settings, input: AssembleInput): Promise<string> {
+export async function assembleFinal(
+  settings: Settings,
+  input: AssembleInput,
+): Promise<{ path: string; cuts: SceneCutPlan[] }> {
   const { script, timings, jobDir, version } = input;
   const outDir = path.join(jobDir, 'output');
   const tmpDir = path.join(outDir, 'tmp');
@@ -113,6 +145,8 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
    * 비디오·오디오·자막을 모두 이 하나의 타임라인에서 계산한다.
    */
   const timeline: Array<{ kind: 'card' | 'scene'; file: string; dur: number; sceneIdx?: number }> = [];
+  /** 씬별 컷 계획 — 감사 로그에 남긴다 (렌더가 끝나면 컷 조각은 지워진다) */
+  const cutPlan: SceneCutPlan[] = [];
 
   // 1) 씬별 세그먼트 렌더 (나레이션 길이에 맞춤)
   for (let i = 0; i < script.scenes.length; i++) {
@@ -148,6 +182,14 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     }
 
     const visual = await resolveVisual(scene, input, i, dur, settings);
+    cutPlan.push({
+      sceneId: scene.sceneId,
+      cuts: visual.type === 'video' ? visual.cuts.length : 1,
+      // 같은 파일을 여러 컷이 나눠 쓸 수 있다 — 「화면이 바뀌었나」는 파일 수로만 답이 된다
+      sources: visual.type === 'video' ? new Set(visual.cuts.map((c) => c.path)).size : 1,
+      // 이미지 씬은 `dur`을 통째로 한 장으로 채운다
+      sec: visual.type === 'video' ? visual.cuts.reduce((a, c) => a + c.dur, 0) : dur,
+    });
     /*
       훅 게이트 — 첫 씬이 거의 멈춰 있으면 렌더 전에 막는다.
       몇 분을 인코딩한 뒤 「계속 시청함」이 20% 아래로 나오는 것보다 여기서 끝내는 게 싸다.
@@ -364,7 +406,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   ], { cwd: assRef.cwd });
 
   await fsp.rm(tmpDir, { recursive: true, force: true });
-  return finalPath;
+  return { path: finalPath, cuts: cutPlan };
 }
 
 /**
