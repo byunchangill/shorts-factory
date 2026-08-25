@@ -19,6 +19,9 @@ const W = 1080;
 const H = 1920;
 const FPS = 30;
 
+/** 인트로 제목 한 줄 글자 수 — 띠 제목(13자)보다 크게 쓰므로 더 적게 끊는다 */
+const INTRO_CHARS_PER_LINE = 11;
+
 /** 씬 하나의 최소 길이 — 이보다 짧으면 화면이 깜빡이고 자막을 못 읽는다 */
 const MIN_SCENE_SEC = 1;
 
@@ -208,7 +211,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
       }
     }
     if (visual.type === 'video') {
-      const layout = buildLayoutFilter(settings, fontRef?.arg ?? null, input.headline ?? script.title);
+      const headline = input.headline ?? script.title;
       const cutFiles: string[] = [];
       let from = 0;
       for (const [k, cut] of visual.cuts.entries()) {
@@ -217,6 +220,21 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
           컷 경계를 물면 양쪽 컷에 나뉘어 걸려 화면에서는 이어져 보인다.
         */
         const meme = memeOverlayFor(scene, dur, settings, input.assetPaths, { from, dur: cut.dur });
+        /*
+          인트로 제목은 **컷마다 다시 건다.** 컷을 쪼개면 첫 컷이 2초보다 짧을 수 있어
+          (`maxClipExposureSec` 기본 2초) 한 컷에만 걸면 제목이 경계에서 잘린다.
+          레이아웃 뒤에 붙어 좌우반전을 안 탄다 — 앞에 걸면 제목이 거울 글자가 된다.
+        */
+        const at = { menu: input.menu, sceneIdx: i, from };
+        const intro = introTitleFilter(settings, fontRef?.arg ?? null, headline, at);
+        /*
+          레이아웃도 컷마다 다시 만든다 — 인트로 제목이 떠 있는 동안 띠 제목을 물려야
+          같은 문구가 두 번 안 찍힌다. 문자열 조립뿐이라 비용은 없다.
+        */
+        const layout = buildLayoutFilter(
+          settings, fontRef?.arg ?? null, headline, introTitleWindow(settings, at),
+        );
+        const vf = layout + intro;
         const cutOut = visual.cuts.length === 1
           ? segOut
           : path.join(tmpDir, `seg_${String(i + 1).padStart(2, '0')}_${k + 1}.mp4`);
@@ -228,7 +246,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
             ...(meme.animated ? ['-ignore_loop', '0'] : []),
             '-i', meme.path,
             '-t', cut.dur.toFixed(3),
-            '-filter_complex', `[0:v]${layout}[base];${meme.filter}`,
+            '-filter_complex', `[0:v]${vf}[base];${meme.filter}`,
             '-map', '[v]',
             '-an',
             '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
@@ -238,7 +256,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
             '-y',
             '-ss', String(cut.in), '-i', cut.path,
             '-t', cut.dur.toFixed(3),
-            '-vf', layout,
+            '-vf', vf,
             '-an',
             '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
             cutOut,
@@ -578,10 +596,81 @@ function bandedFilter(
   headline: string,
   pre: string,
   base: string,
+  hideTitleUntil: number,
 ): string {
   // 소스는 화면을 꽉 채운다 — 띠가 덮을 뿐 소스를 줄이지 않는다
   const fill = `${pre}scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
-  return `${fill}${overlayBands(settings, fontArg, headline)},${base}`;
+  return `${fill}${overlayBands(settings, fontArg, headline, hideTitleUntil)},${base}`;
+}
+
+/**
+ * 인트로 타이틀 — **첫 컷 위에 얹는** 큰 제목.
+ *
+ * 벤치마킹 쇼츠 3편이 전부 1.8~2.2초짜리 제목으로 연다. 🔴 **정지 카드로 만들면 안 된다** —
+ * 그 셋을 우리 훅 게이트로 채점하니 10.6·18.4·22.2로 전부 통과했다. 정지 화면이 아니라
+ * **움직이는 영상 위에 글자를 얹은 것**이다. 그래서 카드를 새로 렌더하지 않고 원래 돌던
+ * 컷 위에 `drawtext`로만 그린다 — 화면은 계속 움직이고 길이도 안 늘어난다.
+ *
+ * 🔴 **제품정보리뷰에만 넣는다.** 해외영상 짜집기는 음성=자막이고 「말하지 않을 것은
+ * 화면에도 없다」가 첫 규칙이라, 안 읽는 제목을 띄우는 순간 그 규칙이 깨진다. 게다가
+ * v3.3의 훅 블록은 **제품 언급 0**인데 제품명이 첫 화면에 대문짝만하게 뜨면 정반대다.
+ * 텍스트 카드를 menu-a에서 빼는 것과 같은 이유다.
+ *
+ * 컷을 쪼개면 첫 컷이 2초보다 짧을 수 있다(`maxClipExposureSec` 기본 2초). 그래서
+ * 컷마다 **남은 시간만큼** 다시 계산해 걸친다 — 안 그러면 제목이 컷 경계에서 잘린다.
+ *
+ * @param from 이 컷이 씬 시작에서 몇 초 뒤에 오는가 (`memeOverlayFor`와 같은 기준)
+ */
+export interface IntroAt { menu: Menu; sceneIdx: number; from: number }
+
+/**
+ * 이 컷에서 인트로 제목이 **몇 초 더** 떠 있어야 하는가. 안 뜨면 0.
+ *
+ * 🔴 이 숫자를 두 곳이 쓴다 — 제목을 그리는 쪽과, 그동안 **띠 제목을 물리는** 쪽이다.
+ * 두 벌로 두면 반드시 어긋나서 제목이 두 번 겹쳐 찍히거나 한 프레임 비는 구간이 생긴다.
+ */
+export function introTitleWindow(settings: Settings, opts: IntroAt): number {
+  if (settings.introTitleSec <= 0) return 0;
+  if (opts.menu !== 'menu-b') return 0;
+  if (opts.sceneIdx !== 0) return 0;
+  return Math.max(0, settings.introTitleSec - opts.from);
+}
+
+export function introTitleFilter(
+  settings: Settings,
+  fontArg: string | null,
+  headline: string,
+  opts: IntroAt,
+): string {
+  const remain = introTitleWindow(settings, opts);
+  if (remain <= 0) return '';
+  // 폰트가 없으면 안 넣는다 — 깨진 제목보다 없는 편이 낫다 (띠 제목과 같은 규칙)
+  if (!fontArg) return '';
+
+  const [line1, line2] = splitHeadline(headline, INTRO_CHARS_PER_LINE);
+  if (!line1 && !line2) return '';
+
+  const size = fitTitleSize([line1, line2], Math.round(H * 0.075), W * 0.88);
+  const lineH = Math.round(size * 1.15);
+  const rows = (line1 ? 1 : 0) + (line2 ? 1 : 0);
+  // 화면 한가운데보다 조금 위 — 아래쪽은 자막 자리(아래에서 35%)다
+  const blockTop = Math.round(H * 0.40 - (rows * lineH) / 2);
+  // 움직이는 영상 위에 얹으므로 외곽선이 없으면 밝은 장면에서 글자가 사라진다
+  const outline = `borderw=${Math.max(4, Math.round(size * 0.06))}:bordercolor=black@0.85`;
+  const window = `enable='lt(t,${remain.toFixed(2)})'`;
+
+  let graph = '';
+  if (line1) {
+    graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line1)}':`
+      + `fontcolor=${settings.titleAccentColor}:fontsize=${size}:${outline}:`
+      + `x=(w-text_w)/2:y=${blockTop}:${window}`;
+  }
+  if (line2) {
+    graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line2)}':`
+      + `fontcolor=white:fontsize=${size}:${outline}:`
+      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}:${window}`;
+  }
+  return graph;
 }
 
 /**
@@ -590,7 +679,17 @@ function bandedFilter(
  * 영상 씬과 이미지 씬이 **같은 함수**를 부른다. 두 벌로 두면 한쪽만 고쳐져서
  * 이미지로 메운 씬만 제목 띠가 없거나 크기가 다른 편이 나온다.
  */
-export function overlayBands(settings: Settings, fontArg: string | null, headline: string): string {
+export function overlayBands(
+  settings: Settings,
+  fontArg: string | null,
+  headline: string,
+  /**
+   * 이 시각 전까지 띠 제목을 **안 그린다** (초). 인트로 제목이 떠 있는 동안이다.
+   * 🔴 안 물리면 같은 문구가 가운데(크게)와 띠(작게)에 **두 번** 찍힌다 — 실측으로 봤다.
+   * 채널명은 그대로 둔다. 그건 제목이 아니라 채널 룩이다.
+   */
+  hideTitleUntil = 0,
+): string {
   if (settings.layout !== 'banded') return '';
   const topH = Math.round(H * settings.topBandRatio);
   const botH = Math.round(H * settings.bottomBandRatio);
@@ -605,6 +704,7 @@ export function overlayBands(settings: Settings, fontArg: string | null, headlin
 
   const [line1, line2] = splitHeadline(headline);
   const size = fitTitleSize([line1, line2], Math.round(topH * 0.34));
+  const wait = hideTitleUntil > 0 ? `:enable='gte(t,${hideTitleUntil.toFixed(2)})'` : '';
   /*
     세로 위치는 **띠 비율이 아니라 실제 글자 크기**에서 계산한다. 비율로 박아두면
     글자가 폭에 맞춰 작아졌을 때 두 줄 사이가 벌어져 띠 위아래로 치우친다.
@@ -615,12 +715,12 @@ export function overlayBands(settings: Settings, fontArg: string | null, headlin
   if (topH > 0 && line1) {
     graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line1)}':`
       + `fontcolor=${settings.titleAccentColor}:fontsize=${size}:`
-      + `x=(w-text_w)/2:y=${blockTop}`;
+      + `x=(w-text_w)/2:y=${blockTop}${wait}`;
   }
   if (topH > 0 && line2) {
     graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line2)}':`
       + `fontcolor=white:fontsize=${size}:`
-      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}`;
+      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}${wait}`;
   }
   /*
     채널명은 하단 띠의 **위쪽**에 붙인다. 가운데에 놓으면 띠가 커질수록 화면 맨 아래로
@@ -640,6 +740,8 @@ export function buildLayoutFilter(
   fontArg: string | null,
   /** 상단 띠에 넣을 제목 — `banded`에서만 쓴다. 비면 띠만 그린다 */
   headline = '',
+  /** 이 시각 전까지 띠 제목을 물린다 (초). 인트로 제목이 떠 있는 동안 */
+  hideTitleUntil = 0,
 ): string {
   // 채널 그레이딩은 맨 끝에 건다 — 합성이 끝난 화면 전체가 한 룩으로 묶여야 한다
   const grade = settings.grade.trim();
@@ -665,7 +767,7 @@ export function buildLayoutFilter(
   }
 
   if (settings.layout === 'banded') {
-    return bandedFilter(settings, fontArg, headline, pre, base);
+    return bandedFilter(settings, fontArg, headline, pre, base, hideTitleUntil);
   }
 
   // framed — 소스는 가로폭 92%, 세로 중앙 58% 영역에 넣는다
