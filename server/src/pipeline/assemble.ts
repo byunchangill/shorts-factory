@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Script, Clip } from '@shared/types';
-import { COUPANG_PARTNERS_DISCLOSURE, type Menu } from '@shared/constants';
+import { COUPANG_PARTNERS_DISCLOSURE, CUT_SUM_TOLERANCE_SEC, type Menu } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
@@ -99,12 +99,82 @@ export interface AssembleInput {
 }
 
 /**
+ * 씬 하나를 **몇 컷으로 쪼갰고, 그 컷들이 소재를 몇 개 썼는가** (2026-08-24).
+ *
+ * 컷 조각(`tmp/seg_XX_K.mp4`)은 렌더가 끝나면 지워진다 — 나간 편이 몇 컷이었는지
+ * 되짚을 길이 없었다. 성과 대장에서 성적이 갈릴 때 대조할 값이 없다는 뜻이다.
+ *
+ * 🔴 **컷 수보다 `sources`가 중요하다.** 소재가 하나면 컷은 늘어도 같은 영상의 뒤 구간을
+ * 이어 튼 것이라 **화면이 안 바뀐다** — 소재를 더 넣으라는 신호다. 쪼개기를 넣은 이유가
+ * 「컷 간격 중앙값 1.6~2.0초」였으니, 그게 지켜졌는지도 컷 수와 씬 길이로 여기서 나온다.
+ */
+export interface SceneCutPlan {
+  sceneId: string;
+  /** 이 씬을 이룬 컷 수 (이미지 씬은 1) */
+  cuts: number;
+  /** 그 컷들이 실제로 꺼내 쓴 서로 다른 소재 수 */
+  sources: number;
+  /**
+   * 컷 길이의 합 — **나레이션 길이와 같아야 한다.**
+   *
+   * 🔴 **결과물로는 이게 어긋난 걸 못 본다.** 최종 먹싱이 `-shortest`라, 컷 합이 길어지면
+   * 영상 뒤가 조용히 잘려 출력 길이가 **정확히** 나레이션 길이가 된다 — 화면은 누적으로
+   * 밀리고 마지막 씬 뒤는 사라지는데 총 길이만 보면 완벽해 보인다 (2026-08-24 실측:
+   * 컷을 15% 늘려도 출력은 0.02초 차였다). 짧아지는 쪽만 결과에 드러난다.
+   *
+   * 그래서 **계획을 적어 둔다.** 어긋나면 오디오·자막이 통째로 밀린 편이라는 뜻이다.
+   */
+  sec: number;
+}
+
+/**
+ * 컷 계획이 나레이션 길이를 벗어났으면 안내 문구, 맞으면 `null`.
+ *
+ * 🔴 **렌더 전에 막는 값이 여기 있다** (2026-08-24). 씬 안에서 어긋나면 그 뒤 씬이
+ * 통째로 밀려 음성·자막과 화면이 따로 논다. 그런데 **결과물로는 안 보인다** —
+ * 최종 먹싱이 `-shortest`라 컷 합이 길어진 쪽은 영상 뒤가 조용히 잘려 출력 길이가
+ * 정확히 나레이션 길이가 된다. 총 길이만 보면 완벽해 보이는 편이 그대로 발행된다.
+ *
+ * 훅 게이트와 같은 논리다 — 몇 분 인코딩한 뒤 밀린 결과를 받는 것보다 여기서 끝내는 게 싸다.
+ *
+ * **정상 경로에서는 절대 안 걸린다.** `planCuts`는 프레임 경계로 나눠 합이 `total`을
+ * 올림한 자리(최대 한 프레임 = 0.033초 위)에 정확히 떨어지고, 이미지 씬은 `dur`을
+ * 그대로 쓴다 — 걸린다면 그건 앱 결함이지 사용자 데이터 문제가 아니다.
+ * 그래서 안내도 「고쳐서 다시 하세요」가 아니라 「다시 눌러도 같다」로 적는다.
+ *
+ * 그리고 같은 이유로 **첫 씬에서 바로 끝낸다.** 어긋난 씬을 모아 한 번에 보여주는 편이
+ * 나은 것은 씬마다 원인이 다를 때인데(대본 규칙 검사가 그렇다), 이건 컷 나누기 하나가
+ * 틀린 것이라 모든 씬이 같은 말을 한다. 그걸 보자고 씬 전체를 렌더할 이유가 없다.
+ */
+export function cutPlanError(plan: SceneCutPlan, narrationSec: number): string | null {
+  const gap = plan.sec - narrationSec;
+  if (Math.abs(gap) < CUT_SUM_TOLERANCE_SEC) return null;
+  /*
+    어긋난 방향마다 결과물에 나타나는 모양이 다르다. 부호와 무관한 일반 설명을 늘 붙이면
+    원인을 찾는 사람의 시선을 엉뚱한 데로 끈다 — 짧아진 쪽에 「먹싱이 뒤를 잘라낸다」가
+    붙어 있었다 (2026-08-24 검증 지적).
+  */
+  const symptom = gap > 0
+    ? '컷이 길어진 쪽은 최종 먹싱이 영상 뒤를 잘라내 총 길이만 멀쩡해 보입니다.'
+    : '컷이 짧아진 쪽은 화면이 먼저 동나 나레이션 뒤가 통째로 잘려 나갑니다.';
+  return (
+    `씬 ${plan.sceneId}의 컷 ${plan.cuts}개를 합치면 ${plan.sec.toFixed(2)}초인데 `
+    + `나레이션은 ${narrationSec.toFixed(2)}초입니다 (${gap > 0 ? '+' : ''}${gap.toFixed(2)}초). `
+    + `이대로 렌더하면 이 씬부터 화면이 밀려 음성·자막과 어긋나므로 조립을 멈췄습니다 — ${symptom} `
+    + '컷 나누기가 어긋난 것이라 다시 눌러도 같습니다. 앱 결함이니 이 문구를 그대로 알려 주세요.'
+  );
+}
+
+/**
  * 씬별 비주얼 소스 결정:
  * - menu-a: clipRef → 정리본(clean) 우선, 없으면 원본 다운로드 파일
  * - menu-b: imageRef (씬 이미지) → Ken Burns 줌
  * 나레이션 길이에 맞춰 각 씬을 재단하고 concat → 자막 번인 → 최종 mp4.
  */
-export async function assembleFinal(settings: Settings, input: AssembleInput): Promise<string> {
+export async function assembleFinal(
+  settings: Settings,
+  input: AssembleInput,
+): Promise<{ path: string; cuts: SceneCutPlan[] }> {
   const { script, timings, jobDir, version } = input;
   const outDir = path.join(jobDir, 'output');
   const tmpDir = path.join(outDir, 'tmp');
@@ -120,6 +190,8 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
    * 비디오·오디오·자막을 모두 이 하나의 타임라인에서 계산한다.
    */
   const timeline: Array<{ kind: 'card' | 'scene'; file: string; dur: number; sceneIdx?: number }> = [];
+  /** 씬별 컷 계획 — 감사 로그에 남긴다 (렌더가 끝나면 컷 조각은 지워진다) */
+  const cutPlan: SceneCutPlan[] = [];
   /** 렌더한 조각 수 — 프레임 경계 반올림이 조각 수만큼 쌓이므로 허용 오차의 근거다 */
   let cutCount = 0;
 
@@ -197,6 +269,22 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
     }
 
     const visual = await resolveVisual(scene, input, i, dur, settings);
+    const plan: SceneCutPlan = {
+      sceneId: scene.sceneId,
+      cuts: visual.type === 'video' ? visual.cuts.length : 1,
+      // 같은 파일을 여러 컷이 나눠 쓸 수 있다 — 「화면이 바뀌었나」는 파일 수로만 답이 된다
+      sources: visual.type === 'video' ? new Set(visual.cuts.map((c) => c.path)).size : 1,
+      // 이미지 씬은 `dur`을 통째로 한 장으로 채운다
+      sec: visual.type === 'video' ? visual.cuts.reduce((a, c) => a + c.dur, 0) : dur,
+    };
+    cutPlan.push(plan);
+    /*
+      컷 합 = 나레이션 — 어긋나면 **한 프레임도 인코딩하기 전에** 끝낸다.
+      훅 게이트보다 앞에 둔다: 계산만 하는 검사라 공짜고, 틀어진 계획으로 훅을 재 봐야
+      의미가 없다. 씬을 모아 한 번에 보여주지 않는 이유는 `cutPlanError` 주석에 있다.
+    */
+    const planError = cutPlanError(plan, dur);
+    if (planError) throw new Error(planError);
     /*
       훅 게이트 — 첫 씬이 거의 멈춰 있으면 렌더 전에 막는다.
       몇 분을 인코딩한 뒤 「계속 시청함」이 20% 아래로 나오는 것보다 여기서 끝내는 게 싸다.
@@ -441,7 +529,7 @@ export async function assembleFinal(settings: Settings, input: AssembleInput): P
   ], { cwd: assRef.cwd });
 
   await fsp.rm(tmpDir, { recursive: true, force: true });
-  return finalPath;
+  return { path: finalPath, cuts: cutPlan };
 }
 
 /**
@@ -851,21 +939,42 @@ export function planCuts(sources: CutSource[], total: number, maxCutSec: number)
   if (maxCutSec <= 0 || total <= maxCutSec) return single;
 
   const n = Math.ceil(total / maxCutSec);
-  const cutDur = total / n;
+  /*
+    🔴 **컷 길이는 프레임 경계에 맞춘다** (2026-08-25). `total / n`으로 그냥 나누면
+    조각마다 프레임이 깎여 씬이 나레이션보다 **짧아진다** — ffmpeg의 `-t`는 그 시각을
+    넘지 않는 마지막 프레임에서 끊으므로, 경계에 안 걸린 조각은 최대 1프레임을 잃는다.
+    조각을 여럿 내면 그 손실이 그대로 쌓인다.
+
+    실측(2026-08-25): 나레이션 3.022초를 둘로 나눈 1.511초가 **각각 1.500초**로 나와
+    씬이 3.000초가 됐고, `sceneLengthError`가 「소재가 모자라다」며 조립을 세웠다.
+    소재는 8초짜리였다 — 원인이 엉뚱한 데를 가리킨 것이라 더 나빴다.
+
+    그래서 **프레임 수를 먼저 나눈다.** 남는 프레임은 앞쪽 컷들이 하나씩 가져가므로
+    컷 길이 차이는 최대 1프레임이고, 합은 `total`을 올림한 프레임 경계와 정확히 같다.
+    🔴 **올림이라 합이 나레이션보다 짧아지는 일이 없다** — 길이 허용 오차가 위아래로
+    다른 이유가 그것이다(`lengthTolerance`). 이 함수가 그 전제를 지킨다.
+  */
+  const frames = Math.ceil(total * FPS);
+  const per = Math.floor(frames / n);
+  const extra = frames - per * n;
+  const durOf = (k: number) => (per + (k < extra ? 1 : 0)) / FPS;
+
   // 컷 길이를 못 채우는 소재는 뺀다 — 짧게 끝나면 그만큼 오디오와 어긋난다
-  const usable = sources.filter((s) => s.avail >= cutDur);
+  // (제일 긴 컷을 기준으로 본다. 컷마다 최대 1프레임 차이라 어느 컷이 걸릴지 모른다)
+  const usable = sources.filter((s) => s.avail >= durOf(0));
   if (usable.length === 0) return single;
 
+  /** 소재별로 **이미 꺼내 쓴 초** — 컷 길이가 컷마다 달라 개수로는 못 센다 */
   const taken = new Map<string, number>();
   const cuts: Cut[] = [];
   for (let k = 0; k < n; k++) {
     const s = usable[k % usable.length];
-    const nth = taken.get(s.path) ?? 0;
-    taken.set(s.path, nth + 1);
-    const offset = nth * cutDur;
+    const offset = taken.get(s.path) ?? 0;
+    const dur = durOf(k);
+    taken.set(s.path, offset + dur);
     // 소재 끝을 넘으면 처음으로 되감는다
-    const inPoint = offset + cutDur <= s.avail ? s.in + offset : s.in;
-    cuts.push({ path: s.path, in: inPoint, dur: cutDur });
+    const inPoint = offset + dur <= s.avail ? s.in + offset : s.in;
+    cuts.push({ path: s.path, in: inPoint, dur });
   }
   return cuts;
 }

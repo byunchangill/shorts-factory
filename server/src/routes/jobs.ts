@@ -990,7 +990,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     const assetPaths = Object.fromEntries(
       (await resolveAssets(wanted)).map((a) => [a.id, fromWorkspaceRel(a.file)]),
     );
-    const finalPath = await assembleFinal(settings, {
+    const { path: finalPath, cuts } = await assembleFinal(settings, {
       menu: ref.menu, script, timings, clips, jobDir,
       resolveWorkspacePath: fromWorkspaceRel,
       burnSubtitles: body.burnSubtitles ?? settings.burnSubtitles,
@@ -1002,7 +1002,12 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
     if (j2?.state === 'assembling') await jobs.advanceTo(ref, 'review');
-    await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath });
+    /*
+      컷 계획을 같이 남긴다 — 컷 조각은 렌더가 끝나면 지워져서, 나간 편이 씬 하나를
+      몇 컷으로 쪼갰고 소재를 몇 개 썼는지 되짚을 길이 여기밖에 없다.
+      `sources`가 1인 씬은 컷만 늘고 화면은 안 바뀐 씬이다.
+    */
+    await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath, cuts });
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

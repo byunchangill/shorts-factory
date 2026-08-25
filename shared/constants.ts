@@ -513,6 +513,28 @@ export function subtitleCharsPerLine(fontSize: number, width = 1080, marginX = 3
   return Math.max(4, Math.floor((width - marginX * 2) / (fontSize * 0.64)));
 }
 
+// ── 조립: 컷 계획 ─────────────────────────────────────────────────
+
+/**
+ * 씬의 **컷 길이 합**이 나레이션 길이와 같다고 볼 수 있는 오차 (초).
+ *
+ * `planCuts`는 **프레임 경계로** 나눈다 — 합은 나레이션을 올림한 자리라 늘 나레이션
+ * 이상이고, 최대 한 프레임(30fps에서 0.034초)만큼 길다. 0으로 두면 그 한 프레임에
+ * 걸리고, 넉넉히 두면 실제 어긋남을 놓친다 — 0.05초는 그 한 프레임을 덮으면서,
+ * 컷 길이를 15% 틀었을 때 5초 씬에서 벌어지는 0.75초는 확실히 잡는 자리다.
+ *
+ * 🔴 **조립(`cutPlanError`)과 하네스 단언이 이 한 값을 같이 쓴다.** 서버는 통과시키는데
+ * 하네스는 실패하는(또는 그 반대) 경계가 생기면, 규칙이 두 벌이라는 뜻이다.
+ *
+ * 🔴 **이 값을 `assemble.ts`로 옮기지 마라 — 하네스가 통째로 안 뜬다.** 저장소 루트에
+ * tsconfig가 없어 `tsx tools/harness.ts`에는 `@shared/*` 별칭이 없는데, `assemble.ts`는
+ * 그 별칭을 **런타임** import한다. 하네스가 거기서 값을 하나라도 가져오면
+ * `ERR_MODULE_NOT_FOUND: Cannot find package '@shared/constants'`로 죽는다
+ * (2026-08-24 실측). `shared/constants.ts`는 하네스가 런타임으로 읽을 수 있는
+ * 유일한 자리다 — 취향이 아니라 제약이다.
+ */
+export const CUT_SUM_TOLERANCE_SEC = 0.05;
+
 // ── 편집 재료 자료실 (짤방·효과음) ────────────────────────────────
 
 export const ASSET_KINDS = ['meme', 'sfx'] as const;
