@@ -13,10 +13,17 @@ import { findKoreanFont, fontFamilyOf, filterFileArg, escapeDrawText } from './f
 import { familyOfInstalled } from './freeFonts.js';
 import { renderCard } from './cards.js';
 import { hookMotionDelta, hookGateMessage } from './hookGate.js';
+import { probeVideo, probeDuration } from './probe.js';
 
 const W = 1080;
 const H = 1920;
 const FPS = 30;
+
+/** 인트로 제목 한 줄 글자 수 — 띠 제목(13자)보다 크게 쓰므로 더 적게 끊는다 */
+const INTRO_CHARS_PER_LINE = 11;
+
+/** 씬 하나의 최소 길이 — 이보다 짧으면 화면이 깜빡이고 자막을 못 읽는다 */
+const MIN_SCENE_SEC = 1;
 
 /** 이 시각 안쪽에서 장면이 바뀌면 그 앞은 인트로 타이틀 카드로 본다 */
 const INTRO_CARD_MAX_SEC = 0.6;
@@ -184,13 +191,55 @@ export async function assembleFinal(
   const timeline: Array<{ kind: 'card' | 'scene'; file: string; dur: number; sceneIdx?: number }> = [];
   /** 씬별 컷 계획 — 감사 로그에 남긴다 (렌더가 끝나면 컷 조각은 지워진다) */
   const cutPlan: SceneCutPlan[] = [];
+  /** 렌더한 조각 수 — 프레임 경계 반올림이 조각 수만큼 쌓이므로 허용 오차의 근거다 */
+  let cutCount = 0;
+
+  /*
+    0) 나레이션 먼저 — **길이의 기준은 실제로 들어갈 음성이다.**
+
+    🔴 `timing.duration`은 **첨부한 원본 파일**을 잰 값이라 그대로 믿으면 안 된다.
+    mp3는 1152샘플 프레임 단위라 컨테이너 길이가 실제 소리보다 길게 잡히는데(2026-08-24
+    실측: 2.000초짜리 소리가 2.064초로), 조립에 들어가는 것은 그 파일이 아니라 규격을
+    맞춰 다시 인코딩한 쪽이다. 원본 길이에 영상을 맞추면 씬마다 0.064초씩 길어져
+    열 씬이면 **0.6초**가 밀린다 — 자막이 통째로 늦게 뜨고 끝문장이 잘린다.
+
+    포맷 통일은 어차피 해야 한다(첨부 파일과 합성 음성이 섞이면 규격이 제각각이라
+    concat 데먹서가 흔들린다). 순서만 앞당겨 **그 결과를 재서** 씬 길이로 쓴다.
+  */
+  const voiceDir = path.join(jobDir, 'voice');
+  const narration: Array<{ file: string; dur: number }> = [];
+  for (const [i, scene] of script.scenes.entries()) {
+    const timing = timings[i];
+    if (!timing) throw new Error(`씬 ${scene.sceneId}의 타이밍 없음 — TTS를 먼저 실행하세요`);
+    const tag = String(i + 1).padStart(2, '0');
+    const norm = path.join(tmpDir, `voice_${tag}.m4a`);
+    await run(settings.ffmpegPath, [
+      '-y', '-loglevel', 'error', '-i', path.join(voiceDir, timing.audioFile),
+      '-ar', '48000', '-ac', '2', '-c:a', 'aac', '-b:a', '192k', norm,
+    ]);
+    const raw = await probeDuration(settings, norm);
+    if (raw >= MIN_SCENE_SEC) {
+      narration.push({ file: norm, dur: raw });
+      continue;
+    }
+    /*
+      최소 길이로 늘릴 때는 **음성도 같이 늘린다.** 영상만 늘리면 딱 그 차이만큼
+      뒤가 통째로 밀리는데, `-shortest`가 짧은 쪽을 잘라내 아무 말도 없이 끝난다.
+    */
+    const padded = path.join(tmpDir, `voice_${tag}_pad.m4a`);
+    await run(settings.ffmpegPath, [
+      '-y', '-loglevel', 'error', '-i', norm,
+      '-af', 'apad', '-t', MIN_SCENE_SEC.toFixed(3),
+      '-ar', '48000', '-ac', '2', '-c:a', 'aac', '-b:a', '192k', padded,
+    ]);
+    narration.push({ file: padded, dur: await probeDuration(settings, padded) });
+  }
 
   // 1) 씬별 세그먼트 렌더 (나레이션 길이에 맞춤)
   for (let i = 0; i < script.scenes.length; i++) {
     const scene = script.scenes[i];
-    const timing = timings[i];
-    if (!timing) throw new Error(`씬 ${scene.sceneId}의 타이밍 없음 — TTS를 먼저 실행하세요`);
-    const dur = Math.max(1, timing.duration);
+    // 위에서 규격을 맞춰 **재 둔** 길이다 — 첨부 파일의 컨테이너 길이가 아니다
+    const dur = narration[i].dur;
     const segOut = path.join(tmpDir, `seg_${String(i + 1).padStart(2, '0')}.mp4`);
 
     /*
@@ -249,7 +298,7 @@ export async function assembleFinal(
       }
     }
     if (visual.type === 'video') {
-      const layout = buildLayoutFilter(settings, fontRef?.arg ?? null, input.headline ?? script.title);
+      const headline = input.headline ?? script.title;
       const cutFiles: string[] = [];
       let from = 0;
       for (const [k, cut] of visual.cuts.entries()) {
@@ -258,6 +307,21 @@ export async function assembleFinal(
           컷 경계를 물면 양쪽 컷에 나뉘어 걸려 화면에서는 이어져 보인다.
         */
         const meme = memeOverlayFor(scene, dur, settings, input.assetPaths, { from, dur: cut.dur });
+        /*
+          인트로 제목은 **컷마다 다시 건다.** 컷을 쪼개면 첫 컷이 2초보다 짧을 수 있어
+          (`maxClipExposureSec` 기본 2초) 한 컷에만 걸면 제목이 경계에서 잘린다.
+          레이아웃 뒤에 붙어 좌우반전을 안 탄다 — 앞에 걸면 제목이 거울 글자가 된다.
+        */
+        const at = { menu: input.menu, sceneIdx: i, from };
+        const intro = introTitleFilter(settings, fontRef?.arg ?? null, headline, at);
+        /*
+          레이아웃도 컷마다 다시 만든다 — 인트로 제목이 떠 있는 동안 띠 제목을 물려야
+          같은 문구가 두 번 안 찍힌다. 문자열 조립뿐이라 비용은 없다.
+        */
+        const layout = buildLayoutFilter(
+          settings, fontRef?.arg ?? null, headline, introTitleWindow(settings, at),
+        );
+        const vf = layout + intro;
         const cutOut = visual.cuts.length === 1
           ? segOut
           : path.join(tmpDir, `seg_${String(i + 1).padStart(2, '0')}_${k + 1}.mp4`);
@@ -269,7 +333,7 @@ export async function assembleFinal(
             ...(meme.animated ? ['-ignore_loop', '0'] : []),
             '-i', meme.path,
             '-t', cut.dur.toFixed(3),
-            '-filter_complex', `[0:v]${layout}[base];${meme.filter}`,
+            '-filter_complex', `[0:v]${vf}[base];${meme.filter}`,
             '-map', '[v]',
             '-an',
             '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
@@ -279,7 +343,7 @@ export async function assembleFinal(
             '-y',
             '-ss', String(cut.in), '-i', cut.path,
             '-t', cut.dur.toFixed(3),
-            '-vf', layout,
+            '-vf', vf,
             '-an',
             '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
             cutOut,
@@ -315,6 +379,17 @@ export async function assembleFinal(
         segOut,
       ], { cwd: fontRef?.cwd });
     }
+    /*
+      길이 불변식 — 이 씬 영상이 나레이션과 같은 길이인지 **재서** 확인한다.
+      여기서 막아야 어긋난 씬 번호가 그대로 남는다. 완성본에서 뒤늦게 재면
+      어느 씬에서 밀렸는지는 안 나온다 (뒤 씬이 전부 같이 밀려 보인다).
+    */
+    const segDur = (await probeVideo(settings, segOut)).duration;
+    const pieces = visual.type === 'video' ? visual.cuts.length : 1;
+    const segErr = sceneLengthError(scene.sceneId, segDur, dur, pieces);
+    if (segErr) throw new Error(segErr);
+    cutCount += pieces;
+
     timeline.push({ kind: 'scene', file: segOut, dur, sceneIdx: i });
   }
 
@@ -331,12 +406,12 @@ export async function assembleFinal(
     '-c', 'copy', videoOnly,
   ]);
 
-  // 3) 오디오 concat — 카드 구간에는 같은 길이의 무음을 넣어야 싱크가 유지된다
-  const voiceDir = path.join(jobDir, 'voice');
+  // 3) 오디오 concat — 카드 구간에는 같은 길이의 무음을 넣어야 싱크가 유지된다.
+  //    씬 음성은 0)에서 이미 규격을 맞춰 뒀다 — 그 길이가 곧 씬 길이다
   const audioParts: string[] = [];
   for (const [idx, item] of timeline.entries()) {
     if (item.kind === 'scene') {
-      audioParts.push(path.join(voiceDir, timings[item.sceneIdx!].audioFile));
+      audioParts.push(narration[item.sceneIdx!].file);
     } else {
       const silence = path.join(tmpDir, `silence_${idx}.m4a`);
       await run(settings.ffmpegPath, [
@@ -347,21 +422,10 @@ export async function assembleFinal(
       audioParts.push(silence);
     }
   }
-  // 첨부 파일과 합성 음성이 섞이면 포맷이 제각각이라 concat 데먹서가 흔들린다.
-  // 각 조각을 동일 규격으로 정규화한 뒤 이어 붙인다.
-  const normalized: string[] = [];
-  for (const [i, src] of audioParts.entries()) {
-    const out = path.join(tmpDir, `a_${String(i).padStart(2, '0')}.m4a`);
-    await run(settings.ffmpegPath, [
-      '-y', '-loglevel', 'error', '-i', src,
-      '-ar', '48000', '-ac', '2', '-c:a', 'aac', '-b:a', '192k', out,
-    ]);
-    normalized.push(out);
-  }
   const audioList = path.join(tmpDir, 'audio_concat.txt');
   await fsp.writeFile(
     audioList,
-    normalized.map((f) => `file '${toConcatPath(f)}'`).join('\n'),
+    audioParts.map((f) => `file '${toConcatPath(f)}'`).join('\n'),
     'utf8',
   );
   let audioOnly = path.join(tmpDir, 'narration.m4a');
@@ -434,6 +498,17 @@ export async function assembleFinal(
   const family = (font && await familyOfInstalled(font)) ?? fontFamilyOf(font);
   await fsp.writeFile(assPath, buildAss(cuesWithDisclosure, assStyleOf(settings, family)), 'utf8');
 
+  /*
+    4-1) 길이 불변식 — 계획·영상·나레이션 세 길이를 **재서** 맞춰 본다.
+
+    씬별로 이미 봤지만 카드 무음과 효과음 믹싱은 씬 밖에서 길이를 건드릴 수 있다.
+    여기서 막지 않으면 바로 아래 `-shortest`가 짧은 쪽에 맞춰 조용히 잘라낸다.
+  */
+  const videoDur = (await probeVideo(settings, videoOnly)).duration;
+  const audioDur = await probeDuration(settings, audioOnly);
+  const finalErr = finalLengthError(totalDur, videoDur, audioDur, cutCount + timeline.length);
+  if (finalErr) throw new Error(finalErr);
+
   // 5) 합치기 (+자막 번인)
   // 자막 파일도 파일명만 필터에 넣고 자막 폴더에서 실행한다 (입출력은 절대경로 그대로)
   const assRef = filterFileArg(assPath);
@@ -446,6 +521,8 @@ export async function assembleFinal(
     '-c:v', 'libx264', '-crf', '19', '-preset', 'veryfast',
     '-c:a', 'copy',
     '-movflags', '+faststart',
+    // 위 불변식을 통과했으니 여기서 잘려 나가는 것은 한 프레임 남짓이다.
+    // 그 이상 어긋난 편은 여기까지 오지 못한다 — 이 옵션은 이제 안전장치일 뿐이다
     '-shortest',
     finalPath,
   ], { cwd: assRef.cwd });
@@ -606,10 +683,81 @@ function bandedFilter(
   headline: string,
   pre: string,
   base: string,
+  hideTitleUntil: number,
 ): string {
   // 소스는 화면을 꽉 채운다 — 띠가 덮을 뿐 소스를 줄이지 않는다
   const fill = `${pre}scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
-  return `${fill}${overlayBands(settings, fontArg, headline)},${base}`;
+  return `${fill}${overlayBands(settings, fontArg, headline, hideTitleUntil)},${base}`;
+}
+
+/**
+ * 인트로 타이틀 — **첫 컷 위에 얹는** 큰 제목.
+ *
+ * 벤치마킹 쇼츠 3편이 전부 1.8~2.2초짜리 제목으로 연다. 🔴 **정지 카드로 만들면 안 된다** —
+ * 그 셋을 우리 훅 게이트로 채점하니 10.6·18.4·22.2로 전부 통과했다. 정지 화면이 아니라
+ * **움직이는 영상 위에 글자를 얹은 것**이다. 그래서 카드를 새로 렌더하지 않고 원래 돌던
+ * 컷 위에 `drawtext`로만 그린다 — 화면은 계속 움직이고 길이도 안 늘어난다.
+ *
+ * 🔴 **제품정보리뷰에만 넣는다.** 해외영상 짜집기는 음성=자막이고 「말하지 않을 것은
+ * 화면에도 없다」가 첫 규칙이라, 안 읽는 제목을 띄우는 순간 그 규칙이 깨진다. 게다가
+ * v3.3의 훅 블록은 **제품 언급 0**인데 제품명이 첫 화면에 대문짝만하게 뜨면 정반대다.
+ * 텍스트 카드를 menu-a에서 빼는 것과 같은 이유다.
+ *
+ * 컷을 쪼개면 첫 컷이 2초보다 짧을 수 있다(`maxClipExposureSec` 기본 2초). 그래서
+ * 컷마다 **남은 시간만큼** 다시 계산해 걸친다 — 안 그러면 제목이 컷 경계에서 잘린다.
+ *
+ * @param from 이 컷이 씬 시작에서 몇 초 뒤에 오는가 (`memeOverlayFor`와 같은 기준)
+ */
+export interface IntroAt { menu: Menu; sceneIdx: number; from: number }
+
+/**
+ * 이 컷에서 인트로 제목이 **몇 초 더** 떠 있어야 하는가. 안 뜨면 0.
+ *
+ * 🔴 이 숫자를 두 곳이 쓴다 — 제목을 그리는 쪽과, 그동안 **띠 제목을 물리는** 쪽이다.
+ * 두 벌로 두면 반드시 어긋나서 제목이 두 번 겹쳐 찍히거나 한 프레임 비는 구간이 생긴다.
+ */
+export function introTitleWindow(settings: Settings, opts: IntroAt): number {
+  if (settings.introTitleSec <= 0) return 0;
+  if (opts.menu !== 'menu-b') return 0;
+  if (opts.sceneIdx !== 0) return 0;
+  return Math.max(0, settings.introTitleSec - opts.from);
+}
+
+export function introTitleFilter(
+  settings: Settings,
+  fontArg: string | null,
+  headline: string,
+  opts: IntroAt,
+): string {
+  const remain = introTitleWindow(settings, opts);
+  if (remain <= 0) return '';
+  // 폰트가 없으면 안 넣는다 — 깨진 제목보다 없는 편이 낫다 (띠 제목과 같은 규칙)
+  if (!fontArg) return '';
+
+  const [line1, line2] = splitHeadline(headline, INTRO_CHARS_PER_LINE);
+  if (!line1 && !line2) return '';
+
+  const size = fitTitleSize([line1, line2], Math.round(H * 0.075), W * 0.88);
+  const lineH = Math.round(size * 1.15);
+  const rows = (line1 ? 1 : 0) + (line2 ? 1 : 0);
+  // 화면 한가운데보다 조금 위 — 아래쪽은 자막 자리(아래에서 35%)다
+  const blockTop = Math.round(H * 0.40 - (rows * lineH) / 2);
+  // 움직이는 영상 위에 얹으므로 외곽선이 없으면 밝은 장면에서 글자가 사라진다
+  const outline = `borderw=${Math.max(4, Math.round(size * 0.06))}:bordercolor=black@0.85`;
+  const window = `enable='lt(t,${remain.toFixed(2)})'`;
+
+  let graph = '';
+  if (line1) {
+    graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line1)}':`
+      + `fontcolor=${settings.titleAccentColor}:fontsize=${size}:${outline}:`
+      + `x=(w-text_w)/2:y=${blockTop}:${window}`;
+  }
+  if (line2) {
+    graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line2)}':`
+      + `fontcolor=white:fontsize=${size}:${outline}:`
+      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}:${window}`;
+  }
+  return graph;
 }
 
 /**
@@ -618,7 +766,17 @@ function bandedFilter(
  * 영상 씬과 이미지 씬이 **같은 함수**를 부른다. 두 벌로 두면 한쪽만 고쳐져서
  * 이미지로 메운 씬만 제목 띠가 없거나 크기가 다른 편이 나온다.
  */
-export function overlayBands(settings: Settings, fontArg: string | null, headline: string): string {
+export function overlayBands(
+  settings: Settings,
+  fontArg: string | null,
+  headline: string,
+  /**
+   * 이 시각 전까지 띠 제목을 **안 그린다** (초). 인트로 제목이 떠 있는 동안이다.
+   * 🔴 안 물리면 같은 문구가 가운데(크게)와 띠(작게)에 **두 번** 찍힌다 — 실측으로 봤다.
+   * 채널명은 그대로 둔다. 그건 제목이 아니라 채널 룩이다.
+   */
+  hideTitleUntil = 0,
+): string {
   if (settings.layout !== 'banded') return '';
   const topH = Math.round(H * settings.topBandRatio);
   const botH = Math.round(H * settings.bottomBandRatio);
@@ -633,6 +791,7 @@ export function overlayBands(settings: Settings, fontArg: string | null, headlin
 
   const [line1, line2] = splitHeadline(headline);
   const size = fitTitleSize([line1, line2], Math.round(topH * 0.34));
+  const wait = hideTitleUntil > 0 ? `:enable='gte(t,${hideTitleUntil.toFixed(2)})'` : '';
   /*
     세로 위치는 **띠 비율이 아니라 실제 글자 크기**에서 계산한다. 비율로 박아두면
     글자가 폭에 맞춰 작아졌을 때 두 줄 사이가 벌어져 띠 위아래로 치우친다.
@@ -643,12 +802,12 @@ export function overlayBands(settings: Settings, fontArg: string | null, headlin
   if (topH > 0 && line1) {
     graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line1)}':`
       + `fontcolor=${settings.titleAccentColor}:fontsize=${size}:`
-      + `x=(w-text_w)/2:y=${blockTop}`;
+      + `x=(w-text_w)/2:y=${blockTop}${wait}`;
   }
   if (topH > 0 && line2) {
     graph += `,drawtext=fontfile='${fontArg}':text='${escapeDrawText(line2)}':`
       + `fontcolor=white:fontsize=${size}:`
-      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}`;
+      + `x=(w-text_w)/2:y=${blockTop + (line1 ? lineH : 0)}${wait}`;
   }
   /*
     채널명은 하단 띠의 **위쪽**에 붙인다. 가운데에 놓으면 띠가 커질수록 화면 맨 아래로
@@ -668,6 +827,8 @@ export function buildLayoutFilter(
   fontArg: string | null,
   /** 상단 띠에 넣을 제목 — `banded`에서만 쓴다. 비면 띠만 그린다 */
   headline = '',
+  /** 이 시각 전까지 띠 제목을 물린다 (초). 인트로 제목이 떠 있는 동안 */
+  hideTitleUntil = 0,
 ): string {
   // 채널 그레이딩은 맨 끝에 건다 — 합성이 끝난 화면 전체가 한 룩으로 묶여야 한다
   const grade = settings.grade.trim();
@@ -693,7 +854,7 @@ export function buildLayoutFilter(
   }
 
   if (settings.layout === 'banded') {
-    return bandedFilter(settings, fontArg, headline, pre, base);
+    return bandedFilter(settings, fontArg, headline, pre, base, hideTitleUntil);
   }
 
   // framed — 소스는 가로폭 92%, 세로 중앙 58% 영역에 넣는다
@@ -794,6 +955,80 @@ export function planCuts(sources: CutSource[], total: number, maxCutSec: number)
     cuts.push({ path: s.path, in: inPoint, dur: cutDur });
   }
   return cuts;
+}
+
+/**
+ * 길이 허용 오차 (초). **위아래가 다르다.**
+ *
+ * 🔴 조각은 프레임 경계로 **올려서** 잘린다 — 짧아지는 법이 없다 (2026-08-24 실측:
+ * `-t`에 1.017·2.060·5.501을 줬더니 전부 0 ~ +1프레임 **길게** 나왔다). 그래서
+ * 「계획보다 길다」는 조각 수만큼 봐줘야 하지만, **「계획보다 짧다」는 봐줄 게 없다** —
+ * 그건 반올림이 아니라 소재가 모자라 잘린 것이다.
+ *
+ * 위아래를 같은 값으로 두면 조각을 쪼갤수록 아래쪽까지 헐거워져, 씬마다 조금씩 잘린
+ * 것이 쌓여 반 초가 넘어도 통과한다 (실제로 하네스가 0.6초를 그렇게 흘려보냈다).
+ */
+export function lengthTolerance(pieces: number): { under: number; over: number } {
+  // 컨테이너 헤더 반올림 몫. 재기 오차지 잘림이 아니다
+  const measure = 0.02;
+  return { under: measure, over: measure + Math.max(1, pieces) / FPS };
+}
+
+const sec = (n: number) => `${n.toFixed(2)}초`;
+
+/** 계획 길이 대비 실제 길이가 허용 범위 안인가 */
+function within(actual: number, planned: number, tol: { under: number; over: number }): boolean {
+  return actual >= planned - tol.under && actual <= planned + tol.over;
+}
+
+/**
+ * 씬 하나의 영상이 그 씬 나레이션과 같은 길이인가.
+ *
+ * 🔴 **제일 흔한 원인은 소재가 모자란 것이다.** `-ss 12 -t 5`를 줘도 소재에 3초밖에
+ * 안 남았으면 3초짜리가 나온다. ffmpeg는 이걸 오류로 치지 않는다 — 종료 코드 0에
+ * 파일도 멀쩡하다. 그래서 재보기 전에는 아무도 모른다.
+ *
+ * 씬에서 막아야 어느 씬인지가 남는다. 완성본에서 뒤늦게 재면 뒤 씬이 전부 같이 밀려
+ * 보여서 어디서 시작됐는지 못 짚는다.
+ *
+ * @returns 어긋났으면 사람이 읽을 사유, 맞으면 null
+ */
+export function sceneLengthError(
+  sceneId: string, videoSec: number, narrationSec: number, pieces: number,
+): string | null {
+  const tol = lengthTolerance(pieces);
+  if (within(videoSec, narrationSec, tol)) return null;
+  const gap = videoSec - narrationSec;
+  const head = `씬 ${sceneId}의 영상이 나레이션과 ${sec(Math.abs(gap))} 어긋납니다`
+    + ` — 영상 ${sec(videoSec)} · 나레이션 ${sec(narrationSec)}.`;
+  return gap < 0
+    ? `${head}\n소재에서 쓸 수 있는 구간이 나레이션보다 짧습니다.`
+      + ' 그 씬에 쓸 장면을 더 고르거나, 나레이션을 줄이세요.'
+    : `${head}\n컷 계획이 나레이션보다 깁니다.`;
+}
+
+/**
+ * 완성본 세 길이가 같은가 — 계획(자막 시각의 기준) · 영상 · 나레이션.
+ *
+ * 🔴 **`-shortest`가 어긋난 길이를 가린다.** 짧은 쪽에 맞춰 조용히 잘라내므로
+ * 끝문장이 통째로 날아가도 파일은 멀쩡히 나온다. 자막 시각은 계획 길이로 잡혀 있어
+ * 영상이 밀리면 자막도 같이 밀리는데, 화면만 봐서는 원인을 못 짚는다.
+ *
+ * 씬별로 이미 봤지만 카드 무음·효과음 믹싱·최소 길이 보정은 씬 밖에서 길이를 건드린다.
+ *
+ * @returns 어긋났으면 사람이 읽을 사유, 맞으면 null
+ */
+export function finalLengthError(
+  plannedSec: number, videoSec: number, audioSec: number, pieces: number,
+): string | null {
+  const tol = lengthTolerance(pieces);
+  const bad = [
+    ...(within(videoSec, plannedSec, tol) ? [] : [`영상 ${sec(videoSec)}`]),
+    ...(within(audioSec, plannedSec, tol) ? [] : [`나레이션 ${sec(audioSec)}`]),
+  ];
+  if (!bad.length) return null;
+  return `완성본 길이가 계획과 어긋납니다 — 계획 ${sec(plannedSec)} · ${bad.join(' · ')}.`
+    + '\n카드 무음 구간이나 효과음 믹싱이 길이를 바꾼 것일 수 있습니다.';
 }
 
 /**
