@@ -497,6 +497,17 @@ export const SettingsSchema = z.object({
    * 기본 2초는 벤치마킹 쇼츠 3편의 컷 간격 중앙값(1.6·1.7·2.0초)에서 왔다.
    */
   maxClipExposureSec: z.number().min(1).max(30).default(2),
+  /**
+   * 인트로 타이틀이 떠 있는 시간 (초). 0이면 안 넣는다.
+   *
+   * 벤치마킹 쇼츠 3편이 전부 1.8~2.2초짜리 제목으로 연다. 🔴 **정지 카드가 아니다** —
+   * 우리 훅 게이트로 그 셋을 채점하니 10.6·18.4·22.2로 전부 통과했다. 움직이는 제품
+   * 영상 **위에** 큰 제목을 얹은 것이다. 정지 카드로 만들면 14편으로 잰 유일한 유효
+   * 변수(첫 0.5초 화면 변화량, r=+0.57)와 정면으로 부딪힌다.
+   *
+   * 제품정보리뷰에만 걸린다 — 해외영상 짜집기는 음성=자막이라 안 읽는 글자를 못 띄운다.
+   */
+  introTitleSec: z.number().min(0).max(4).default(2),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

@@ -995,11 +995,35 @@ async function main(): Promise<void> {
     */
     const narrationTotal = timingsTotal;
     const videoDur = Number(probe.format.duration);
+    /*
+      카드 한 장이 1.5초라 이 검사는 **카드가 샜는지**만 본다. 여기를 조이면 안 된다 —
+      `timingsTotal`은 첨부한 mp3의 **컨테이너** 길이 합이고, 실제로 조립에 들어가는
+      것은 규격을 맞춰 다시 인코딩한 음성이라 mp3 프레임 패딩만큼(씬당 0.064초) 짧다.
+      길이가 맞는지는 아래에서 영상 자신의 오디오 트랙으로 본다.
+    */
     assert(Math.abs(videoDur - narrationTotal) < 1.0,
       `카드가 새어 들어갔거나 싱크가 깨짐 (영상 ${videoDur.toFixed(1)}초 / 나레이션 ${narrationTotal.toFixed(1)}초)`);
+
+    /*
+      🔴 여기는 **조인다.** 예전엔 1.0초까지 봐줘서 씬마다 0.064초씩 어긋난 것이
+      열 씬 쌓여 0.6초가 돼도 통과했다 — `-shortest`가 짧은 쪽에 맞춰 조용히 잘라내
+      화면만 봐서는 아무 표가 안 났다 (2026-08-24). 조립의 길이 불변식이 이걸 막으므로
+      여기서도 같은 눈으로 봐야 게이트가 실제로 도는지 확인된다.
+    */
     const audioDur = await streamDuration(finalPath, 'a');
-    assert(Math.abs(audioDur - videoDur) < 1.0,
-      `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(1)}초, 오디오 ${audioDur.toFixed(1)}초)`);
+    assert(Math.abs(audioDur - videoDur) < 0.15,
+      `오디오·영상 길이 불일치 — 싱크 깨짐 (영상 ${videoDur.toFixed(3)}초, 오디오 ${audioDur.toFixed(3)}초)`);
+
+    /*
+      자막 시각은 조립이 계획한 길이 위에 잡힌다. 그 계획이 실제 음성보다 길면
+      자막이 통째로 늦게 뜨는데, 마지막 큐가 영상 밖으로 밀려나야 비로소 눈에 띈다.
+      마지막 큐(공시문구)의 끝이 영상 끝을 넘지 않는지로 그 밀림을 잡는다.
+    */
+    const ends = [...srt.matchAll(/--> (\d\d):(\d\d):(\d\d),(\d\d\d)/g)]
+      .map((m) => Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000);
+    const lastCueEnd = Math.max(...ends);
+    assert(lastCueEnd <= videoDur + 0.15,
+      `자막이 영상 밖으로 밀렸습니다 — 마지막 큐 ${lastCueEnd.toFixed(3)}초 / 영상 ${videoDur.toFixed(3)}초`);
 
     const cardCount = Math.round((videoDur - narrationTotal) / 1.5);
     return `${v.width}x${v.height} · ${videoDur.toFixed(1)}초 (카드 약 ${cardCount}장 포함) · ${Math.round(stat.size / 1024)}KB`;
@@ -1205,6 +1229,186 @@ async function main(): Promise<void> {
     assert(aReq.requestMd.includes('음성 = 자막'), 'menu-a 교리 규칙이 요청서에 없음');
 
     return '22초 기준 · 단점 씬 없으면 반려 · 회차/해시태그 안내 · menu-a 미적용';
+  });
+
+  /*
+    제품정보리뷰를 **조립까지** 돌린다.
+
+    2026-08-23에 만든 컷 쪼개기(`planCuts`)·덤 소재 글자 검사(`hasVisibleText`)·띠 레이아웃과
+    2026-08-25의 인트로 타이틀은 전부 menu-b 전용이라, menu-a만 훑던 하네스가 통째로
+    지나쳤다. 단위 테스트와 손으로 돌린 잡으로만 확인되던 자리다.
+
+    🔴 **픽셀을 본다.** 인트로 제목이 띠 제목과 두 번 겹쳐 찍히는 것은 문자열 검사를
+    다 통과하고 **렌더해 보고서야** 드러났다. 그래서 여기서는 완성본에서 프레임을 꺼내
+    색으로 확인한다.
+  */
+  await step('제품정보리뷰 조립 — 컷 쪼개기 · 덤 소재 · 인트로 타이틀', async () => {
+    const product = '테스트정리함';
+    const SCENE_SEC = 4; // 상한(2초)의 두 배 — 씬마다 정확히 두 컷으로 갈린다
+    const CUT_SEC = 2;
+    const INTRO_SEC = 2;
+
+    const base = await get<Record<string, unknown>>('/settings');
+    /*
+      카드와 자막은 끈다. 이 단계가 보는 것은 **컷 쪼개기와 길이 불변식**인데,
+      카드가 끼면 길이가 카드 수만큼 늘어 「총 길이가 안 변했다」를 잴 수 없고,
+      자막이 타면 소재 색을 재려는 자리를 글자가 덮는다. 둘 다 menu-a 단계가 이미 본다.
+    */
+    await put('/settings', {
+      ...base, layout: 'banded', insertCards: false, burnSubtitles: false,
+      maxClipExposureSec: CUT_SEC, introTitleSec: INTRO_SEC,
+      hookMotionMin: 0, // 합성 소재는 정지 화면에 가까워 늘 걸린다
+      mirror: false, zoom: 1, grade: '',
+    });
+
+    await post('/projects', { menu: 'menu-b', title: product, formatId: 'harness-format' });
+    const job = await post<JobView>(
+      `/projects/menu-b/${encodeURIComponent(product)}/jobs`, { title: '1편' });
+
+    /*
+      소재를 **둘** 넣는다. 하나뿐이면 컷 쪼개기가 같은 소재의 뒤 구간만 꺼내 화면이
+      안 바뀌고, 덤 소재를 끌어다 쓰는 경로가 통째로 안 돈다.
+      두 합성 영상은 색이 다르므로(`hue=h=seed*60`) 컷이 바뀌면 평균색이 바뀐다.
+    */
+    for (const name of ['clip1.mp4', 'clip2.mp4']) {
+      const fd = new FormData();
+      fd.append('files', new Blob([await fsp.readFile(path.join(mediaDir, name))],
+        { type: 'video/mp4' }), name);
+      const r = await fetch(`${API}/jobs/${job.id}/sources/upload`, { method: 'POST', body: fd });
+      assert(r.ok, `${name} 첨부 실패: ${r.status} ${await r.text()}`);
+    }
+    const bClips = await waitFor('menu-b 클립 분석', async () => {
+      const c = await get<ClipView[]>(`/jobs/${job.id}/clips`);
+      return c.length === 2 && c.every((x) => x.probe && x.frames.length > 0) ? c : null;
+    }, 60_000);
+
+    // 대본은 **첫 클립만** 가리킨다. 뒤를 채우는 덤 소재는 조립이 알아서 고른다
+    const bScenes = [
+      { sceneId: 'b01', narration: '정리함 하나로 서랍이 통째로 바뀐다.', subtitle: '서랍이 바뀐다' },
+      { sceneId: 'b02', narration: '칸이 나뉘어 있어 찾는 시간이 준다.', subtitle: '찾는 시간이 준다' },
+      { sceneId: 'b03', narration: '대신 높이가 낮아 큰 물건은 안 들어간다.', subtitle: '큰 건 안 들어가요', isDownside: true },
+    ].map((sc) => ({ ...sc, clipRef: { clipId: bClips[0].id } }));
+
+    const pkt = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'script' });
+    const pasted = await post<{ errors: string[] }>(`/packets/${pkt.id}/paste`, {
+      raw: `\`\`\`json\n${JSON.stringify({ title: '서랍 정리함', scenes: bScenes })}\n\`\`\``,
+    });
+    assert(pasted.errors.length === 0, `대본 반려됨: ${pasted.errors.join(', ')}`);
+    await waitFor('menu-b 대본 반영', async () => {
+      const j = await get<JobView>(`/jobs/${job.id}`);
+      return j.script.currentVersion === 1 ? j : null;
+    }, 30_000);
+    await post(`/packets/${pkt.id}/accept`);
+    await post<JobView>(`/jobs/${job.id}/script/approve`);
+
+    // 씬마다 상한의 두 배짜리 음성을 붙인다 → 컷이 정확히 둘로 갈려야 한다
+    const audioDir = path.join(workspace, '_tmp_audio_b');
+    await fsp.mkdir(audioDir, { recursive: true });
+    for (const [i, sc] of bScenes.entries()) {
+      const f = path.join(audioDir, `b${i + 1}.mp3`);
+      await makeSilentAudio(f, SCENE_SEC);
+      const fd = new FormData();
+      fd.append('sceneId', sc.sceneId);
+      fd.append('file', new Blob([await fsp.readFile(f)], { type: 'audio/mpeg' }), `b${i + 1}.mp3`);
+      const r = await fetch(`${API}/jobs/${job.id}/voice/upload`, { method: 'POST', body: fd });
+      assert(r.ok, `음성 첨부 실패: ${r.status} ${await r.text()}`);
+    }
+    await post(`/jobs/${job.id}/tts`, {});
+    const bJobDir = path.join(workspace, 'menu-b', product, 'jobs', job.id);
+    const bTimings = await waitFor('menu-b 타이밍', async () => {
+      const t = await fsp.readFile(path.join(bJobDir, 'voice', 'timing.json'), 'utf8')
+        .catch(() => null);
+      return t ? JSON.parse(t) as Array<{ duration: number }> : null;
+    }, 60_000);
+    const narrationTotal = bTimings.reduce((n, t) => n + t.duration, 0);
+
+    // 저작권 게이트는 해외영상 짜집기 전용이다 — 여기서 막히면 안 된다
+    await post(`/jobs/${job.id}/assemble`, {});
+    const done = await waitFor('menu-b 조립', async () => {
+      const err = await (async () => {
+        const text = await fsp.readFile(path.join(bJobDir, 'events.ndjson'), 'utf8')
+          .catch(() => '');
+        for (const line of text.trim().split('\n').reverse()) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as { type?: string; error?: string };
+            if (e.type === 'assemble.failed') return e.error || '(사유 미기록)';
+          } catch { /* 기록 중이라 잘린 줄 */ }
+        }
+        return null;
+      })();
+      if (err) throw new ProbeAbort(`assemble.failed — ${err}`);
+      const v = await get<JobView>(`/jobs/${job.id}`);
+      return v.output.currentVersion ? v : null;
+    }, 300_000);
+
+    const finalPath = path.join(bJobDir, 'output', `final_v${done.output.currentVersion}.mp4`);
+    const probe = await probeJson(finalPath);
+    const videoDur = Number(probe.format.duration);
+
+    /*
+      ① **총 길이는 안 바뀐다.** 컷을 쪼개도 나레이션 길이를 정확히 채워야 한다 —
+      달라지면 오디오·자막이 통째로 밀리는데 `-shortest`가 그걸 가린다.
+
+      🔴 기준은 **완성본 자신의 오디오 트랙**이다. `timing.json`은 첨부한 mp3의
+      **컨테이너** 길이라 실제 소리보다 mp3 프레임 패딩만큼 길다 (실측 4.000 → 4.056초).
+      그걸 기준으로 조이면 멀쩡한 편이 걸린다 — 실제로 이 검사를 그렇게 짰다가 걸렸다.
+      `timingsTotal` 쪽은 그래서 느슨하게, 큰 사고(카드 유입 등)만 본다.
+    */
+    const bAudioDur = await streamDuration(finalPath, 'a');
+    assert(Math.abs(videoDur - bAudioDur) < 0.15,
+      `컷 쪼개기가 길이를 어긋냈다 — 영상 ${videoDur.toFixed(3)}초 / 오디오 ${bAudioDur.toFixed(3)}초`);
+    assert(Math.abs(videoDur - narrationTotal) < 1.0,
+      `총 길이가 크게 달라졌다 — 영상 ${videoDur.toFixed(2)}초 / 첨부 음성 합 ${narrationTotal.toFixed(2)}초`);
+
+    const topBandH = Math.round(1920 * Number(base.topBandRatio ?? 0.22));
+    /*
+      🔴 **화면 폭 전체로 평균을 내면 안 된다.** 합성 소재(testsrc2)는 좌우가 보색이라
+      전폭 평균이 서로 상쇄돼 늘 회색(126,128,126)으로 나온다 (실측). 한쪽만 잘라서 잰다.
+    */
+    const strip = `crop=300:120:150:${topBandH + 20}`;
+
+    /*
+      ② **컷이 실제로 쪼개졌고, 덤 소재로 갈아탔다.**
+
+      🔴 「1초와 3초의 색이 다르다」로는 못 본다 — 합성 소재(testsrc2)는 저 혼자
+      움직여서 컷을 안 쪼개도 그만큼 달라진다. 실제로 그렇게 짰다가, 컷 쪼개기를
+      꺼놓고 돌려도 통과하는 것을 보고 알았다(색차 123으로 그냥 지나갔다).
+
+      대신 **컷 경계에서만 생기는 불연속**을 본다. 한 컷 안에서 0.2초는 이 구역이
+      전혀 안 변하는데(실측 색차 0), 경계를 넘으면 다른 소재라 확 튄다(실측 199).
+      소재가 하나뿐이라 같은 소재의 뒤 구간을 이어 트는 경우엔 경계가 매끄러워
+      여기서 안 걸린다 — 그래서 이 검사는 **덤 소재를 실제로 끌어다 썼는지**까지 본다.
+    */
+    const insideA = await frameStats(finalPath, 1.0, strip);
+    const insideB = await frameStats(finalPath, 1.2, strip);
+    const insideGap = colorGap(insideA.mean, insideB.mean);
+    const beforeCut = await frameStats(finalPath, CUT_SEC - 0.1, strip);
+    const afterCut = await frameStats(finalPath, CUT_SEC + 0.1, strip);
+    const cutGap = colorGap(beforeCut.mean, afterCut.mean);
+    assert(insideGap < 20,
+      `컷 안에서 화면이 흔들린다 — 경계 판정의 기준이 무너졌다 (색차 ${insideGap.toFixed(1)})`);
+    assert(cutGap > insideGap + 60,
+      `${CUT_SEC}초에서 컷이 안 갈렸다 — 씬 하나를 한 소재로 통째로 틀었다`
+      + ` (경계 색차 ${cutGap.toFixed(1)} · 컷 안 ${insideGap.toFixed(1)})`);
+
+    /*
+      ③ **인트로 제목이 뜨는 동안 띠 제목은 물러난다.** 안 물리면 같은 문구가 가운데와
+      띠에 두 번 찍힌다 — 이건 렌더해 봐야만 드러난다. 띠에 글자가 있으면 밝기
+      표준편차가 확 오르고, 평평하면 0에 가깝다.
+    */
+    const bandCrop = `crop=1080:${topBandH}:0:0`;
+    const bandDuringIntro = await frameStats(finalPath, INTRO_SEC / 2, bandCrop);
+    const bandAfterIntro = await frameStats(finalPath, INTRO_SEC + 1, bandCrop);
+    // 실측: 인트로 중 0.2 / 끝난 뒤 65.8 — 사이가 넓어 임계가 흔들릴 여지가 없다
+    assert(bandDuringIntro.std < 8,
+      `인트로 중에도 띠 제목이 찍혔다 — 같은 문구가 두 번 나온다 (표준편차 ${bandDuringIntro.std.toFixed(1)})`);
+    assert(bandAfterIntro.std > bandDuringIntro.std + 10,
+      `인트로가 끝났는데 띠 제목이 안 돌아왔다 (${bandDuringIntro.std.toFixed(1)} → ${bandAfterIntro.std.toFixed(1)})`);
+
+    await put('/settings', base); // 뒤 단계가 menu-a 기준으로 돌도록 되돌린다
+    return `${bScenes.length}씬 · ${videoDur.toFixed(1)}초 유지 · 컷 경계 ${cutGap.toFixed(0)}(안 ${insideGap.toFixed(0)})`
+      + ` · 띠 ${bandDuringIntro.std.toFixed(1)}→${bandAfterIntro.std.toFixed(1)}`;
   });
 
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
@@ -1458,6 +1662,50 @@ async function probeJson(file: string): Promise<{
     p.on('close', (code) => code === 0 ? resolve(JSON.parse(out)) : reject(new Error(`ffprobe 종료 ${code}`)));
     p.on('error', reject);
   });
+}
+
+/**
+ * 완성본의 한 프레임에서 **잘라낸 영역**의 색 통계를 낸다.
+ *
+ * 픽셀을 봐야만 잡히는 것들이 있다 — 컷이 실제로 다른 소재로 바뀌었는지(평균색),
+ * 띠에 글자가 들어 있는지(표준편차)는 문자열 검사로는 절대 안 나온다.
+ * 실제로 인트로 제목이 띠 제목과 **두 번 겹쳐 찍히는 것**을 렌더해 보고서야 잡았다.
+ */
+async function frameStats(
+  file: string, at: number, crop: string,
+): Promise<{ mean: [number, number, number]; std: number }> {
+  const raw = await new Promise<Buffer>((resolve, reject) => {
+    const p = spawn('ffmpeg', [
+      '-v', 'error', '-ss', String(at), '-i', file, '-frames:v', '1',
+      '-vf', `${crop},format=rgb24`, '-f', 'rawvideo', '-',
+    ]);
+    const chunks: Buffer[] = [];
+    p.stdout.on('data', (d: Buffer) => chunks.push(d));
+    p.on('close', (code) => code === 0
+      ? resolve(Buffer.concat(chunks))
+      : reject(new Error(`ffmpeg 종료 ${code}`)));
+    p.on('error', reject);
+  });
+  if (raw.length < 3) throw new Error(`${at}초 프레임을 못 읽음`);
+  const sum = [0, 0, 0];
+  for (let i = 0; i + 2 < raw.length; i += 3) {
+    sum[0] += raw[i]; sum[1] += raw[i + 1]; sum[2] += raw[i + 2];
+  }
+  const n = Math.floor(raw.length / 3);
+  const mean: [number, number, number] = [sum[0] / n, sum[1] / n, sum[2] / n];
+  // 밝기 표준편차 — 평평한 띠는 0에 가깝고, 글자가 들어가면 확 오른다
+  let acc = 0;
+  for (let i = 0; i + 2 < raw.length; i += 3) {
+    const y = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+    const my = 0.299 * mean[0] + 0.587 * mean[1] + 0.114 * mean[2];
+    acc += (y - my) ** 2;
+  }
+  return { mean, std: Math.sqrt(acc / n) };
+}
+
+/** 두 평균색이 얼마나 다른가 (0~441) */
+function colorGap(a: [number, number, number], b: [number, number, number]): number {
+  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
 }
 
 /** 특정 스트림(v/a)의 길이 — 오디오·영상 싱크 검증용 */
