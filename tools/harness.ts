@@ -16,8 +16,14 @@ import fsp from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readZip } from '../server/src/util/zip.js';
+/*
+  🔴 **`import type`이어야 한다 — 값으로 바꾸면 하네스가 안 뜬다.** `assemble.ts`가
+  `@shared/*`를 런타임 import하는데 루트에 tsconfig가 없어 `tsx`가 그 별칭을 못 푼다.
+  타입만 가져오면 컴파일에서 지워져 무사하다 (같은 제약이 `CUT_SUM_TOLERANCE_SEC`이
+  `shared/constants.ts`에 사는 이유다 — 그쪽 주석 참고).
+*/
 import type { SceneCutPlan } from '../server/src/pipeline/assemble.js';
-import { syllableBudget, TARGET_SEC_BY_MENU } from '../shared/constants.js';
+import { syllableBudget, TARGET_SEC_BY_MENU, CUT_SUM_TOLERANCE_SEC } from '../shared/constants.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TSX_BIN = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -1248,8 +1254,10 @@ async function main(): Promise<void> {
   }>('제품정보리뷰 — 영상 소재 3건 첨부 · 덤 소재 판정 고정', async () => {
     /*
       상한을 하네스에 박지 않는다 — 조립이 쓰는 값과 같은 곳에서 읽는다.
-      나레이션이 상한보다 길어야 쪼개진다. **상한의 2.5배**로 잡으면 상한이 바뀌어도
-      늘 3컷이고, 정확히 배수인 경계(쪼갤지 말지가 뒤집히는 자리)에 걸리지 않는다.
+      나레이션이 상한보다 길어야 쪼개진다. **상한의 2.5배**는 씬 길이의 한가운데고,
+      `bSceneSec`이 여기서 씬마다 갈라 낸다 — 씬이 넷이면 1.75·2.25·2.75·3.25배로
+      2·3·3·4컷이다. 상한이 바뀌어도 넷 중 정수배가 없어, 쪼갤지 말지가 뒤집히는
+      경계에 안 걸린다.
     */
     const { maxClipExposureSec: maxCut } = await get<{ maxClipExposureSec: number }>('/settings');
     assert(maxCut > 0, '연속 노출 상한이 꺼져 있다 — 켠 채로 돌아야 컷 쪼개기가 검사된다');
@@ -1315,8 +1323,28 @@ async function main(): Promise<void> {
     { text: '대신 스테인리스라 지문은 진짜 잘 묻는다고들 하더라', downside: true },
   ];
 
+/**
+ * 씬 i의 나레이션 길이 — **씬마다 다르게** 준다 (2026-08-24).
+ *
+ * 🔴 전부 같은 길이면 감사 로그의 컷 계획이 씬 순서와 어긋나도 `item.sec - dur`이 언제나
+ * 0이라, 그 어긋남만 잡을 수 있는 아래 ②-a가 **아무것도 안 지킨다.** 실제로 4씬이 각
+ * 5.02초여서 그랬다. 길이를 갈라 놓으면 순서가 뒤섞이는 순간 값이 안 맞는다.
+ *
+ * `sceneSec`을 가운데 두고 **상한의 절반씩** 대칭으로 벌린다. 세 가지가 동시에 지켜진다:
+ * - **총합이 그대로 `n × sceneSec`이다** — 목표 길이(`TARGET_SEC_BY_MENU`)에서 안 벗어난다
+ * - 제일 짧은 씬도 상한보다 길어 여전히 쪼개진다 (`cuts > 1`). 씬이 넷이면 1.75배다 —
+ *   ⚠️ 이 여유는 `n`에 달렸다. 씬이 늘면 벌어지는 폭도 커져, 일곱을 넘으면 제일 짧은
+ *   씬이 상한 아래로 내려가 안 쪼개진다. 씬 수를 늘릴 거면 벌리는 폭(`maxCut / 2`)도 같이 본다
+ * - 컷 수가 2·3·3·4로 갈려 `Math.ceil(dur / maxCut)` 계산도 한 지점만 보지 않는다
+ *
+ * 숫자를 새로 박지 않는다 — `sceneSec`(= `maxCut × 2.5`)과 `maxCut`에서만 파생시킨다.
+ */
+function bSceneSec(i: number, n: number, sceneSec: number, maxCut: number): number {
+  return sceneSec + (i - (n - 1) / 2) * (maxCut / 2);
+}
+
   await step('제품정보리뷰 — 대본에 clipRef · 승인(scening) · 씬별 음성 첨부', async () => {
-    const { jid: bJid, clips, sceneSec } = bAsm;
+    const { jid: bJid, clips, sceneSec, maxCut } = bAsm;
 
     /*
       **서버가 clipRef를 붙여주지 않는다.** 요청서에 소재 현황이 실리고 그걸 보고 AI가 적는다
@@ -1352,9 +1380,10 @@ async function main(): Promise<void> {
     // 타입캐스트는 실제 키가 필요하므로 첨부 경로로 간다 (menu-a 단계와 같은 이유)
     const tmpAudio = path.join(workspace, '_tmp_audio_b');
     await fsp.mkdir(tmpAudio, { recursive: true });
-    for (const scene of scenes) {
+    for (const [i, scene] of scenes.entries()) {
       const f = path.join(tmpAudio, `${scene.sceneId}.mp3`);
-      await makeSilentAudio(f, sceneSec);
+      // 씬마다 길이가 다르다 — 왜인지는 `bSceneSec` 주석에
+      await makeSilentAudio(f, bSceneSec(i, scenes.length, sceneSec, maxCut));
       const fd = new FormData();
       fd.append('sceneId', scene.sceneId);
       fd.append('file', new Blob([await fsp.readFile(f)], { type: 'audio/mpeg' }), `${scene.sceneId}.mp3`);
@@ -1371,7 +1400,8 @@ async function main(): Promise<void> {
     assert(timings.length === scenes.length, `타이밍 씬 수 불일치: ${timings.length}`);
     assert(timings.every((t) => t.source === 'file'), '첨부 파일이 우선 사용되지 않음');
     const total = timings.reduce((a, t) => a + t.duration, 0);
-    return `${scenes.length}씬(단점 1) · clipRef 반영 · ${approved.state} · 나레이션 ${total.toFixed(1)}초`;
+    return `${scenes.length}씬(단점 1) · clipRef 반영 · ${approved.state} · 나레이션 `
+      + `${timings.map((t) => t.duration.toFixed(1)).join('/')} = ${total.toFixed(1)}초`;
   });
 
   await step('제품정보리뷰 조립 — 씬 하나가 여러 컷 · 총 길이 불변', async () => {
@@ -1414,6 +1444,15 @@ async function main(): Promise<void> {
 
     const timings = await readMenuBTimings(bJid);
     assert(timings, '타이밍 파일이 사라짐');
+    /*
+      🔴 **고정물이 스스로를 지킨다.** 아래 ②-a가 잡을 수 있는 유일한 실패 모드는
+      「감사 로그의 컷 계획이 씬 순서와 어긋남」인데, 씬 길이가 전부 같으면 순서가
+      어떻게 뒤섞여도 값이 안 변해서 그 단언이 조용히 죽는다 (2026-08-24 검증에서
+      실제로 그 상태였다 — 4씬이 각 5.02초). 길이를 다시 같게 만드는 변경은 여기서 막힌다.
+    */
+    assert(new Set(timings.map((t) => t.duration.toFixed(2))).size === timings.length,
+      `씬 나레이션 길이가 서로 겹친다 (${timings.map((t) => t.duration.toFixed(2)).join('/')}) — `
+      + '감사 로그 순서가 뒤섞여도 ②-a가 못 잡는다');
     // ① 씬 하나가 여러 컷으로 쪼개졌는가 — 기대 컷 수도 앱과 같은 재료로 계산한다
     for (const [i, item] of plan.entries()) {
       const dur = Math.max(1, timings[i].duration);
@@ -1429,17 +1468,29 @@ async function main(): Promise<void> {
       assert(item.sources === 2,
         `${item.sceneId}: 쓴 소재가 ${item.sources}개 (대본이 고른 1 + 덤 1 = 2여야 한다)`);
       /*
-        ②-a 컷을 쪼갠 **계획**이 나레이션 길이를 정확히 채우는가.
+        ②-a 감사 로그의 컷 계획이 **씬 순서대로** 적혔는가.
 
-        🔴 **결과물만 재면 「길어짐」을 못 잡는다** (2026-08-24 검증에서 뚫렸다).
-        최종 먹싱이 `-shortest`라 컷 합이 길어지면 영상 뒤가 조용히 잘려 출력 길이가
-        **정확히** 나레이션 길이가 된다 — 컷을 15% 늘려도 아래 ②-b는 0.02초 차로 통과했다.
-        화면은 누적으로 밀리고 마지막 씬 뒤는 사라지는데 총 길이만 완벽해 보인다.
-        그래서 잘리기 **전**의 값인 계획을 잰다. 짧아지는 쪽은 ②-b가 잡는다.
+        🔴 **컷 합이 어긋나는 것 자체는 이제 조립이 막는다** (`cutPlanError`, 2026-08-24).
+        컷 나누기를 망가뜨리는 조작은 위 `abortIfJobFailed('assemble.failed')`에서 서버의
+        안내 문구를 그대로 물고 죽어 여기까지 오지 못한다. 그 게이트는 정상 입력으로
+        흔들 수 없으므로(그러라고 만든 값이다) 양방향 검사는 단위 테스트가 맡는다
+        (`cuts.test.ts`의 `cutPlanError`).
+
+        **그래서 이 단언이 지키는 것은 씬과 타이밍의 짝이다.** 서버 게이트는 이걸 못 본다 —
+        짝이 어긋나면 조립은 **틀린 `dur`로 계획을 세우고 그 틀린 `dur`과 비교하므로**
+        구조적으로 통과하는데, 정작 오디오는 밀린다. 스스로를 재는 검사는 스스로의
+        어긋남을 못 잡는다. 여기서만 바깥 기준(타이밍 파일)과 맞춰 본다.
+
+        딸려 오는 것이 감사 로그의 정직성이다. 컷 조각은 렌더 뒤 지워져 이 로그가
+        유일한 사후 기록이라(`SceneCutPlan`이 있는 이유가 그것이다), 로그가 거짓말하면
+        나간 편의 원인 추적이 통째로 틀어진다.
+        씬 길이를 갈라 둔 것이 이걸 관측 가능하게 만든다 — 위 「길이가 겹치는가」 참조.
+
+        오차는 조립과 같은 상수를 쓴다. 두 벌이면 서버는 통과시키는데 여기만 터진다.
       */
-      assert(Math.abs(item.sec - dur) < 0.05,
-        `${item.sceneId}: 컷 합이 ${item.sec.toFixed(2)}초인데 나레이션은 ${dur.toFixed(2)}초 — `
-        + '씬 안에서 어긋나면 뒤 씬이 통째로 밀린다 (출력 길이는 -shortest가 가려 준다)');
+      assert(Math.abs(item.sec - dur) < CUT_SUM_TOLERANCE_SEC,
+        `${item.sceneId}: 감사 로그의 컷 합이 ${item.sec.toFixed(2)}초인데 `
+        + `타이밍 파일의 나레이션은 ${dur.toFixed(2)}초 — 씬과 타이밍의 짝이 어긋났다`);
     }
 
     // ②-b 렌더 결과의 총 길이 — 계획대로 나왔는가 (짧아지는 쪽이 여기서 드러난다)

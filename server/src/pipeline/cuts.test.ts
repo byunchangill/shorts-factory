@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { planCuts, hasVisibleText, type CutSource } from './assemble.js';
+import {
+  planCuts, hasVisibleText, cutPlanError, type CutSource, type SceneCutPlan,
+} from './assemble.js';
+import { CUT_SUM_TOLERANCE_SEC } from '@shared/constants';
 import { SettingsSchema, type Clip } from '@shared/types';
 
 const S = (path: string, inPoint = 0, avail = 30): CutSource => ({ path, in: inPoint, avail });
@@ -67,6 +70,90 @@ describe('planCuts', () => {
 
   it('소재가 없으면 빈 배열 — 부르는 쪽이 터지지 않게', () => {
     expect(planCuts([], 5, 2)).toEqual([]);
+  });
+});
+
+/*
+  조립이 렌더 전에 거는 불변식. 결과물로는 이걸 못 본다 — 최종 먹싱이 `-shortest`라
+  컷 합이 길어진 쪽은 영상 뒤가 조용히 잘려 총 길이만 멀쩡해 보인다 (2026-08-24 실측:
+  컷을 15% 늘려도 출력은 0.02초 차). 하네스 E2E로는 이 게이트를 못 흔든다 —
+  정상 입력으로는 절대 안 걸리게 만든 값이라서다. 그래서 여기서 양방향을 다 눌러 본다.
+*/
+describe('cutPlanError', () => {
+  const P = (over: Partial<SceneCutPlan> = {}): SceneCutPlan =>
+    ({ sceneId: 's01', cuts: 3, sources: 2, sec: 5, ...over });
+
+  it('맞으면 null — 정상 경로에서 사용자를 막지 않는다', () => {
+    expect(cutPlanError(P({ sec: 5 }), 5)).toBeNull();
+  });
+
+  it('부동소수 누적오차는 봐준다 — planCuts는 total/n으로 나눈다', () => {
+    // 26초를 1.5초 상한으로 나누면 18컷이고, 18번 더하는 사이에 1e-14가 남는다
+    const total = 26;
+    const cuts = planCuts([S('a'), S('b')], total, 1.5);
+    const sec = cuts.reduce((n, c) => n + c.dur, 0);
+    expect(sec).not.toBe(total); // 티끌이 실제로 남는다 — 0으로 걸면 여기서 막힌다
+    expect(cutPlanError(P({ cuts: cuts.length, sec }), total)).toBeNull();
+  });
+
+  it('컷이 길어진 쪽을 잡는다 — 결과물로는 못 보는 방향이다', () => {
+    const msg = cutPlanError(P({ sec: 5.78 }), 5.02);
+    expect(msg).toContain('s01');
+    expect(msg).toContain('5.78');
+    expect(msg).toContain('5.02');
+    expect(msg).toContain('+0.76'); // 어느 쪽으로 얼마나 어긋났는지
+    expect(msg).toContain('총 길이만 멀쩡해 보입니다');
+  });
+
+  it('컷이 짧아진 쪽도 잡는다', () => {
+    expect(cutPlanError(P({ sec: 3.52 }), 5.02)).toContain('-1.50');
+  });
+
+  /*
+    부호와 무관한 일반 설명을 늘 붙이면 원인을 찾는 사람의 시선을 엉뚱한 데로 끈다 —
+    짧아진 쪽(-1.51초)에 「먹싱이 뒤를 잘라낸다」가 붙어 있었다 (2026-08-24 검증 지적).
+  */
+  it('증상 설명이 부호를 따라간다 — 짧아진 쪽에 먹싱 이야기를 안 붙인다', () => {
+    const short = cutPlanError(P({ sec: 3.52 }), 5.02)!;
+    expect(short).toContain('화면이 먼저 동나');
+    expect(short).not.toContain('총 길이만 멀쩡해 보입니다');
+    expect(cutPlanError(P({ sec: 5.78 }), 5.02)).not.toContain('화면이 먼저 동나');
+  });
+
+  it('오차 경계 — 상수 하나를 조립과 하네스가 같이 쓴다', () => {
+    expect(cutPlanError(P({ sec: 5 + CUT_SUM_TOLERANCE_SEC * 0.9 }), 5)).toBeNull();
+    expect(cutPlanError(P({ sec: 5 + CUT_SUM_TOLERANCE_SEC * 1.1 }), 5)).not.toBeNull();
+  });
+
+  /*
+    🔴 이게 이 파일에서 제일 중요한 검사다. 사용자를 막는 예외를 넣었으니
+    「정상 경로에서 절대 안 걸린다」가 증명돼야 한다. planCuts가 내놓는 모든 모양 —
+    통컷 · 쪼갠 것 · 소재 부족 · 되감기 · 상한 0(해외영상 짜집기) — 을 다 통과시킨다.
+  */
+  it('planCuts가 내놓은 계획은 언제나 통과한다', () => {
+    const cases: Array<[CutSource[], number, number]> = [
+      [[S('a')], 1.8, 2],
+      [[S('a'), S('b'), S('c')], 3.84, 2],
+      [[S('a'), S('b'), S('c')], 5.38, 2],
+      [[S('a'), S('b'), S('c')], 11, 2],
+      [[S('a')], 6, 2],
+      [[S('long', 0, 30), S('tiny', 0, 0.5)], 6, 2],
+      [[S('tiny', 0, 0.5)], 6, 2],
+      [[S('a', 0, 5)], 12, 2],
+      [[S('a'), S('b')], 12, 0], // menu-a: 쪼개지 않는다
+      [[S('a')], 1, 3],
+      [[S('a'), S('b')], 26, 1.5],
+    ];
+    for (const [sources, total, maxCut] of cases) {
+      const cuts = planCuts(sources, total, maxCut);
+      const plan = P({ cuts: cuts.length, sec: cuts.reduce((n, c) => n + c.dur, 0) });
+      expect(cutPlanError(plan, total), `${total}초 / 상한 ${maxCut}초`).toBeNull();
+    }
+  });
+
+  /** 이미지 씬은 `dur`을 통째로 한 장으로 채운다 — 계획도 그 값 그대로다 */
+  it('이미지 씬(컷 1개 = 나레이션 전체)도 통과한다', () => {
+    expect(cutPlanError(P({ cuts: 1, sources: 1, sec: 4.37 }), 4.37)).toBeNull();
   });
 });
 

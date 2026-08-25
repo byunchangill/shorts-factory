@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Script, Clip } from '@shared/types';
-import { COUPANG_PARTNERS_DISCLOSURE, type Menu } from '@shared/constants';
+import { COUPANG_PARTNERS_DISCLOSURE, CUT_SUM_TOLERANCE_SEC, type Menu } from '@shared/constants';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
@@ -121,6 +121,43 @@ export interface SceneCutPlan {
 }
 
 /**
+ * 컷 계획이 나레이션 길이를 벗어났으면 안내 문구, 맞으면 `null`.
+ *
+ * 🔴 **렌더 전에 막는 값이 여기 있다** (2026-08-24). 씬 안에서 어긋나면 그 뒤 씬이
+ * 통째로 밀려 음성·자막과 화면이 따로 논다. 그런데 **결과물로는 안 보인다** —
+ * 최종 먹싱이 `-shortest`라 컷 합이 길어진 쪽은 영상 뒤가 조용히 잘려 출력 길이가
+ * 정확히 나레이션 길이가 된다. 총 길이만 보면 완벽해 보이는 편이 그대로 발행된다.
+ *
+ * 훅 게이트와 같은 논리다 — 몇 분 인코딩한 뒤 밀린 결과를 받는 것보다 여기서 끝내는 게 싸다.
+ *
+ * **정상 경로에서는 절대 안 걸린다.** `planCuts`가 `total / n`으로 정확히 나누고
+ * 이미지 씬은 `dur`을 그대로 쓴다 — 걸린다면 그건 앱 결함이지 사용자 데이터 문제가 아니다.
+ * 그래서 안내도 「고쳐서 다시 하세요」가 아니라 「다시 눌러도 같다」로 적는다.
+ *
+ * 그리고 같은 이유로 **첫 씬에서 바로 끝낸다.** 어긋난 씬을 모아 한 번에 보여주는 편이
+ * 나은 것은 씬마다 원인이 다를 때인데(대본 규칙 검사가 그렇다), 이건 컷 나누기 하나가
+ * 틀린 것이라 모든 씬이 같은 말을 한다. 그걸 보자고 씬 전체를 렌더할 이유가 없다.
+ */
+export function cutPlanError(plan: SceneCutPlan, narrationSec: number): string | null {
+  const gap = plan.sec - narrationSec;
+  if (Math.abs(gap) < CUT_SUM_TOLERANCE_SEC) return null;
+  /*
+    어긋난 방향마다 결과물에 나타나는 모양이 다르다. 부호와 무관한 일반 설명을 늘 붙이면
+    원인을 찾는 사람의 시선을 엉뚱한 데로 끈다 — 짧아진 쪽에 「먹싱이 뒤를 잘라낸다」가
+    붙어 있었다 (2026-08-24 검증 지적).
+  */
+  const symptom = gap > 0
+    ? '컷이 길어진 쪽은 최종 먹싱이 영상 뒤를 잘라내 총 길이만 멀쩡해 보입니다.'
+    : '컷이 짧아진 쪽은 화면이 먼저 동나 나레이션 뒤가 통째로 잘려 나갑니다.';
+  return (
+    `씬 ${plan.sceneId}의 컷 ${plan.cuts}개를 합치면 ${plan.sec.toFixed(2)}초인데 `
+    + `나레이션은 ${narrationSec.toFixed(2)}초입니다 (${gap > 0 ? '+' : ''}${gap.toFixed(2)}초). `
+    + `이대로 렌더하면 이 씬부터 화면이 밀려 음성·자막과 어긋나므로 조립을 멈췄습니다 — ${symptom} `
+    + '컷 나누기가 어긋난 것이라 다시 눌러도 같습니다. 앱 결함이니 이 문구를 그대로 알려 주세요.'
+  );
+}
+
+/**
  * 씬별 비주얼 소스 결정:
  * - menu-a: clipRef → 정리본(clean) 우선, 없으면 원본 다운로드 파일
  * - menu-b: imageRef (씬 이미지) → Ken Burns 줌
@@ -182,14 +219,22 @@ export async function assembleFinal(
     }
 
     const visual = await resolveVisual(scene, input, i, dur, settings);
-    cutPlan.push({
+    const plan: SceneCutPlan = {
       sceneId: scene.sceneId,
       cuts: visual.type === 'video' ? visual.cuts.length : 1,
       // 같은 파일을 여러 컷이 나눠 쓸 수 있다 — 「화면이 바뀌었나」는 파일 수로만 답이 된다
       sources: visual.type === 'video' ? new Set(visual.cuts.map((c) => c.path)).size : 1,
       // 이미지 씬은 `dur`을 통째로 한 장으로 채운다
       sec: visual.type === 'video' ? visual.cuts.reduce((a, c) => a + c.dur, 0) : dur,
-    });
+    };
+    cutPlan.push(plan);
+    /*
+      컷 합 = 나레이션 — 어긋나면 **한 프레임도 인코딩하기 전에** 끝낸다.
+      훅 게이트보다 앞에 둔다: 계산만 하는 검사라 공짜고, 틀어진 계획으로 훅을 재 봐야
+      의미가 없다. 씬을 모아 한 번에 보여주지 않는 이유는 `cutPlanError` 주석에 있다.
+    */
+    const planError = cutPlanError(plan, dur);
+    if (planError) throw new Error(planError);
     /*
       훅 게이트 — 첫 씬이 거의 멈춰 있으면 렌더 전에 막는다.
       몇 분을 인코딩한 뒤 「계속 시청함」이 20% 아래로 나오는 것보다 여기서 끝내는 게 싸다.
