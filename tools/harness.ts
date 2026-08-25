@@ -1242,6 +1242,17 @@ async function main(): Promise<void> {
     다 통과하고 **렌더해 보고서야** 드러났다. 그래서 여기서는 완성본에서 프레임을 꺼내
     색으로 확인한다.
   */
+  /*
+    다음 두 단계가 **같은 잡을 나눠 쓴다.** 뒤 단계는 카드만 켜고 다시 조립해 앞 판과
+    비교한다 — 같은 대본·같은 음성이어야 「카드가 늘린 만큼만 길어졌다」를 잴 수 있다.
+  */
+  let bJobId = '';
+  let bJobPath = '';
+  let bBaseSettings: Record<string, unknown> = {};
+  let bMenuSettings: Record<string, unknown> = {};
+  let bCardOffDur = 0;
+  let bCardOffVersion = 0;
+
   await step('제품정보리뷰 조립 — 컷 쪼개기 · 덤 소재 · 인트로 타이틀', async () => {
     const product = '테스트정리함';
     const SCENE_SEC = 4; // 상한(2초)의 두 배 — 씬마다 정확히 두 컷으로 갈린다
@@ -1254,12 +1265,13 @@ async function main(): Promise<void> {
       카드가 끼면 길이가 카드 수만큼 늘어 「총 길이가 안 변했다」를 잴 수 없고,
       자막이 타면 소재 색을 재려는 자리를 글자가 덮는다. 둘 다 menu-a 단계가 이미 본다.
     */
-    await put('/settings', {
+    const menuBSettings = {
       ...base, layout: 'banded', insertCards: false, burnSubtitles: false,
       maxClipExposureSec: CUT_SEC, introTitleSec: INTRO_SEC,
       hookMotionMin: 0, // 합성 소재는 정지 화면에 가까워 늘 걸린다
       mirror: false, zoom: 1, grade: '',
-    });
+    };
+    await put('/settings', menuBSettings);
 
     await post('/projects', { menu: 'menu-b', title: product, formatId: 'harness-format' });
     const job = await post<JobView>(
@@ -1323,24 +1335,7 @@ async function main(): Promise<void> {
     const narrationTotal = bTimings.reduce((n, t) => n + t.duration, 0);
 
     // 저작권 게이트는 해외영상 짜집기 전용이다 — 여기서 막히면 안 된다
-    await post(`/jobs/${job.id}/assemble`, {});
-    const done = await waitFor('menu-b 조립', async () => {
-      const err = await (async () => {
-        const text = await fsp.readFile(path.join(bJobDir, 'events.ndjson'), 'utf8')
-          .catch(() => '');
-        for (const line of text.trim().split('\n').reverse()) {
-          if (!line) continue;
-          try {
-            const e = JSON.parse(line) as { type?: string; error?: string };
-            if (e.type === 'assemble.failed') return e.error || '(사유 미기록)';
-          } catch { /* 기록 중이라 잘린 줄 */ }
-        }
-        return null;
-      })();
-      if (err) throw new ProbeAbort(`assemble.failed — ${err}`);
-      const v = await get<JobView>(`/jobs/${job.id}`);
-      return v.output.currentVersion ? v : null;
-    }, 300_000);
+    const done = await assembleAndWait(job.id, bJobDir, 0);
 
     const finalPath = path.join(bJobDir, 'output', `final_v${done.output.currentVersion}.mp4`);
     const probe = await probeJson(finalPath);
@@ -1406,9 +1401,87 @@ async function main(): Promise<void> {
     assert(bandAfterIntro.std > bandDuringIntro.std + 10,
       `인트로가 끝났는데 띠 제목이 안 돌아왔다 (${bandDuringIntro.std.toFixed(1)} → ${bandAfterIntro.std.toFixed(1)})`);
 
+    // 다음 단계가 이 잡에 카드만 켜고 다시 조립한다
+    bJobId = job.id;
+    bJobPath = bJobDir;
+    bBaseSettings = base;
+    bMenuSettings = menuBSettings;
+    bCardOffDur = videoDur;
+    bCardOffVersion = done.output.currentVersion!;
+
     await put('/settings', base); // 뒤 단계가 menu-a 기준으로 돌도록 되돌린다
     return `${bScenes.length}씬 · ${videoDur.toFixed(1)}초 유지 · 컷 경계 ${cutGap.toFixed(0)}(안 ${insideGap.toFixed(0)})`
       + ` · 띠 ${bandDuringIntro.std.toFixed(1)}→${bandAfterIntro.std.toFixed(1)}`;
+  });
+
+  /*
+    텍스트 카드는 **여기서만 실제로 렌더된다.**
+
+    `renderCard`를 부르는 곳은 조립 한 군데인데, 그동안 하네스의 어느 시나리오도 그
+    경로를 안 밟았다 — 해외영상 짜집기는 교리상 카드를 안 넣고(검사도 「샜는지」만 본다),
+    제품정보리뷰는 길이를 재려고 일부러 꺼 뒀다. 단위 테스트는 줄바꿈과 후보 선정만 본다.
+
+    🔴 **길이 불변식이 카드를 콕 집어 말하는데 그 문장이 검증된 적이 없었다**
+    (`finalLengthError`의 「카드 무음 구간이나 효과음 믹싱이…」). 카드가 끼면 영상은
+    카드만큼 길어지고 오디오도 그만큼 무음이 채워져야 하는데, 한쪽만 늘면
+    `-shortest`가 조용히 잘라낸다.
+
+    앞 단계와 **같은 잡에 카드만 켜고 다시 조립해** 두 판을 비교한다.
+  */
+  await step('텍스트 카드 — 실제로 렌더되고, 늘어난 만큼만 길어진다', async () => {
+    assert(bJobId, '앞 단계가 잡을 안 넘겼다');
+    const cardSec = Number(bMenuSettings.cardDurationSec ?? 1.5);
+
+    await put('/settings', { ...bMenuSettings, insertCards: true });
+    const done = await assembleAndWait(bJobId, bJobPath, bCardOffVersion);
+    const version = done.output.currentVersion!;
+    assert(version > bCardOffVersion,
+      `새 판이 안 나왔다 — v${bCardOffVersion} 그대로다`);
+
+    const withCards = path.join(bJobPath, 'output', `final_v${version}.mp4`);
+    const dur = Number((await probeJson(withCards)).format.duration);
+
+    /*
+      ① **카드 길이만큼만 늘어난다.**
+
+      카드가 몇 장 붙는지는 **다시 계산하지 않는다** — 앱 로직(`i > 0` · 자막 길이)을
+      테스트에 두 벌 두는 셈이라 규칙이 바뀌면 같이 어긋난다. 늘어난 시간이
+      `cardDurationSec`의 **정수 배**인지만 본다.
+    */
+    const added = dur - bCardOffDur;
+    const cards = Math.round(added / cardSec);
+    assert(cards >= 1,
+      `카드가 하나도 안 붙었다 — 켜기 전 ${bCardOffDur.toFixed(2)}초 · 켠 뒤 ${dur.toFixed(2)}초`);
+    assert(Math.abs(added - cards * cardSec) < 0.2,
+      `늘어난 시간이 카드 길이의 배수가 아니다 — ${added.toFixed(3)}초는`
+      + ` ${cardSec}초로 안 나눠떨어진다 (카드 ${cards}장이면 ${(cards * cardSec).toFixed(2)}초)`);
+
+    /*
+      ② 🔴 **길이 불변식이 카드 무음까지 맞춘다.** 영상만 늘고 오디오가 안 늘면
+      `-shortest`가 뒤를 잘라 끝문장이 통째로 날아간다 — 이 검사가 그동안 없었다.
+    */
+    const audioDur = await streamDuration(withCards, 'a');
+    assert(Math.abs(dur - audioDur) < 0.15,
+      `카드가 영상만 늘렸다 — 영상 ${dur.toFixed(3)}초 / 오디오 ${audioDur.toFixed(3)}초`);
+
+    /*
+      ③ **카드가 실제로 그려졌다** — 무음만 늘어난 게 아니다.
+
+      씬 세 개가 같은 길이라 첫 카드는 `앞판÷3` 지점에서 시작한다. 카드는 어두운
+      정지 화면(`#111827`)이고 소재는 형광색 합성 영상이라 밝기로 확실히 갈린다.
+    */
+    const sceneEnd = bCardOffDur / 3;
+    const mid = `crop=1080:600:0:660`; // 카드 글자와 소재가 모두 걸리는 화면 가운데
+    const onCard = await frameStats(withCards, sceneEnd + cardSec / 2, mid);
+    const onScene = await frameStats(withCards, sceneEnd / 2, mid);
+    const lum = (m: [number, number, number]) => 0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2];
+    assert(lum(onCard.mean) < lum(onScene.mean) - 40,
+      `카드 자리에 카드가 안 보인다 — 무음만 늘어난 것 같다`
+      + ` (카드 ${lum(onCard.mean).toFixed(0)} · 소재 ${lum(onScene.mean).toFixed(0)})`);
+
+    await put('/settings', bBaseSettings); // 뒤 단계는 menu-a 기준으로 돈다
+    return `카드 ${cards}장 · +${added.toFixed(2)}초 (${cardSec}초×${cards})`
+      + ` · 밝기 ${lum(onScene.mean).toFixed(0)}→${lum(onCard.mean).toFixed(0)}`;
   });
 
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
@@ -1701,6 +1774,37 @@ async function frameStats(
     acc += (y - my) ** 2;
   }
   return { mean, std: Math.sqrt(acc / n) };
+}
+
+/**
+ * 조립을 돌리고 **새 버전이 나올 때까지** 기다린다.
+ *
+ * 실패는 잡 상태가 아니라 이벤트로만 남으므로(`assemble.failed`) 그걸 같이 본다 —
+ * 안 보면 이미 실패한 조립을 상한까지 기다린다.
+ *
+ * @param after 이 버전보다 커져야 끝난 것으로 친다. 같은 잡을 다시 조립할 때 쓴다 —
+ *              0으로 두면 「버전이 생기기만 하면」이라 **직전 판을 그대로 집어 온다**
+ */
+async function assembleAndWait(jobId: string, dir: string, after: number): Promise<JobView> {
+  await post(`/jobs/${jobId}/assemble`, {});
+  return waitFor(`조립 (v${after + 1} 이상)`, async () => {
+    const text = await fsp.readFile(path.join(dir, 'events.ndjson'), 'utf8').catch(() => '');
+    for (const line of text.trim().split('\n').reverse()) {
+      if (!line) continue;
+      try {
+        const e = JSON.parse(line) as { type?: string; error?: string };
+        if (e.type === 'assemble.failed') {
+          throw new ProbeAbort(`assemble.failed — ${e.error || '(사유 미기록)'}`);
+        }
+        if (e.type === 'assemble.done') break; // 이번 판이 끝났다 — 그 앞의 옛 실패는 안 본다
+      } catch (err) {
+        if (err instanceof ProbeAbort) throw err;
+        /* 기록 중이라 잘린 줄 */
+      }
+    }
+    const v = await get<JobView>(`/jobs/${jobId}`);
+    return (v.output.currentVersion ?? 0) > after ? v : null;
+  }, 300_000);
 }
 
 /** 두 평균색이 얼마나 다른가 (0~441) */
