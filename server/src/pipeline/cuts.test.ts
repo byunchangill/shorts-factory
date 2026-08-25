@@ -16,11 +16,33 @@ describe('planCuts', () => {
     expect(planCuts([S('a')], 1.8, 2)).toEqual([{ path: 'a', in: 0, dur: 1.8 }]);
   });
 
-  it('총 길이가 안 바뀐다 — 달라지면 오디오와 자막이 통째로 밀린다', () => {
-    for (const total of [3.84, 4.88, 5.38, 7.5, 11]) {
-      const cuts = planCuts([S('a'), S('b'), S('c')], total, 2);
-      expect(cuts.reduce((n, c) => n + c.dur, 0)).toBeCloseTo(total, 6);
+  /*
+    🔴 **짧아지면 안 된다.** ffmpeg의 `-t`는 그 시각을 넘지 않는 마지막 프레임에서
+    끊으므로, 프레임 경계에 안 걸린 조각은 최대 1프레임을 잃고 그 손실이 조각 수만큼
+    쌓인다. 실측(2026-08-25): 3.022초를 둘로 나눈 1.511초가 각각 1.500초로 나와
+    씬이 3.000초가 됐고 조립이 「소재가 모자라다」며 멈췄다 (소재는 8초였다).
+    그래서 프레임 수를 먼저 나눈다 — 합은 나레이션을 **올림한** 프레임 경계다.
+  */
+  it('합이 나레이션보다 짧아지지 않는다 — 짧아지면 씬이 잘린다', () => {
+    for (const total of [3.022, 3.84, 4.88, 5.38, 7.5, 11]) {
+      const sum = planCuts([S('a'), S('b'), S('c')], total, 2)
+        .reduce((n, c) => n + c.dur, 0);
+      expect(sum).toBeGreaterThanOrEqual(total);
+      expect(sum).toBeLessThan(total + 1 / 30); // 한 프레임 위를 못 넘는다
     }
+  });
+
+  it('컷 길이가 프레임의 정수 배다 — 그래야 렌더가 계획대로 나온다', () => {
+    for (const total of [3.022, 5.38, 11]) {
+      for (const c of planCuts([S('a'), S('b')], total, 2)) {
+        expect(Math.abs(c.dur * 30 - Math.round(c.dur * 30))).toBeLessThan(1e-9);
+      }
+    }
+  });
+
+  it('컷 길이 차이는 최대 한 프레임 — 남는 프레임만 앞에서 가져간다', () => {
+    const durs = planCuts([S('a'), S('b')], 5.38, 2).map((c) => c.dur);
+    expect(Math.max(...durs) - Math.min(...durs)).toBeLessThanOrEqual(1 / 30 + 1e-9);
   });
 
   it('컷 하나가 상한을 넘지 않는다', () => {
@@ -87,12 +109,12 @@ describe('cutPlanError', () => {
     expect(cutPlanError(P({ sec: 5 }), 5)).toBeNull();
   });
 
-  it('부동소수 누적오차는 봐준다 — planCuts는 total/n으로 나눈다', () => {
-    // 26초를 1.5초 상한으로 나누면 18컷이고, 18번 더하는 사이에 1e-14가 남는다
-    const total = 26;
+  it('프레임 올림 몫은 봐준다 — planCuts가 프레임 경계로 나눈다', () => {
+    // 프레임 경계에 안 걸리는 길이라야 올림 몫이 실제로 남는다
+    const total = 25.99;
     const cuts = planCuts([S('a'), S('b')], total, 1.5);
     const sec = cuts.reduce((n, c) => n + c.dur, 0);
-    expect(sec).not.toBe(total); // 티끌이 실제로 남는다 — 0으로 걸면 여기서 막힌다
+    expect(sec).toBeGreaterThan(total); // 올림 몫이 실제로 남는다 — 0으로 걸면 여기서 막힌다
     expect(cutPlanError(P({ cuts: cuts.length, sec }), total)).toBeNull();
   });
 

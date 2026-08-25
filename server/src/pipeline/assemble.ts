@@ -137,8 +137,9 @@ export interface SceneCutPlan {
  *
  * 훅 게이트와 같은 논리다 — 몇 분 인코딩한 뒤 밀린 결과를 받는 것보다 여기서 끝내는 게 싸다.
  *
- * **정상 경로에서는 절대 안 걸린다.** `planCuts`가 `total / n`으로 정확히 나누고
- * 이미지 씬은 `dur`을 그대로 쓴다 — 걸린다면 그건 앱 결함이지 사용자 데이터 문제가 아니다.
+ * **정상 경로에서는 절대 안 걸린다.** `planCuts`는 프레임 경계로 나눠 합이 `total`을
+ * 올림한 자리(최대 한 프레임 = 0.033초 위)에 정확히 떨어지고, 이미지 씬은 `dur`을
+ * 그대로 쓴다 — 걸린다면 그건 앱 결함이지 사용자 데이터 문제가 아니다.
  * 그래서 안내도 「고쳐서 다시 하세요」가 아니라 「다시 눌러도 같다」로 적는다.
  *
  * 그리고 같은 이유로 **첫 씬에서 바로 끝낸다.** 어긋난 씬을 모아 한 번에 보여주는 편이
@@ -938,21 +939,42 @@ export function planCuts(sources: CutSource[], total: number, maxCutSec: number)
   if (maxCutSec <= 0 || total <= maxCutSec) return single;
 
   const n = Math.ceil(total / maxCutSec);
-  const cutDur = total / n;
+  /*
+    🔴 **컷 길이는 프레임 경계에 맞춘다** (2026-08-25). `total / n`으로 그냥 나누면
+    조각마다 프레임이 깎여 씬이 나레이션보다 **짧아진다** — ffmpeg의 `-t`는 그 시각을
+    넘지 않는 마지막 프레임에서 끊으므로, 경계에 안 걸린 조각은 최대 1프레임을 잃는다.
+    조각을 여럿 내면 그 손실이 그대로 쌓인다.
+
+    실측(2026-08-25): 나레이션 3.022초를 둘로 나눈 1.511초가 **각각 1.500초**로 나와
+    씬이 3.000초가 됐고, `sceneLengthError`가 「소재가 모자라다」며 조립을 세웠다.
+    소재는 8초짜리였다 — 원인이 엉뚱한 데를 가리킨 것이라 더 나빴다.
+
+    그래서 **프레임 수를 먼저 나눈다.** 남는 프레임은 앞쪽 컷들이 하나씩 가져가므로
+    컷 길이 차이는 최대 1프레임이고, 합은 `total`을 올림한 프레임 경계와 정확히 같다.
+    🔴 **올림이라 합이 나레이션보다 짧아지는 일이 없다** — 길이 허용 오차가 위아래로
+    다른 이유가 그것이다(`lengthTolerance`). 이 함수가 그 전제를 지킨다.
+  */
+  const frames = Math.ceil(total * FPS);
+  const per = Math.floor(frames / n);
+  const extra = frames - per * n;
+  const durOf = (k: number) => (per + (k < extra ? 1 : 0)) / FPS;
+
   // 컷 길이를 못 채우는 소재는 뺀다 — 짧게 끝나면 그만큼 오디오와 어긋난다
-  const usable = sources.filter((s) => s.avail >= cutDur);
+  // (제일 긴 컷을 기준으로 본다. 컷마다 최대 1프레임 차이라 어느 컷이 걸릴지 모른다)
+  const usable = sources.filter((s) => s.avail >= durOf(0));
   if (usable.length === 0) return single;
 
+  /** 소재별로 **이미 꺼내 쓴 초** — 컷 길이가 컷마다 달라 개수로는 못 센다 */
   const taken = new Map<string, number>();
   const cuts: Cut[] = [];
   for (let k = 0; k < n; k++) {
     const s = usable[k % usable.length];
-    const nth = taken.get(s.path) ?? 0;
-    taken.set(s.path, nth + 1);
-    const offset = nth * cutDur;
+    const offset = taken.get(s.path) ?? 0;
+    const dur = durOf(k);
+    taken.set(s.path, offset + dur);
     // 소재 끝을 넘으면 처음으로 되감는다
-    const inPoint = offset + cutDur <= s.avail ? s.in + offset : s.in;
-    cuts.push({ path: s.path, in: inPoint, dur: cutDur });
+    const inPoint = offset + dur <= s.avail ? s.in + offset : s.in;
+    cuts.push({ path: s.path, in: inPoint, dur });
   }
   return cuts;
 }
