@@ -27,6 +27,8 @@ describe('isWatchIgnored', () => {
       'menu-a/충전기/jobs/j1/clips/c1/frames/f1.jpg',
       // 자료실 — 공용 자료를 받을 때 git이 수백 개 파일을 한꺼번에 쓴다
       'assets/shared/memes/a.gif',
+      // 올라오는 자료가 잠깐 머무는 자리 — 한 번에 수십 개를 올리면 그만큼 이벤트가 온다
+      '.uploads/고양이.gif',
       'cache\\youtube\\q.json',
     ]) {
       expect(isWatchIgnored(p)).toBe(true);

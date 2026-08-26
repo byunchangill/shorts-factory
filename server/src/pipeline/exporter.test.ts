@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
-import { SettingsSchema, ScriptSchema } from '@shared/types';
-import { resolveExportRoot, safeFileName, productDir, exportFileName, scriptToMarkdown } from './exporter.js';
+import { SettingsSchema, ScriptSchema, JobSchema, AssetSchema } from '@shared/types';
+import { EXPORT_DIRS } from '@shared/constants';
+import {
+  resolveExportRoot, safeFileName, productDir, exportFileName, scriptToMarkdown, planExport,
+} from './exporter.js';
 
 const settings = SettingsSchema.parse({});
 
@@ -68,5 +71,47 @@ describe('scriptToMarkdown', () => {
 
   it('쿠팡파트너스 공시문구를 항상 포함', () => {
     expect(scriptToMarkdown(script, '충전기', '1편')).toContain('쿠팡 파트너스 활동의 일환');
+  });
+});
+
+/*
+  출처 대장은 `planExport`가 정한다 — 폴더 내보내기와 웹 다운로드가 같은 목록을 쓰므로
+  여기서 한 번 정하면 둘 다 따라온다.
+*/
+describe('planExport — 에셋 출처 대장', () => {
+  const base = {
+    settings: SettingsSchema.parse({ mirror: true, zoom: 1.1, grade: '' }),
+    job: JobSchema.parse({
+      id: 'j1', projectId: 'p', menu: 'menu-b', title: '1편',
+      createdAt: '2026-08-26T00:00:00.000Z', state: 'done',
+    }),
+    productName: '충전기',
+    jobDir: path.join(os.tmpdir(), 'nowhere'),
+    script: null,
+    timings: null,
+    clips: [],
+  };
+  const asset = AssetSchema.parse({
+    id: 'local:memes/a.gif', kind: 'meme', origin: 'local',
+    file: 'assets/local/memes/a.gif', url: '/media/x', title: '놀란 고양이',
+    sourceUrl: 'https://pixabay.com/gifs/1/', hasFace: false,
+  });
+
+  it('쓴 자료가 있으면 업로드킷에 CSV가 들어간다', async () => {
+    const items = await planExport({ ...base, assets: [asset] });
+    const csv = items.find((i) => i.name.endsWith('에셋출처.csv'));
+    expect(csv?.dir).toBe(EXPORT_DIRS.uploadKit);
+    expect(csv?.text).toContain('https://pixabay.com/gifs/1/');
+    // 🔴 변형은 사람이 적는 값이 아니라 그때 설정에서 계산한 값이다
+    expect(csv?.text).toContain('좌우반전 · 확대 1.10배');
+  });
+
+  /*
+    자료를 안 쓴 편에는 신고할 것이 없다. 빈 대장을 늘 내보내면
+    「짤방을 안 썼다」와 「대장을 안 만들었다」가 같은 모양이 된다.
+  */
+  it('쓴 자료가 없으면 CSV를 안 만든다', async () => {
+    const items = await planExport(base);
+    expect(items.some((i) => i.name.endsWith('에셋출처.csv'))).toBe(false);
   });
 });

@@ -1263,6 +1263,7 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
         </div>
         <AssetPicker
           jobId={job.id}
+          menu={job.menu}
           picked={job.assets ?? []}
           onChange={() => void qc.invalidateQueries({ queryKey: ['job', job.id] })}
         />

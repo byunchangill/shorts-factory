@@ -1,8 +1,9 @@
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import type { Job, Script, Settings, Clip } from '@shared/types';
+import type { Job, Script, Settings, Clip, Asset } from '@shared/types';
 import { EXPORT_DIRS, COUPANG_PARTNERS_DISCLOSURE } from '@shared/constants';
+import { assetLedgerCsv, assetLedgerRows, transformSummary } from '@shared/assetPolicy';
 import { ensureDir, exists, listFiles } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
 
@@ -66,6 +67,13 @@ export interface ExportInput {
   script: Script | null;
   timings: SceneTiming[] | null;
   clips: Clip[];
+  /**
+   * 이 편이 쓴 편집 재료 — 출처 대장(`업로드킷/에셋출처.csv`)의 재료다.
+   *
+   * 조립·캡컷 묶음과 같은 목록(`usedAssetIds`)이어야 한다. 부르는 쪽에서 풀어 넘긴다 —
+   * 내보내기가 자료실을 직접 뒤지면 자료실이 없는 환경에서 못 돈다 (`planCapcut`과 같은 결).
+   */
+  assets?: Asset[];
 }
 
 export interface ExportResult {
@@ -154,6 +162,24 @@ export async function planExport(input: ExportInput): Promise<ExportItem[]> {
     name: named('업로드킷.md'),
     label: '업로드킷',
   });
+
+  /*
+    소재 출처 대장 — 쓴 자료가 있을 때만 낸다.
+
+    빈 대장을 늘 내보내면 「이 편은 짤방을 안 썼다」와 「대장을 안 만들었다」가 같은 모양이
+    된다. 자료를 안 쓴 편에 신고할 것이 없는 것은 정상이다.
+
+    `변형` 칸은 사람이 적은 메모가 아니라 **그때 설정에서 계산한 값**이다 (`transformSummary`).
+  */
+  const assets = input.assets ?? [];
+  if (assets.length) {
+    items.push({
+      dir: EXPORT_DIRS.uploadKit,
+      text: assetLedgerCsv(assetLedgerRows(assets, transformSummary(settings))),
+      name: named('에셋출처.csv'),
+      label: '에셋 출처 대장',
+    });
+  }
 
   // menu-b 씬 이미지
   const scenesDir = path.join(jobDir, 'scenes');

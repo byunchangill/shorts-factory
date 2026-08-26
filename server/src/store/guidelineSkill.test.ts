@@ -159,4 +159,29 @@ describe('제품정보리뷰 기본 대본 스킬', () => {
     expect(body).toContain('isDownside');
     expect(body).toContain('제품 자료에 없는 수치·사양을 지어내지 않는다');
   });
+
+  /*
+    에셋 소싱 정책은 `shared/assetPolicy.ts`가 단일 출처다. 스킬 `.md`는 산문이라 상수를
+    읽지 못하므로 **여기서 대조한다** — 목록을 늘려 놓고 스킬만 옛 값을 말하면, 게이트는
+    통과시키는데 지시는 막는(또는 그 반대인) 상태가 조용히 생긴다.
+    분량 환산표를 대조하는 위 검사와 같은 장치다.
+  */
+  it('스킬의 소싱 목록이 정책 상수와 같다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    const { ASSET_SOURCE_WHITELIST, ASSET_SOURCE_BLACKLIST, SELF_MADE } =
+      await import('@shared/assetPolicy');
+    for (const e of ASSET_SOURCE_WHITELIST) expect(body).toContain(e.host);
+    for (const e of ASSET_SOURCE_BLACKLIST) expect(body).toContain(e.host);
+    expect(body).toContain(SELF_MADE);
+  });
+
+  /*
+    스킬이 말해야 하는 것은 목록만이 아니다 — 이 정책의 핵심은 인물이고,
+    「앱이 얼굴을 찾아주지 않는다」를 안 적으면 표시 없이 올려 놓고 조립에서 막힌다.
+  */
+  it('인물 규칙과 「표시가 없으면 막힌다」가 스킬에 있다', async () => {
+    const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
+    expect(body).toContain('초상권');
+    expect(body).toContain('표시가 없으면 막힌다');
+  });
 });

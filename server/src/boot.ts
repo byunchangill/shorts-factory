@@ -1,4 +1,7 @@
+import path from 'node:path';
+import fsp from 'node:fs/promises';
 import { initWorkspace, loadSettings } from './store/workspace.js';
+import { assetPaths } from './store/assets.js';
 import { scanJobs, listJobRefs } from './store/jobs.js';
 import { reconcileDownloadState, analyzePendingSources } from './pipeline/downloadQueue.js';
 import { scanPackets } from './claude/packets.js';
@@ -83,6 +86,24 @@ async function recoverStalledDownloads(): Promise<void> {
 }
 
 /**
+ * 업로드 대기 자리(`.uploads`)를 비운다.
+ *
+ * 서버가 파일을 옮기기 전에 죽으면 거기 남는다. **아무 데도 안 보이므로**(목록은
+ * `assets/`만 훑고, 내보내기·스윕·워처도 지나간다) 정확성 문제는 아니지만 디스크만
+ * 먹으며 쌓인다 — 한 요청에 30MB × 100개까지 들어올 수 있다.
+ *
+ * 부팅 때 비우는 것이 안전한 이유: 그 폴더는 **처리 중인 업로드만** 담는데, 서버가
+ * 막 뜬 시점에는 처리 중인 요청이 있을 수 없다. 실패해도 부팅은 계속된다(`step`).
+ */
+async function clearUploadStaging(): Promise<void> {
+  const dir = assetPaths.staging();
+  const names = await fsp.readdir(dir).catch(() => [] as string[]);
+  if (!names.length) return;
+  await Promise.all(names.map((n) => fsp.rm(path.join(dir, n), { recursive: true, force: true })));
+  console.log(`[boot] 업로드 대기 자리에서 찌꺼기 ${names.length}건을 치웠습니다`);
+}
+
+/**
  * workspace 초기화 + 인덱스 재구성 + 요청서 워처 기동.
  * 절대 throw 하지 않는다 — 실패는 부팅 상태에 기록되고 phase가 degraded가 된다.
  */
@@ -94,6 +115,7 @@ export async function bootstrap(): Promise<BootState> {
   await step('밀린 결과 수습', () => catchUpPendingResults());
   await step('결과 재확인 타이머', () => startResultSweep());
   await step('중단된 다운로드 수습', recoverStalledDownloads);
+  await step('업로드 대기 자리 비우기', clearUploadStaging);
 
   const failed = state.steps.filter((s) => s.error);
   state.phase = failed.length ? 'degraded' : 'ready';
