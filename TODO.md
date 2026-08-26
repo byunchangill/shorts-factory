@@ -1,6 +1,15 @@
 # 다음에 할 일
 
-마지막 작업: 2026-08-25 · PR #43·#44 머지 · 열린 브랜치 없음
+마지막 작업: 2026-08-26 · PR #46 머지
+
+## 🚧 지금 잡고 있는 것 (2026-08-26 · 로컬)
+
+**`feat/asset-source-policy`** — 에셋 소싱 정책 + 출처 대장 (menu-b).
+`shared/assetPolicy.ts`(정책 단일 출처) · `store/assets.ts`(출처 5필드) ·
+`pipeline/assemble.ts`(`assetLogError` 게이트) · `exporter.ts`(에셋출처.csv) ·
+`.claude/skills/ssul-shopping`(소싱 블록)을 건드린다.
+
+**클라우드 세션은 이 항목을 잡지 말 것.** 겹치면 PR #43처럼 통째로 충돌한다.
 
 ---
 
