@@ -2,6 +2,16 @@
 
 마지막 작업: 2026-08-26 · 에셋 소싱 정책 PR 올림 (`feat/asset-source-policy`) · 열린 브랜치 하나
 
+## 🚧 지금 잡고 있는 것 (2026-08-26 · 로컬)
+
+**`feat/scene-image-source`** — 씬 이미지 배선 + 출처 (menu-b, 소싱 정책 3단계).
+`resultWatcher.ts`(scenes.json → imageRef 배선) · `shared/types.ts`(imageRef 승격) ·
+`assetPolicy.ts`(게이트 확장) · `packets.ts`(산출물 명세)를 건드린다.
+
+**클라우드 세션은 이 항목을 잡지 말 것.**
+
+---
+
 ## 🔴 머지되면 바로 걸리는 것
 
 **자료실의 자료 60개가 전부 「출처 확인 필요」다** — 그 자료를 담은 제품정보리뷰 잡은
