@@ -160,7 +160,55 @@ export const ClipSchema = z.object({
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
+// ── 출처 5필드 (자료실 · 씬 이미지 공용) ──────────────────────────
+
+/**
+ * 소재의 출처 5필드 (2026-08-26).
+ *
+ * 🔴 **전부 optional이다.** 이 기능 전에 올린 자료에는 하나도 없고, 그래도 목록에
+ * 그대로 보여야 한다 — 필수로 두면 기존 `workspace/assets/`가 통째로 파싱에 실패해
+ * 자료실이 빈 화면이 된다. 요구하는 자리는 업로드와 menu-b 조립 게이트 둘뿐이다.
+ *
+ * 판정 규칙(화이트리스트·인물 표시)은 스키마가 아니라 `shared/assetPolicy.ts`에 있다.
+ * 같은 모양이 자료 목록(Asset)·로컬 덧칠(local.json)·공용 목록(library.json)과
+ * **씬 이미지(`SceneLine.imageRef`)** 넷에 붙으므로 여기서 한 번만 적는다 —
+ * 모양이 갈리면 대장 CSV와 게이트가 두 벌이 된다.
+ */
+const ASSET_SOURCE_FIELDS = {
+  /** 받아온 페이지 주소. 직접 만든 것이면 `SELF_MADE`(`직접제작`), AI로 만든 것이면 `AI_GENERATED`(`AI생성`) */
+  sourceUrl: z.string().optional(),
+  license: z.string().optional(),
+  downloadedAt: z.string().optional(),
+  /** 🔴 `undefined`는 「없음」이 아니라 「안 봤음」이다 — 기본값 false를 주면 안 된다 */
+  hasFace: z.boolean().optional(),
+  transformNote: z.string().optional(),
+};
+
 // ── 대본 ──────────────────────────────────────────────────────────
+
+/**
+ * 씬에 붙는 이미지 — **경로 하나가 아니라 출처까지 들고 있는 소재다** (2026-08-26).
+ *
+ * 예전에는 경로 문자열이었다. 그러면 짤방·효과음에는 출처 대장이 붙는데 정작 스톡 인물
+ * 사진이 들어올 자리인 씬 이미지에는 적을 칸이 없다 — 게이트가 반쪽이 된다.
+ */
+export const SceneImageRefSchema = z.object({
+  /** 작업공간 상대경로 (`menu-b/.../jobs/{id}/scenes/s01_v1.png`) */
+  file: z.string().min(1),
+  ...ASSET_SOURCE_FIELDS,
+});
+export type SceneImageRef = z.infer<typeof SceneImageRefSchema>;
+
+/**
+ * 예전 `script_v{n}.json`은 `imageRef`가 경로 문자열이었다 — 읽을 때 객체로 승격한다.
+ * `ClipSchema.frames`의 `legacyFrames`와 같은 장치다. 기존 대본이 안 열리면
+ * 그 잡은 화면에서도 조립에서도 통째로 막힌다.
+ *
+ * 🔴 **출처를 지어내지 않는다.** 승격된 값에는 `sourceUrl`이 없고, 그래서 조립 게이트가
+ * 막는다 — 「기록이 없다」를 「기록이 있다」로 바꿔 주는 마이그레이션은 게이트를 죽인다.
+ * 고치는 길은 씬 이미지 요청서를 다시 받는 것이다 (안내 문구가 그렇게 말한다).
+ */
+const legacyImageRef = (v: unknown): unknown => (typeof v === 'string' ? { file: v } : v);
 
 export const SceneLineSchema = z.object({
   sceneId: z.string(),
@@ -170,7 +218,8 @@ export const SceneLineSchema = z.object({
     clipId: z.string(),
     suggestedSegment: z.object({ in: z.number(), out: z.number() }).optional(),
   }).optional(),
-  imageRef: z.string().optional(), // menu-b 씬 이미지 경로
+  /** menu-b 씬 이미지 — 옛 대본의 경로 문자열도 그대로 읽힌다 (`legacyImageRef`) */
+  imageRef: z.preprocess(legacyImageRef, SceneImageRefSchema).optional(),
   imagePrompt: z.string().optional(), // menu-b 씬 이미지 프롬프트
   durationHint: z.number().optional(),
   bgmCue: z.string().optional(),
@@ -588,11 +637,30 @@ export const QuotaLedgerSchema = z.object({
 });
 export type QuotaLedger = z.infer<typeof QuotaLedgerSchema>;
 
+/**
+ * 씬 이미지 요청서(`kind: 'scene-images'`)가 내는 `result/scenes.json` 항목 하나.
+ *
+ * **`imageFile`이 있는 항목만 실물이다.** 프롬프트만 낸 항목은 「무엇을 만들지 적은 계획」
+ * 이라 출처를 요구하지 않는다 — 요구하면 옛 요청서(프롬프트만 내던 것)가 통째로 막힌다.
+ * 실물이 있으면 그 순간부터 영상에 실려 나갈 소재이므로 자료실과 **같은 5필드**를 받는다.
+ */
+export const SceneImageResultSchema = z.object({
+  sceneId: z.string().min(1),
+  imagePrompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
+  /** `result/` 바로 아래 파일명. 없으면 프롬프트만 낸 것이다 */
+  imageFile: z.string().optional(),
+  ...ASSET_SOURCE_FIELDS,
+});
+export type SceneImageResult = z.infer<typeof SceneImageResultSchema>;
+export const SceneImagesSchema = z.array(SceneImageResultSchema).min(1);
+
 /** 패킷 결과 파일 검증에 쓰는 스키마 레지스트리 */
 export const RESULT_SCHEMAS: Record<string, z.ZodTypeAny> = {
   script: ScriptSchema.omit({ version: true }).extend({ version: z.number().int().optional() }),
   product: ProductSchema,
   format: FormatSchema.partial({ id: true, createdAt: true }),
+  'scene-images': SceneImagesSchema,
   json: z.any(),
   markdown: z.string(),
 };
@@ -606,27 +674,6 @@ export const RESULT_SCHEMAS: Record<string, z.ZodTypeAny> = {
  * 올려도 각 PC에서 그대로 보인다. `id`는 `{origin}:{kind폴더}/{파일명}` 형태라
  * 목록을 다시 만들어도 잡이 들고 있던 id가 그대로 맞는다.
  */
-/**
- * 자료의 출처 5필드 (2026-08-26).
- *
- * 🔴 **전부 optional이다.** 이 기능 전에 올린 자료에는 하나도 없고, 그래도 목록에
- * 그대로 보여야 한다 — 필수로 두면 기존 `workspace/assets/`가 통째로 파싱에 실패해
- * 자료실이 빈 화면이 된다. 요구하는 자리는 업로드와 menu-b 조립 게이트 둘뿐이다.
- *
- * 판정 규칙(화이트리스트·인물 표시)은 스키마가 아니라 `shared/assetPolicy.ts`에 있다.
- * 같은 모양이 자료 목록(Asset)·로컬 덧칠(local.json)·공용 목록(library.json) 셋에
- * 붙으므로 여기서 한 번만 적는다.
- */
-const ASSET_SOURCE_FIELDS = {
-  /** 받아온 페이지 주소. 직접 만든 것이면 `SELF_MADE`(`직접제작`) */
-  sourceUrl: z.string().optional(),
-  license: z.string().optional(),
-  downloadedAt: z.string().optional(),
-  /** 🔴 `undefined`는 「없음」이 아니라 「안 봤음」이다 — 기본값 false를 주면 안 된다 */
-  hasFace: z.boolean().optional(),
-  transformNote: z.string().optional(),
-};
-
 export const AssetSchema = z.object({
   id: z.string(),
   kind: z.enum(ASSET_KINDS),

@@ -12,6 +12,7 @@ import type { Asset } from '@shared/types';
 import {
   classifySource, sourceVerdictMessage, assetPolicyProblems, defaultLicense, sourceLabel,
   SELF_MADE,
+  AI_GENERATED,
 } from '@shared/assetPolicy';
 import {
   Badge, Button, Card, EmptyState, IconButton, Input, Modal, PageHeader, Spinner, ConfirmDialog,
@@ -279,7 +280,8 @@ function SourceVerdictLine({ url }: { url: string }) {
   if (!url.trim()) {
     return (
       <span className="block text-xs text-slate-500">
-        받아온 페이지 주소를 그대로 붙여넣으세요. 직접 만든 것이면 「{SELF_MADE}」이라고 적습니다.
+        받아온 페이지 주소를 그대로 붙여넣으세요. 직접 만든 것이면 「{SELF_MADE}」,
+        AI로 만든 것이면 「{AI_GENERATED}」이라고 적습니다.
       </span>
     );
   }

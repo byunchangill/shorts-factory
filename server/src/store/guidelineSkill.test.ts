@@ -168,11 +168,17 @@ describe('제품정보리뷰 기본 대본 스킬', () => {
   */
   it('스킬의 소싱 목록이 정책 상수와 같다', async () => {
     const body = skillBody(await fsp.readFile(SKILL_B, 'utf8'));
-    const { ASSET_SOURCE_WHITELIST, ASSET_SOURCE_BLACKLIST, SELF_MADE } =
+    const { ASSET_SOURCE_WHITELIST, ASSET_SOURCE_BLACKLIST, SELF_MADE, AI_GENERATED } =
       await import('@shared/assetPolicy');
     for (const e of ASSET_SOURCE_WHITELIST) expect(body).toContain(e.host);
     for (const e of ASSET_SOURCE_BLACKLIST) expect(body).toContain(e.host);
     expect(body).toContain(SELF_MADE);
+    /*
+      🔴 AI 생성이 빠지면 **정책이 권하는 방법을 스킬이 안 알려주는** 상태가 된다 —
+      인물이 필요한 자리에 AI 그림을 쓰라고 해 놓고 출처를 뭐라고 적는지는 말 안 하는 꼴이라,
+      대본가가 URL을 지어내거나 칸을 비워 결과가 거부된다.
+    */
+    expect(body).toContain(AI_GENERATED);
   });
 
   /*

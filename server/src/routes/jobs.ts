@@ -6,7 +6,9 @@ import { z } from 'zod';
 import {
   MENUS, type JobState, EXPORT_DIRS,
 } from '@shared/constants';
-import { JobStateSchema, ZoneSchema, SegmentSchema, ProductSchema } from '@shared/types';
+import {
+  JobStateSchema, ZoneSchema, SegmentSchema, ProductSchema, type Script,
+} from '@shared/types';
 import * as jobs from '../store/jobs.js';
 import { trashJob } from '../store/remove.js';
 import { getProject, readProduct, writeProduct, listProductFiles } from '../store/projects.js';
@@ -36,7 +38,9 @@ import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
 import { createZip } from '../util/zip.js';
 import { planCapcut } from '../pipeline/capcut.js';
 import { resolveAssets } from '../store/assets.js';
-import { usedAssetIds, assetLedgerRows, transformSummary } from '@shared/assetPolicy';
+import {
+  usedAssetIds, sceneImageSubjects, assetLedgerRows, transformSummary, type AssetSubject,
+} from '@shared/assetPolicy';
 import { hasKey } from '../store/secrets.js';
 import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
@@ -958,6 +962,27 @@ router.post('/jobs/:jid/tts', async (req, res) => {
 
 // ── 조립 ──────────────────────────────────────────────────────────
 
+/**
+ * 이 편이 내보내는 소재 전부 — **조립 게이트와 출처 대장이 보는 하나의 목록**이다.
+ *
+ * 두 갈래를 합친다: 자료실에서 온 짤·효과음(`usedAssetIds`)과 대본 씬의 이미지
+ * (`sceneImageSubjects`). 목록이 갈리면 「대장에는 있는데 게이트는 안 본 소재」가 생긴다 —
+ * 씬 이미지가 정확히 그 상태였다(2026-08-26까지 대장에도 게이트에도 없었다).
+ *
+ * 부르는 자리는 셋이다 — 조립·묶음 내려받기·폴더 내보내기. 셋이 같은 목록을 써야
+ * 화면에서 받은 대장과 폴더에 있는 대장이 같다.
+ */
+async function ledgerSubjects(
+  job: { assets: string[] },
+  script: Script | null,
+): Promise<AssetSubject[]> {
+  const scenes = script?.scenes ?? [];
+  return [
+    ...await resolveAssets(usedAssetIds(job.assets, scenes)),
+    ...sceneImageSubjects(scenes),
+  ];
+}
+
 router.post('/jobs/:jid/assemble', async (req, res) => {
   const ref = refOr404(req.params.jid);
   const body = z.object({ burnSubtitles: z.boolean().optional() }).parse(req.body ?? {});
@@ -989,6 +1014,9 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     const assetPaths = Object.fromEntries(
       used.map((a) => [a.id, fromWorkspaceRel(a.file)]),
     );
+    // 게이트·대장은 씬 이미지까지 본다. 경로(`assetPaths`)는 자료실 자료만 —
+    // 씬 이미지는 `imageRef.file`을 조립이 직접 연다
+    const subjects = await ledgerSubjects(job, script);
     const { path: finalPath, cuts } = await assembleFinal(settings, {
       menu: ref.menu, script, timings, clips, jobDir,
       resolveWorkspacePath: fromWorkspaceRel,
@@ -997,8 +1025,8 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       version,
       headline: script.title,
       assetPaths,
-      // 출처 게이트가 볼 기록. 잡에 담은 것 + 씬이 가리키는 것이 한 목록이다
-      assets: used,
+      // 출처 게이트가 볼 기록. 잡에 담은 것 + 씬이 가리키는 짤·효과음 + 씬 이미지가 한 목록이다
+      assets: subjects,
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
@@ -1017,7 +1045,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       version,
       finalPath,
       cuts,
-      assets: assetLedgerRows(used, transformSummary(settings)),
+      assets: assetLedgerRows(subjects, transformSummary(settings)),
     });
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {
@@ -1118,7 +1146,7 @@ router.get('/jobs/:jid/download/:kind', async (req, res) => {
 
   const items = (await planExport({
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
-    assets: await resolveAssets(usedAssetIds(job.assets, script?.scenes ?? [])),
+    assets: await ledgerSubjects(job, script),
   })).filter((i) => i.dir === dir);
 
   /*
@@ -1198,7 +1226,7 @@ export async function runExport(ref: jobs.JobRef) {
 
   const result = await exportJob({
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
-    assets: await resolveAssets(usedAssetIds(job.assets, script?.scenes ?? [])),
+    assets: await ledgerSubjects(job, script),
   });
   await jobs.mutateJob(ref, (j) => { j.exportedAt = new Date().toISOString(); });
   await jobs.logJobEvent(ref, {

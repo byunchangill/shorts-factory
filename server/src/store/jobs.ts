@@ -259,10 +259,43 @@ export function scriptDir(ref: JobRef): string {
   return path.join(paths.job(ref.menu, ref.projectId, ref.jobId), 'script');
 }
 
+export function scriptPath(ref: JobRef, version: number): string {
+  return path.join(scriptDir(ref), `script_v${version}.json`);
+}
+
 export async function readScript(ref: JobRef, version: number): Promise<Script | null> {
-  const raw = await readJson<unknown>(path.join(scriptDir(ref), `script_v${version}.json`));
+  const raw = await readJson<unknown>(scriptPath(ref, version));
   const parsed = ScriptSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * 이미 저장된 대본 한 판을 **제자리에서** 고친다 (2026-08-26).
+ *
+ * 🔴 **새 판을 만들지 않는다.** `writeScriptVersion`은 버전을 올리고 `approved`를 내리는데,
+ * 씬 이미지를 붙였다고 승인된 대본이 미승인으로 돌아가면 그 잡은 음성 단계에서 뒤로
+ * 밀려난다. 여기서 바뀌는 것은 **문장이 아니라 그 대본에 붙는 재료**라 판을 가를 값이 없다.
+ *
+ * 읽기-수정-쓰기를 파일 락으로 감싼다 — `mutateJob`과 같은 이유이고, 잠그는 파일이
+ * `script_v{n}.json`이라 `mutateJob`의 `job.json` 락과 겹치지 않는다
+ * (🔴 `withFileLock`은 **재진입이 안 된다** — 이 함수 안에서 `mutateJob`을 부르지 말 것).
+ *
+ * @returns 고친 대본. 그 판이 없거나 못 읽으면 `null` (부르는 쪽이 판정한다)
+ */
+export async function mutateScript(
+  ref: JobRef,
+  version: number,
+  fn: (script: Script) => void,
+): Promise<Script | null> {
+  const file = scriptPath(ref, version);
+  return withFileLock(file, async () => {
+    const raw = await readJson<unknown>(file);
+    const parsed = ScriptSchema.safeParse(raw);
+    if (!parsed.success) return null;
+    fn(parsed.data);
+    await writeJsonAtomic(file, ScriptSchema.parse(parsed.data));
+    return parsed.data;
+  });
 }
 
 export async function writeScriptVersion(ref: JobRef, script: Omit<Script, 'version'>): Promise<number> {
