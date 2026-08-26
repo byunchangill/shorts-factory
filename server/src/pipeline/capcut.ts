@@ -3,6 +3,7 @@ import type { Job, Script, Clip, Settings, Asset } from '@shared/types';
 import type { SceneTiming } from './tts.js';
 import { buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
 import { subtitleCharsPerLine } from '@shared/constants';
+import { assetLedgerCsv, assetLedgerRows } from '@shared/assetPolicy';
 import { exportFileName } from './exporter.js';
 import { fromWorkspaceRel } from '../store/workspace.js';
 
@@ -127,6 +128,29 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
   }
   if (memes.length) lines.push(`- \`04_짤방\` — 담아둔 ${memes.length}개. 필요한 자리에 직접 얹으세요`);
   if (sfx.length) lines.push(`- \`05_효과음\` — 담아둔 ${sfx.length}개`);
+
+  /*
+    🔴 **출처 대장을 같이 넣는다** (2026-08-26 사용자 결정).
+
+    조립 게이트(`assetLogError`)는 **웹 자동 조립 한 갈래에만** 걸린다. 캡컷 갈래는
+    막지 않기로 했으므로 — 사람이 편집기에서 직접 고르고 바꾸는 길이다 — 대신
+    **무엇을 어디서 받아 썼는지가 재료와 같이 나가야** 한다. 안 그러면 정책이 있는
+    갈래와 없는 갈래가 갈려 발행 뒤 되짚을 근거가 한쪽에만 남는다.
+
+    출처가 없는 자료는 빈 칸이 아니라 **「미기록」**으로 나간다 — 빈 칸은
+    「신고할 것이 없음」으로 읽힌다.
+
+    `변형` 칸은 **앱이 거는 값이 아니다.** 캡컷 재료는 좌우반전·그레이딩·확대가 안 걸린
+    원본이고 그 작업을 편집기에서 사람이 한다 — 설정값을 적으면 그 자체가 거짓말이 된다.
+  */
+  if (assets.length) {
+    items.push({
+      name: `업로드킷/${exportFileName(productName, job.title, '에셋출처.csv')}`,
+      text: assetLedgerCsv(assetLedgerRows(assets, '없음 (캡컷에서 직접 겁니다)')),
+    });
+    lines.push('- `업로드킷/…에셋출처.csv` — 담아둔 재료의 출처 대장.'
+      + ' 「미기록」이 있으면 자료실에서 채우세요');
+  }
 
   lines.push('');
   lines.push('좌우반전·색보정·확대는 캡컷에서 직접 거세요. 웹에서 합치면 설정값이 자동으로 걸립니다.');

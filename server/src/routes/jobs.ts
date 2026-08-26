@@ -36,6 +36,7 @@ import { exportJob, productDir, planExport } from '../pipeline/exporter.js';
 import { createZip } from '../util/zip.js';
 import { planCapcut } from '../pipeline/capcut.js';
 import { resolveAssets } from '../store/assets.js';
+import { usedAssetIds, assetLedgerRows, transformSummary } from '@shared/assetPolicy';
 import { hasKey } from '../store/secrets.js';
 import { readJson, slugify } from '../util/fsx.js';
 import { nextSeqId } from '../util/ids.js';
@@ -984,11 +985,9 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       조립은 자료실을 직접 뒤지지 않는다 — 자료실이 없는 환경(하네스)에서도 돌아야 한다.
       자료실에서 지워진 id는 여기서 그냥 빠지고, 조립은 그 씬을 짤 없이 만든다.
     */
-    const wanted = [...new Set(
-      script.scenes.flatMap((s) => [s.memeId, s.sfxId]).filter((x): x is string => !!x),
-    )];
+    const used = await resolveAssets(usedAssetIds(job.assets, script.scenes));
     const assetPaths = Object.fromEntries(
-      (await resolveAssets(wanted)).map((a) => [a.id, fromWorkspaceRel(a.file)]),
+      used.map((a) => [a.id, fromWorkspaceRel(a.file)]),
     );
     const { path: finalPath, cuts } = await assembleFinal(settings, {
       menu: ref.menu, script, timings, clips, jobDir,
@@ -998,6 +997,8 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       version,
       headline: script.title,
       assetPaths,
+      // 출처 게이트가 볼 기록. 잡에 담은 것 + 씬이 가리키는 것이 한 목록이다
+      assets: used,
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
@@ -1006,8 +1007,18 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       컷 계획을 같이 남긴다 — 컷 조각은 렌더가 끝나면 지워져서, 나간 편이 씬 하나를
       몇 컷으로 쪼갰고 소재를 몇 개 썼는지 되짚을 길이 여기밖에 없다.
       `sources`가 1인 씬은 컷만 늘고 화면은 안 바뀐 씬이다.
+
+      **소재 출처도 같이 남긴다** (2026-08-26). 자료실의 자료는 나중에 지워지거나 출처가
+      고쳐질 수 있는데, 발행된 편이 무엇을 어디서 받아 썼는지는 그때 값이어야 한다.
+      `transform`은 사람이 적은 메모가 아니라 **그때 설정에서 계산한 값**이다.
     */
-    await jobs.logJobEvent(ref, { type: 'assemble.done', version, finalPath, cuts });
+    await jobs.logJobEvent(ref, {
+      type: 'assemble.done',
+      version,
+      finalPath,
+      cuts,
+      assets: assetLedgerRows(used, transformSummary(settings)),
+    });
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1107,6 +1118,7 @@ router.get('/jobs/:jid/download/:kind', async (req, res) => {
 
   const items = (await planExport({
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+    assets: await resolveAssets(usedAssetIds(job.assets, script?.scenes ?? [])),
   })).filter((i) => i.dir === dir);
 
   /*
@@ -1186,6 +1198,7 @@ export async function runExport(ref: jobs.JobRef) {
 
   const result = await exportJob({
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
+    assets: await resolveAssets(usedAssetIds(job.assets, script?.scenes ?? [])),
   });
   await jobs.mutateJob(ref, (j) => { j.exportedAt = new Date().toISOString(); });
   await jobs.logJobEvent(ref, {

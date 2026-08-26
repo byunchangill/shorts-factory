@@ -606,6 +606,27 @@ export const RESULT_SCHEMAS: Record<string, z.ZodTypeAny> = {
  * 올려도 각 PC에서 그대로 보인다. `id`는 `{origin}:{kind폴더}/{파일명}` 형태라
  * 목록을 다시 만들어도 잡이 들고 있던 id가 그대로 맞는다.
  */
+/**
+ * 자료의 출처 5필드 (2026-08-26).
+ *
+ * 🔴 **전부 optional이다.** 이 기능 전에 올린 자료에는 하나도 없고, 그래도 목록에
+ * 그대로 보여야 한다 — 필수로 두면 기존 `workspace/assets/`가 통째로 파싱에 실패해
+ * 자료실이 빈 화면이 된다. 요구하는 자리는 업로드와 menu-b 조립 게이트 둘뿐이다.
+ *
+ * 판정 규칙(화이트리스트·인물 표시)은 스키마가 아니라 `shared/assetPolicy.ts`에 있다.
+ * 같은 모양이 자료 목록(Asset)·로컬 덧칠(local.json)·공용 목록(library.json) 셋에
+ * 붙으므로 여기서 한 번만 적는다.
+ */
+const ASSET_SOURCE_FIELDS = {
+  /** 받아온 페이지 주소. 직접 만든 것이면 `SELF_MADE`(`직접제작`) */
+  sourceUrl: z.string().optional(),
+  license: z.string().optional(),
+  downloadedAt: z.string().optional(),
+  /** 🔴 `undefined`는 「없음」이 아니라 「안 봤음」이다 — 기본값 false를 주면 안 된다 */
+  hasFace: z.boolean().optional(),
+  transformNote: z.string().optional(),
+};
+
 export const AssetSchema = z.object({
   id: z.string(),
   kind: z.enum(ASSET_KINDS),
@@ -623,6 +644,7 @@ export const AssetSchema = z.object({
    * 「숨긴 것도 보기」로 받을 때는 어느 것이 숨겨진 것인지 화면이 알아야 한다.
    */
   hidden: z.boolean().default(false),
+  ...ASSET_SOURCE_FIELDS,
 });
 export type Asset = z.infer<typeof AssetSchema>;
 
@@ -633,10 +655,16 @@ export type Asset = z.infer<typeof AssetSchema>;
 export const AssetLocalStateSchema = z.object({
   /** 이 PC에서 숨긴 공용 자료의 id */
   hidden: z.array(z.string()).default([]),
-  /** id별 제목·태그 덧칠 (공용 자료에도 붙일 수 있다) */
+  /**
+   * id별 제목·태그·출처 덧칠 (공용 자료에도 붙일 수 있다).
+   *
+   * 🔴 **목록의 진실은 여전히 파일시스템이다.** 여기 없는 자료도 폴더에 있으면 보이고,
+   * 여기 있는데 파일이 없으면 안 보인다 — 덧칠은 덧칠일 뿐이다.
+   */
   meta: z.record(z.object({
     title: z.string().optional(),
     tags: z.array(z.string()).optional(),
+    ...ASSET_SOURCE_FIELDS,
   })).default({}),
   syncedAt: z.string().optional(),
 });
@@ -651,6 +679,7 @@ export const AssetLibrarySchema = z.object({
     file: z.string(),
     title: z.string().optional(),
     tags: z.array(z.string()).default([]),
+    ...ASSET_SOURCE_FIELDS,
   })).default([]),
 });
 export type AssetLibrary = z.infer<typeof AssetLibrarySchema>;

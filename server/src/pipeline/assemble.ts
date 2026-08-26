@@ -2,6 +2,7 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { Settings, Script, Clip } from '@shared/types';
 import { COUPANG_PARTNERS_DISCLOSURE, CUT_SUM_TOLERANCE_SEC, type Menu } from '@shared/constants';
+import { assetLogError, type AssetSubject } from '@shared/assetPolicy';
 import { run } from '../util/exec.js';
 import { ensureDir, exists } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
@@ -96,6 +97,13 @@ export interface AssembleInput {
    * 하네스가 가짜 자료실 없이도 이 함수를 돌릴 수 있다. 없는 id는 그냥 빠진다.
    */
   assetPaths?: Record<string, string>;
+  /**
+   * 이 편이 쓰는 자료의 **출처 기록** — 조립 게이트(`assetLogError`)가 본다.
+   *
+   * 경로와 따로 받는다. 경로는 「어디 있나」이고 이건 「내보내도 되나」라서, 자료실에서
+   * 지워져 경로가 없는 id도 출처 판정 대상이 될 수 있다. 비면 검사할 것이 없다.
+   */
+  assets?: AssetSubject[];
 }
 
 /**
@@ -179,6 +187,19 @@ export async function assembleFinal(
   const outDir = path.join(jobDir, 'output');
   const tmpDir = path.join(outDir, 'tmp');
   await ensureDir(tmpDir);
+
+  /*
+    에셋 소싱 게이트 — **한 프레임도 인코딩하기 전에** 끝낸다 (2026-08-26).
+
+    `cutPlanError`·훅 게이트와 같은 자리에 두지 않고 더 앞이다. 저 둘은 씬별 값이 필요해
+    루프 안에서 재지만, 이건 파일을 하나도 안 열고 판정되므로 음성 규격 맞추기(0단계)보다도
+    앞에 둘 수 있다 — 어차피 못 나갈 편에 ffmpeg를 한 번이라도 돌릴 이유가 없다.
+
+    🔴 훅 게이트와 달리 **「못 쟀으면 통과」가 없다.** 출처 누락은 측정 실패가 아니라
+    사용자 데이터 문제라, 통과시키면 게이트가 있으나 마나다 (`assetLogError` 주석 참고).
+  */
+  const assetError = assetLogError(input.menu, input.assets ?? []);
+  if (assetError) throw new Error(assetError);
 
   // 카드용 폰트 (없으면 카드를 건너뛴다 — 한글이 깨진 카드보다 없는 게 낫다)
   const font = await findKoreanFont(settings.fontPath);

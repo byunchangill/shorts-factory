@@ -5,6 +5,7 @@ import {
   PACKET_KIND_LABELS, syllableBudget, subtitleCharsPerLine, TARGET_SEC_BY_MENU,
   type PacketKind, type Menu,
 } from '@shared/constants';
+import { assetSourcingRules } from '@shared/assetPolicy';
 import { packetMenu } from './scriptRules.js';
 import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
 import { ensureDir, listDirs, readJson, writeJsonAtomic } from '../util/fsx.js';
@@ -629,7 +630,17 @@ const MENU_B_RULES: Partial<Record<PacketKind, string>> = {
   \`\`\`
   ✅ "낮에는 소파로 앉고\\n밤에는 침대로 쓰는 건데\\n좁은 집에\\n오히려 최적이었다는\\n후기가 많더라"
   ❌ "낮엔 소파, 밤엔 침대. 좁은 집에 오히려 최적"   ← 나레이션을 요약했다
-  \`\`\``,
+  \`\`\`
+- 🔴 **인물이 나오는 짤방·스톡 소재를 단점 씬에 붙이지 않는다.** 그 사람은 자기가 산 적도
+  없는 제품의 실패 사례 주인공이 된다 — 초상권 분쟁 소지다. 어떤 그림을 쓸지 적을 때
+  이걸 함께 본다 (자세한 소싱 규칙은 씬 이미지 요청서에 실린다)`,
+  /*
+    소싱 규칙은 `shared/assetPolicy.ts`가 유일한 출처다 — 화이트리스트를 여기 베껴 적으면
+    목록을 늘렸을 때 요청서만 옛 값을 말한다 (게이트는 통과시키는데 지시는 막는 꼴).
+  */
+  'scene-images': `${assetSourcingRules()}
+- 앱은 **출처 URL이 없는 자료로는 조립을 시작하지 않는다.** 어디서 받을지 적을 때
+  받은 페이지 주소도 같이 적어 둔다`,
   'upload-kit': `- **해시태그는 3~5개까지.** 중복 금지, 유행어 나열 금지 — 이 제품을 찾을 사람이 실제로 칠 단어만 넣는다
   (유튜브는 설명란 해시태그가 15개를 넘으면 그 영상의 해시태그를 **전부 무시**한다)
 - 설명 마지막에 **다음 편 예고 한 줄**을 넣는다 (구독 전환 장치). 시리즈 위치 정보가 위에 있으면 그걸 쓴다

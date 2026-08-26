@@ -29,6 +29,9 @@ const HEAVY_DIRS = new Set([
   // 삭제한 잡·카테고리가 옮겨지는 곳 (store/remove.ts). 그 안에도 처리 대기 중이던
   // requests/*/result/.done 가 그대로 들어 있어, 감시하면 이미 지운 잡의 결과를 다시 물어온다
   '.trash',
+  // 올라오는 자료가 잠깐 머무는 자리 (store/assets.ts의 `assetPaths.staging`).
+  // 자료실(`assets`)과 같은 이유로 요청서와 무관하다 — 파일 수십 개를 한 번에 올리면 그만큼 헛돈다
+  '.uploads',
 ]);
 
 /**

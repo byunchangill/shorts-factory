@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Images, Play, Pause, Search } from 'lucide-react';
+import { Images, Play, Pause, Search, TriangleAlert } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api } from '@/api/client';
-import { ASSET_KINDS, ASSET_KIND_LABELS, type AssetKind } from '@shared/constants';
+import { ASSET_KINDS, ASSET_KIND_LABELS, type AssetKind, type Menu } from '@shared/constants';
+import { assetPolicyProblems } from '@shared/assetPolicy';
 import type { Asset } from '@shared/types';
 import { Badge, Input, Modal, Button } from '@/components/ui';
 
@@ -16,10 +17,13 @@ import { Badge, Input, Modal, Button } from '@/components/ui';
  */
 export function AssetPicker({
   jobId,
+  menu,
   picked,
   onChange,
 }: {
   jobId: string;
+  /** 제품정보리뷰에서만 출처 게이트가 걸린다 — 경고 문구가 그걸 말해야 한다 */
+  menu?: Menu;
   picked: string[];
   onChange: (next: string[]) => void;
 }) {
@@ -29,13 +33,23 @@ export function AssetPicker({
   const [kind, setKind] = useState<AssetKind | 'all'>('all');
   const [saving, setSaving] = useState(false);
 
+  /*
+    창을 안 열어도 한 번은 읽는다 — 담아둔 자료의 **출처가 모자란 것**을 여기서 보여줘야
+    하는데, 창을 열어야만 알 수 있으면 조립이 막히고 나서야 원인을 찾게 된다.
+
+    여닫을 때마다 다시 읽는 것도 그래서다: 자료실에서 출처를 채우고 돌아오면 경고가
+    바로 사라져야 한다. 목록은 작고 로컬이라 비용이 없다.
+  */
   useEffect(() => {
-    if (!open) return;
     void api.get<{ items: Asset[] }>('/assets').then((r) => setAll(r.items)).catch(() => setAll([]));
   }, [open]);
 
   const pickedSet = useMemo(() => new Set(picked), [picked]);
   const chosen = useMemo(() => all.filter((a) => pickedSet.has(a.id)), [all, pickedSet]);
+  const needFix = useMemo(
+    () => chosen.filter((a) => assetPolicyProblems(a).length > 0),
+    [chosen],
+  );
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -77,6 +91,17 @@ export function AssetPicker({
           {chosen.length > 0 && chosen.length < picked.length
             && ' (자료실에서 지워진 것은 묶을 때 빠집니다)'}
         </p>
+      )}
+
+      {needFix.length > 0 && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+          <span>
+            출처 기록이 모자란 자료 {needFix.length}개: {needFix.map((a) => a.title).join(' · ')}
+            {menu === 'menu-b' && ' — 이대로는 조립이 막힙니다.'}{' '}
+            <Link to="/assets" className="font-medium underline">편집 재료</Link> 화면에서 채워주세요.
+          </span>
+        </div>
       )}
 
       <Modal open={open} onClose={() => setOpen(false)} title="편집 재료 고르기">
@@ -165,6 +190,8 @@ function PickCard({
       <div className="mt-0.5 flex items-center gap-1">
         {picked && <Badge color="brand">담김</Badge>}
         {asset.origin === 'shared' && !picked && <Badge color="slate">공용</Badge>}
+        {/* 담기 전에 보인다 — 담고 나서 아는 것보다 고르는 동안 아는 것이 싸다 */}
+        {assetPolicyProblems(asset).length > 0 && <Badge color="amber">출처 확인</Badge>}
       </div>
     </div>
   );

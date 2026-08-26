@@ -193,6 +193,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const get = <T>(url: string) => req<T>('GET', url);
 const post = <T>(url: string, body?: unknown) => req<T>('POST', url, body);
 const put = <T>(url: string, body: unknown) => req<T>('PUT', url, body);
+const patch = <T>(url: string, body: unknown) => req<T>('PATCH', url, body);
 const del = <T>(url: string) => req<T>('DELETE', url);
 
 /** 조건이 참이 될 때까지 폴링. 비동기 파이프라인 단계 대기용 */
@@ -1292,6 +1293,8 @@ async function main(): Promise<void> {
   let bCardOffDur = 0;
   let bCardOffVersion = 0;
   let bFirstSceneSec = 0;
+  /** 출처를 채워 담은 편집 재료 — 아래 출처 게이트 단계가 이 자료를 흔든다 */
+  let bAssetId = '';
 
   await step('제품정보리뷰 조립 — 컷 쪼개기 · 덤 소재 · 인트로 타이틀', async () => {
     const CUT_SEC = 2;
@@ -1427,6 +1430,25 @@ async function main(): Promise<void> {
     assert(bTimings.every((t) => t.source === 'file'), '첨부 파일이 우선 사용되지 않음');
     const narrationTotal = bTimings.reduce((n, t) => n + t.duration, 0);
 
+    /*
+      🔴 **편집 재료를 출처까지 채워 담는다** (2026-08-26).
+
+      menu-b 조립에는 에셋 출처 게이트가 걸린다(`assetLogError`). 자료를 안 담으면 검사할
+      것이 없어 **게이트가 한 번도 안 도는 채로** 이 단계가 통과한다 — 켜 둔 검사가 아무
+      일도 안 하는데 아무 말도 안 하는, 이 저장소가 제일 비싸게 배운 실패 모드다.
+      그래서 게이트를 끄는 대신 **통과하는 자료를 실제로 넣는다.**
+      막히는 쪽(출처를 지우면 렌더 전에 죽는다)은 아래 별도 단계가 본다.
+    */
+    const assetFd = new FormData();
+    assetFd.append('files', new Blob([Buffer.from('GIF89a')], { type: 'image/gif' }), '썰짤.gif');
+    assetFd.append('sourceUrl', 'https://pixabay.com/gifs/harness-1/');
+    assetFd.append('hasFace', 'false');
+    const assetUp = await fetch(`${API}/assets?kind=meme`, { method: 'POST', body: assetFd });
+    const assetText = await assetUp.text();
+    assert(assetUp.ok, `자료 올리기 실패: ${assetUp.status} ${assetText}`);
+    bAssetId = (JSON.parse(assetText) as { added: string[] }).added[0];
+    await put(`/jobs/${job.id}/assets`, { assets: [bAssetId] });
+
     // 저작권 게이트는 해외영상 짜집기 전용이다 — 여기서 막히면 안 된다
     const done = await assembleAndWait(job.id, bJobDir, 0);
 
@@ -1499,9 +1521,26 @@ async function main(): Promise<void> {
       비교하므로** 구조적으로 통과하는데, 정작 오디오는 밀린다. 스스로를 재는 검사는
       스스로의 어긋남을 못 잡는다. 여기서만 바깥 기준(타이밍 파일)과 맞춰 본다.
     */
-    const events = await get<Array<{ type: string; cuts?: SceneCutPlan[] }>>(
-      `/jobs/${job.id}/events`);
-    const plan = events.filter((e) => e.type === 'assemble.done').at(-1)?.cuts ?? [];
+    const events = await get<Array<{
+      type: string;
+      cuts?: SceneCutPlan[];
+      assets?: Array<{ id: string; sourceUrl: string; hasFace: string; transform: string }>;
+    }>>(`/jobs/${job.id}/events`);
+    const lastDone = events.filter((e) => e.type === 'assemble.done').at(-1);
+    const plan = lastDone?.cuts ?? [];
+
+    /*
+      **소재 출처도 감사 로그에 남는다.** 자료실의 값은 나중에 고쳐지거나 지워지는데,
+      발행된 편이 무엇을 어디서 받아 썼는지는 그때 값이어야 한다.
+      `transform`은 사람이 적은 메모가 아니라 **그때 설정에서 계산한 값**이라,
+      이 판(반전·확대·그레이딩 끔)에서는 「없음」이어야 한다.
+    */
+    const ledger = lastDone?.assets ?? [];
+    assert(ledger.length === 1, `출처 대장이 감사 로그에 안 남았다: ${JSON.stringify(ledger)}`);
+    assert(ledger[0].sourceUrl.includes('pixabay.com'), `출처가 다르다: ${ledger[0].sourceUrl}`);
+    assert(ledger[0].hasFace === '없음', `인물 표시가 다르다: ${ledger[0].hasFace}`);
+    assert(ledger[0].transform === '없음',
+      `변형이 설정과 다르다 (이 판은 반전·확대·그레이딩을 껐다): ${ledger[0].transform}`);
     assert(plan.length === bScenes.length,
       `컷 계획이 씬 수만큼 기록되지 않음: ${JSON.stringify(plan)}`);
     /*
@@ -1644,6 +1683,65 @@ async function main(): Promise<void> {
       + ` · 밝기 ${lum(onScene.mean).toFixed(0)}→${lum(onCard.mean).toFixed(0)}`;
   });
 
+  /*
+    ── 에셋 출처 게이트 (2026-08-26) ──
+
+    앞의 두 단계는 **통과하는 쪽**을 봤다 (출처를 채운 자료를 담고 조립이 끝났다).
+    여기서는 **막히는 쪽**을 본다 — 출처를 지우면 렌더 전에 죽어야 한다.
+
+    🔴 **이 잡의 마지막 조립이어야 한다.** `assembleAndWait`은 이벤트를 뒤에서부터 훑어
+    `assemble.failed`를 만나면 곧바로 중단하므로, 일부러 실패시킨 뒤 같은 잡을 또 조립하면
+    다음 단계가 그 실패를 물려받는다 (훅 게이트 단계가 `markEventsSeen`으로 푸는 것과 같은
+    문제인데, 그 함수는 menu-a 잡만 본다). 그래서 카드 단계 **뒤**에 둔다.
+
+    출처를 지우는 것은 `PATCH /assets/:id`의 빈 문자열이다 — 화면에서 칸을 비우는 것과
+    같은 경로라, 「실제로 사용자가 만들 수 있는 상태」로 흔든다.
+  */
+  await step('에셋 출처 게이트 — 출처를 지우면 렌더 전에 막는다', async () => {
+    assert(bJobId && bAssetId, '앞 단계가 잡·자료를 안 넘겼다');
+    const before = (await get<JobView>(`/jobs/${bJobId}`)).output.currentVersion ?? 0;
+
+    await patch(`/assets/${encodeURIComponent(bAssetId)}`, { sourceUrl: '' });
+    const t0 = Date.now();
+    await post(`/jobs/${bJobId}/assemble`, {});
+    const failure = await waitFor('게이트 차단', async () => {
+      const events = await get<Array<{ type: string; error?: string }>>(`/jobs/${bJobId}/events`);
+      return events.filter((e) => e.type === 'assemble.failed').at(-1) ?? null;
+    }, 60_000);
+    const ms = Date.now() - t0;
+
+    assert(String(failure.error).includes('출처 기록'),
+      `다른 이유로 실패함: ${failure.error}`);
+    // 고칠 수 있는 것이므로 안내가 갈 곳을 가리켜야 한다 (`cutPlanError`의 「다시 눌러도 같다」와 반대)
+    assert(String(failure.error).includes('다시 조립하세요'),
+      `안내가 고치는 자리를 안 가리킨다: ${failure.error}`);
+    const after = (await get<JobView>(`/jobs/${bJobId}`)).output.currentVersion ?? 0;
+    assert(after === before, `막혔는데 새 판이 나왔다 (v${before} → v${after})`);
+    /*
+      **렌더 전에 죽는가.** 이 잡의 정상 조립은 수십 초가 걸린다 — 게이트가 ffmpeg 뒤에
+      있으면 여기가 그만큼 걸린다. 파일을 하나도 안 여는 검사라 늘 1초 안쪽이다.
+    */
+    assert(ms < 10_000, `막히는 데 ${(ms / 1000).toFixed(1)}초 — 렌더를 돌고 나서 막은 것 같다`);
+
+    // 출처를 되돌리면 다시 통과한다 — 「고치면 된다」가 실제로 성립하는지까지 본다
+    await patch(`/assets/${encodeURIComponent(bAssetId)}`,
+      { sourceUrl: 'https://pixabay.com/gifs/harness-1/' });
+    const fixed = await get<{ items: Array<{ id: string; sourceUrl?: string }> }>('/assets');
+    assert(fixed.items.find((i) => i.id === bAssetId)?.sourceUrl?.includes('pixabay'),
+      '출처를 되돌렸는데 목록에 안 보인다');
+
+    /*
+      내보내기 대장 — `업로드킷/에셋출처.csv`가 실제로 나오는가.
+      폴더 내보내기와 같은 목록(`planExport`)에서 나오므로 여기서 한 번 보면 둘 다 본 것이다.
+    */
+    const kit = await fetch(`${API}/jobs/${bJobId}/download/uploadKit`);
+    assert(kit.ok, `업로드킷 묶음 실패: ${kit.status}`);
+    const kitText = Buffer.from(await kit.arrayBuffer()).toString('utf8');
+    assert(kitText.includes('pixabay.com'), '출처 대장에 출처가 없다');
+    assert(kitText.includes('자산id'), `업로드킷에 대장 CSV가 없다: ${kitText.slice(0, 120)}`);
+    return `출처 삭제 → ${(ms / 1000).toFixed(1)}초 만에 차단 · 되돌리면 통과 · 대장 CSV 확인`;
+  });
+
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──
   await step('요청서 파일 감시 — result/.done 감지 → 자동 반영', async () => {
     const p = await post<{ id: string }>(`/jobs/${jid}/packets`, { kind: 'upload-kit' });
@@ -1758,26 +1856,84 @@ async function main(): Promise<void> {
     사람이 필요할 때 골라 쓰는 것이라, 번호가 붙으면 씬과 짝인 것처럼 보인다.
   */
   await step('편집 재료 — 자료실에 올려 잡에 담으면 캡컷 묶음에 들어간다', async () => {
+    /*
+      🔴 **출처 URL 없이는 못 올린다** (2026-08-26). 나중에 채우게 두면 안 채우고,
+      출처가 없으면 화이트리스트가 아무것도 못 거른다.
+
+      🔴 **400만 보고 넘어가면 안 된다.** 이 검사는 처음에 그렇게 짰다가 **자기 손으로
+      유령 자료를 하나 만들고 지나갔다** — multer가 핸들러보다 먼저 파일을 쓰기 때문에
+      400을 돌려줘도 파일은 자료실에 남았고, 목록의 진실이 파일시스템이라 거부한 자료가
+      출처 없이 목록에 떴다. 「거부했다」는 응답이 아니라 **자료실 상태**로 확인한다.
+    */
+    const before = (await get<{ items: Array<{ id: string }> }>('/assets')).items.length;
+    const noSource = new FormData();
+    noSource.append('files', new Blob([Buffer.from('GIF89a')], { type: 'image/gif' }), '무출처.gif');
+    const refused = await fetch(`${API}/assets?kind=meme`, { method: 'POST', body: noSource });
+    assert(refused.status === 400, `출처 없이 올라갔다 (status ${refused.status})`);
+    const afterRefusal = (await get<{ items: Array<{ id: string }> }>('/assets')).items;
+    assert(!afterRefusal.some((i) => i.id.includes('무출처')),
+      `거부한 파일이 자료실에 남았다: ${afterRefusal.map((i) => i.id).join(', ')}`);
+    assert(afterRefusal.length === before,
+      `거부했는데 자료 수가 늘었다 (${before} → ${afterRefusal.length})`);
+
+    // 블랙리스트도 같다 — 이름을 박아 막은 자료가 들어오면 정책이 통째로 뚫린다
+    const blocked = new FormData();
+    blocked.append('files', new Blob([Buffer.from('GIF89a')], { type: 'image/gif' }), '핀터.gif');
+    blocked.append('sourceUrl', 'https://www.pinterest.com/pin/1/');
+    const blockedRes = await fetch(`${API}/assets?kind=meme`, { method: 'POST', body: blocked });
+    assert(blockedRes.status === 400, `블랙리스트가 올라갔다 (status ${blockedRes.status})`);
+    const afterBlocked = (await get<{ items: Array<{ id: string }> }>('/assets')).items;
+    assert(!afterBlocked.some((i) => i.id.includes('핀터')),
+      '블랙리스트로 거부한 파일이 자료실에 남았다 — 나중에 출처를 고쳐 적으면 그대로 통과한다');
+
     const fd = new FormData();
     fd.append('files', new Blob([Buffer.from('GIF89a')], { type: 'image/gif' }), '놀란 고양이.gif');
+    fd.append('sourceUrl', 'https://pixabay.com/gifs/cat-1/');
+    fd.append('hasFace', 'false');
     const up = await fetch(`${API}/assets?kind=meme`, { method: 'POST', body: fd });
     const upText = await up.text(); // 본문은 한 번만 읽을 수 있다
     assert(up.ok, `자료 올리기 실패: ${up.status} ${upText}`);
     const { added } = JSON.parse(upText) as { added: string[] };
     assert(added.length === 1, `올린 자료 수가 다름: ${added.length}`);
 
-    const listed = await get<{ items: Array<{ id: string; title: string; origin: string }> }>('/assets');
+    const listed = await get<{
+      items: Array<{
+        id: string; title: string; origin: string;
+        sourceUrl?: string; license?: string; downloadedAt?: string; hasFace?: boolean;
+      }>;
+    }>('/assets');
     const mine = listed.items.find((i) => i.id === added[0]);
     assert(mine?.origin === 'local', '올린 자료가 이 PC 자료로 잡히지 않음');
     // 저장 파일명은 슬러그라도 제목은 원래 이름이 남아야 목록에서 알아본다
     assert(mine!.title === '놀란 고양이', `제목이 원래 이름이 아님: ${mine!.title}`);
+    assert(mine!.sourceUrl === 'https://pixabay.com/gifs/cat-1/',
+      `출처가 안 남음: ${mine!.sourceUrl}`);
+    // 화이트리스트 사이트면 라이선스 이름이 자동으로 붙는다 — 사람이 매번 타이핑하지 않는다
+    assert(mine!.license === 'Pixabay Content License', `라이선스 자동 기입 실패: ${mine!.license}`);
+    assert(Boolean(mine!.downloadedAt), '받은 날짜가 안 남음 (올린 날로 채워야 한다)');
+    assert(mine!.hasFace === false, `인물 표시가 안 남음: ${mine!.hasFace}`);
 
     await put(`/jobs/${jid}/assets`, { assets: added });
     const r = await fetch(`${API}/jobs/${jid}/download/capcut`);
     assert(r.status === 200, `캡컷 묶음 실패: ${r.status}`);
-    const names = readZip(Buffer.from(await r.arrayBuffer())).map((e) => e.name);
+    const entries = readZip(Buffer.from(await r.arrayBuffer()));
+    const names = entries.map((e) => e.name);
     assert(names.includes('04_짤방/놀란 고양이.gif'),
       `담은 짤방이 묶음에 없음: ${names.filter((n) => n.startsWith('04')).join(', ')}`);
+
+    /*
+      🔴 **캡컷 갈래는 막지 않는다 — 대신 출처 대장을 같이 넣는다** (2026-08-26 결정).
+      조립 게이트는 웹 자동 조립 한 곳뿐이라, 이 묶음이 출처를 안 들고 나가면
+      발행 뒤 무엇을 어디서 받아 썼는지 되짚을 근거가 한쪽에만 남는다.
+    */
+    const ledgerEntry = entries.find((e) => e.name.endsWith('에셋출처.csv'));
+    assert(ledgerEntry, `캡컷 묶음에 출처 대장이 없음: ${names.join(', ')}`);
+    const ledgerText = ledgerEntry!.data.toString('utf8');
+    assert(ledgerText.includes('https://pixabay.com/gifs/cat-1/'),
+      `대장에 출처가 없음: ${ledgerText.slice(0, 200)}`);
+    // 앱이 안 거는 변형을 걸었다고 적으면 그 자체가 거짓말이다 (편집은 캡컷에서 한다)
+    assert(ledgerText.includes('캡컷에서 직접'),
+      `캡컷 대장의 변형 칸이 앱 설정값을 말한다: ${ledgerText.slice(0, 200)}`);
 
     /*
       담아둔 뒤 자료실에서 지워도 묶음은 나와야 한다 — 담은 것 하나 때문에
@@ -1790,7 +1946,8 @@ async function main(): Promise<void> {
     const afterNames = readZip(Buffer.from(await after.arrayBuffer())).map((e) => e.name);
     assert(!afterNames.some((n) => n.startsWith('04_짤방/')),
       '자료실에서 지웠는데 묶음에 그대로 들어 있음');
-    return '올리기 → 담기 → 묶음 포함 → 지운 뒤에도 묶음 정상';
+    return '거부(무출처·블랙리스트)는 흔적 없음 → 올리기 → 담기 → 묶음 포함(출처 대장 동봉)'
+      + ' → 지운 뒤에도 묶음 정상';
   });
 
   // ── 상태 파일 무결성 ──
