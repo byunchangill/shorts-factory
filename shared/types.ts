@@ -284,6 +284,16 @@ export const PacketSchema = z.object({
   attempts: z.number().int().default(0), // api 자동 실행 시도 횟수
   createdAt: z.string(),
   receivedAt: z.string().optional(),
+  /**
+   * 반영을 **시작한** 시각. 「받음」(`receivedAt`)보다 먼저 디스크에 찍힌다.
+   *
+   * 🔴 **「요청서 결과는 한 번만 반영한다」를 프로세스 밖에서도 지키는 표시다** (2026-08-27).
+   * 반영이 「받음」보다 먼저 돌게 바꾸면서(그래야 「받음」이 완료를 뜻한다), 반영 뒤 패킷
+   * 쓰기가 실패하면 패킷이 `waiting`으로 남아 **스윕이 같은 결과를 또 반영한다** —
+   * 대본이 `script_v2`로 밀리는 2026-08-23의 그 사고다. 이 값이 있으면 다시 안 반영한다.
+   * 옛 `packet.json`에는 없다 (optional).
+   */
+  applyStartedAt: z.string().optional(),
   decidedAt: z.string().optional(),
   rejectNote: z.string().optional(),
   validationErrors: z.array(z.string()).default([]),

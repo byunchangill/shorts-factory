@@ -1099,6 +1099,8 @@ router.get('/jobs/:jid/download/capcut', async (req, res) => {
     settings, job, productName: ref.projectId, jobDir, script, timings, clips,
     // 담아둔 뒤 자료실에서 지운 것은 여기서 조용히 빠진다 (`resolveAssets`)
     assets: await resolveAssets(job.assets),
+    // 대장은 조립·내보내기와 **같은 목록**이다 — 묶음에 안 담기는 씬 이미지까지 신고한다
+    ledger: await ledgerSubjects(job, script),
   })) {
     if (item.text !== undefined) {
       entries.push({ name: item.name, data: Buffer.from(item.text, 'utf8') });

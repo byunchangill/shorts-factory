@@ -1772,7 +1772,7 @@ async function main(): Promise<void> {
   await step('씬 이미지 — 요청서 결과가 대본에 붙고 그 그림으로 조립된다', async () => {
     const SCENE_SECS = [3, 4];
     /** 씬마다 다른 색 — 완성본에서 뽑은 프레임과 맞대 「그 그림이 깔렸는가」를 본다 */
-    const COLORS = ['red', 'red']; // VERIFIER SABOTAGE
+    const COLORS = ['red', 'blue'];
 
     /*
       앞 단계(38)가 menu-a 기준 설정으로 되돌려 놓았으므로 여기서 다시 세운다.
