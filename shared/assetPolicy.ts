@@ -50,14 +50,38 @@ export interface AssetSource {
   transformNote?: string;
 }
 
-/** 정책이 판정하는 대상 — 자료 하나 */
+/**
+ * 정책이 판정하는 대상 — 소재 하나.
+ *
+ * `where`는 **고치는 자리가 다르기 때문에** 있다. 자료실 자료는 「편집 재료」 화면에서
+ * 칸을 채우면 되지만 씬 이미지는 그 화면에 아예 없다 — 요청서를 다시 받아야 한다.
+ * 사유만 같고 고칠 곳이 다른데 한 문장으로 안내하면 없는 입력칸을 찾아 헤맨다.
+ *
+ * (이름이 `origin`이 아닌 이유: `Asset.origin`은 이미 `shared`/`local`을 뜻한다.
+ * 같은 이름에 다른 뜻을 겹치면 `Asset`을 그대로 넘기는 자리가 조용히 깨진다.)
+ */
 export interface AssetSubject extends AssetSource {
   id: string;
   title: string;
+  /** 기본값은 자료실(`library`) — 이 필드 전에 만들어진 호출부가 전부 그쪽이다 */
+  where?: 'library' | 'scene';
 }
 
 /** 직접 만든 자료의 출처 값. URL이 없다고 기록을 건너뛰면 대장에 구멍이 난다 */
 export const SELF_MADE = '직접제작';
+
+/**
+ * AI로 만든 그림의 출처 값.
+ *
+ * 🔴 **이게 없으면 정책이 권하는 방법이 게이트를 통과할 길이 없다.** 인물이 필요한 자리에
+ * 「AI로 만든 그림을 쓰라」고 해 놓고 출처를 URL로만 받으면, 그 그림에는 받아온 페이지가
+ * 없어서 `missing`으로 막힌다 — 시키는 대로 한 사람이 막히는 규칙이다.
+ *
+ * `SELF_MADE`와 갈라 두는 이유는 대장에서 갈려 보여야 하기 때문이다. 직접 촬영·제작한 것과
+ * 생성 모델이 만든 것은 나중에 되짚을 때 뜻이 다르다 (모델·서비스 약관이 걸리는 쪽은 후자다).
+ * 어느 모델로 만들었는지는 `license` 칸에 적는다 — 앱이 확인할 수 없는 값이라 강제하지 않는다.
+ */
+export const AI_GENERATED = 'AI생성';
 
 // ── 화이트리스트 · 블랙리스트 ─────────────────────────────────────
 
@@ -124,6 +148,7 @@ export type SourceVerdict =
   /** 사람이 적은 원문을 들고 다닌다 — 사유 문구가 그 값을 그대로 되비쳐야 고칠 수 있다 */
   | { kind: 'invalid'; raw: string }
   | { kind: 'self' }
+  | { kind: 'ai' }
   | { kind: 'allowed'; host: string; entry: AllowedHost }
   | { kind: 'blocked'; host: string; entry: BlockedHost }
   | { kind: 'unknown'; host: string };
@@ -158,6 +183,7 @@ export function classifySource(url: string | null | undefined): SourceVerdict {
   const text = (url ?? '').trim();
   if (!text) return { kind: 'missing' };
   if (text === SELF_MADE) return { kind: 'self' };
+  if (text === AI_GENERATED) return { kind: 'ai' };
   const host = hostOf(text);
   if (!host) return { kind: 'invalid', raw: text };
   const blocked = ASSET_SOURCE_BLACKLIST.find((e) => matches(host, e));
@@ -172,6 +198,8 @@ export function defaultLicense(url: string | null | undefined): string {
   const v = classifySource(url);
   if (v.kind === 'allowed') return v.entry.licenseHint;
   if (v.kind === 'self') return '자체 제작';
+  // 어느 모델로 만들었는지는 사람이 적는다 — 기본값은 「생성했다」는 사실까지만 말한다
+  if (v.kind === 'ai') return 'AI 생성 (모델은 비고에)';
   return '';
 }
 
@@ -180,6 +208,7 @@ export function sourceLabel(url: string | null | undefined): string {
   const v = classifySource(url);
   switch (v.kind) {
     case 'self': return '직접 제작';
+    case 'ai': return 'AI 생성';
     case 'allowed': return v.entry.label;
     case 'blocked': return v.entry.label;
     case 'unknown': return v.host;
@@ -206,7 +235,7 @@ export function sourceVerdictMessage(v: SourceVerdict): string | null {
       return '출처 URL이 없습니다';
     case 'invalid':
       return `출처가 주소 형태가 아닙니다: "${v.raw}" `
-        + `(직접 만든 것이면 ${SELF_MADE}이라고 적습니다)`;
+        + `(직접 만든 것이면 ${SELF_MADE}, AI로 만든 것이면 ${AI_GENERATED}이라고 적습니다)`;
     case 'blocked':
       return `${v.entry.label}(${v.host})에서 받은 자료는 쓸 수 없습니다 — ${v.entry.reason}`;
     case 'unknown':
@@ -233,8 +262,15 @@ export function assetPolicyProblems(a: AssetSubject): string[] {
   const skipUnknown = v.kind === 'unknown' && Boolean(a.license?.trim());
   const why = skipUnknown ? null : sourceVerdictMessage(v);
   if (why) out.push(why);
+  /*
+    🔴 **묻는 것은 「얼굴이 있는가」가 아니라 「식별 가능한 실존 인물이 있는가」다.**
+    AI가 만든 얼굴은 실존 인물이 아니라서 보통 `false`다 — 그래서 「인물이 필요하면
+    AI 그림을 쓰라」는 정책이 성립한다. 실존 인물을 닮게 만들었다면 그건 `true`이고,
+    닮게 만들었다는 사실이 오히려 위험을 키운다.
+    자리마다 고칠 곳이 다르므로 **어디서 고치라는 말은 여기 적지 않는다** (`assetLogError`).
+  */
   if (a.hasFace === undefined) {
-    out.push('인물 포함 여부가 표시돼 있지 않습니다 — 자료실에서 「인물 없음/있음」을 골라 주세요');
+    out.push('인물 포함 여부가 표시돼 있지 않습니다 — 「인물 없음/있음」을 표시해 주세요');
   } else if (a.hasFace) {
     out.push(
       '식별 가능한 인물이 있습니다 — 썰형은 이 그림을 제품의 실패 사례와 엮으므로 '
@@ -257,9 +293,9 @@ export function assetPolicyProblems(a: AssetSubject): string[] {
  * `license`·`uploader`가 붙고 rights-confirm 게이트가 따로 막는다 — 두 벌을 겹치면
  * 같은 뜻의 게이트가 둘이 된다.
  *
- * 🔴 **씬 이미지(`imageRef`)는 아직 안 본다.** 문자열 하나라 출처를 붙일 자리가 없고,
- * 그건 스키마 마이그레이션이라 별도 작업이다. 안내 문구가 그 사실을 말한다 —
- * 안 그러면 「이미지 출처를 어디에 적으라는 거냐」로 막힌다.
+ * 🔴 **씬 이미지도 본다** (2026-08-26). 스톡 인물 사진이 들어올 자리가 정확히 거기라,
+ * 짤방만 보는 게이트는 제일 위험한 문을 열어 둔 채 옆문을 잠근 꼴이었다.
+ * 고치는 자리가 자료실과 다르므로 안내를 갈라 낸다 (`AssetSubject.where`).
  */
 export function assetLogError(menu: Menu, assets: AssetSubject[]): string | null {
   if (menu !== 'menu-b') return null;
@@ -269,13 +305,56 @@ export function assetLogError(menu: Menu, assets: AssetSubject[]): string | null
   if (bad.length === 0) return null;
 
   const lines = bad.map(({ a, why }) => `  · ${a.title}: ${why.join(' / ')}`);
+  const how: string[] = [];
+  if (bad.some(({ a }) => (a.where ?? 'library') === 'library')) {
+    how.push(
+      '편집 재료(짤방·효과음)는 「편집 재료」 화면에서 출처를 채우고 다시 조립하세요 '
+      + '(인물이 있는 자료는 채우는 것이 아니라 바꿔야 합니다).',
+    );
+  }
+  if (bad.some(({ a }) => a.where === 'scene')) {
+    /*
+      🔴 씬 이미지에는 출처를 적는 **화면이 없다.** 요청서가 받아 오는 값이라, 고치는 길은
+      요청서를 다시 받는 것 하나뿐이다. 그걸 안 적으면 없는 입력칸을 찾아 헤맨다.
+      옛 대본의 경로 문자열(`legacyImageRef`)이 여기로 떨어지는 것도 같은 길로 푼다.
+    */
+    how.push(
+      `씬 이미지는 「씬 이미지」 요청서를 다시 발행해 출처를 채운 scenes.json을 받고 `
+      + `다시 조립하세요 (AI로 만든 그림이면 출처에 ${AI_GENERATED}이라고 적습니다). `
+      + '옛 대본의 이미지는 경로만 있고 출처가 없어 여기서 걸립니다.',
+    );
+  }
   return (
-    `이 편이 쓰는 편집 재료 ${bad.length}개의 출처 기록이 모자라 조립을 멈췄습니다.\n`
+    `이 편이 쓰는 소재 ${bad.length}개의 출처 기록이 모자라 조립을 멈췄습니다.\n`
     + `${lines.join('\n')}\n`
-    + '「편집 재료」 화면에서 그 자료의 출처를 채우고 다시 조립하세요 '
-    + '(인물이 있는 자료는 채우는 것이 아니라 바꿔야 합니다). '
-    + '씬 이미지는 아직 출처를 기록하지 않습니다 — 이 게이트가 보는 것은 짤방·효과음뿐입니다.'
+    + how.join(' ')
   );
+}
+
+/**
+ * 대본 씬이 들고 있는 이미지를 정책 판정 대상으로 옮긴다.
+ *
+ * **자료실 자료와 한 목록에 섞어서 넘긴다** — 게이트도 대장(CSV)도 목록 하나만 본다.
+ * 목록을 갈라 두면 「대장에는 있는데 게이트는 안 본 소재」가 생긴다 (`usedAssetIds` 주석).
+ *
+ * `id`를 `scene:{sceneId}`로 두는 이유는 대장에서 자료실 id(`local:memes/…`)와 한눈에
+ * 갈려야 하기 때문이다. 씬 번호가 곧 그 소재를 되짚는 열쇠다.
+ */
+export function sceneImageSubjects(
+  scenes: ReadonlyArray<{ sceneId: string; imageRef?: AssetSource & { file: string } }>,
+): AssetSubject[] {
+  return scenes
+    .filter((s): s is typeof s & { imageRef: AssetSource & { file: string } } => Boolean(s.imageRef))
+    .map((s) => ({
+      id: `scene:${s.sceneId}`,
+      title: `씬 ${s.sceneId} 이미지`,
+      where: 'scene' as const,
+      sourceUrl: s.imageRef.sourceUrl,
+      license: s.imageRef.license,
+      downloadedAt: s.imageRef.downloadedAt,
+      hasFace: s.imageRef.hasFace,
+      transformNote: s.imageRef.transformNote,
+    }));
 }
 
 /**
@@ -404,9 +483,13 @@ export function assetSourcingRules(): string {
     `- 🔴 **여기서는 받지 않는다**: ${block} — ${REASON_REDIST}`,
     '- 🔴 **식별 가능한 인물이 나오는 소재를 제품의 실패 사례·단점 씬에 쓰지 않는다.**',
     '  그 모델은 자기가 산 적도 없는 제품의 실패 사례 주인공이 된다 (초상권 분쟁 소지).',
-    '  사람이 필요하면 얼굴이 안 나오는 컷이나 AI로 만든 그림을 쓴다',
+    `  사람이 필요하면 얼굴이 안 나오는 컷이나 **AI로 만든 그림**을 쓰고, 그때는 출처에`,
+    `  \`${AI_GENERATED}\`이라고 적는다 (받아온 페이지가 없다고 기록을 건너뛰면 거부된다)`,
     '- 소재를 고를 때는 **최신순으로 정렬하고 인기 상위 20개는 건너뛴다** — 상위 클립은 이미',
     '  수만 개 쇼츠에 들어가 있어 재사용 신호가 된다 (앱이 확인할 수 없으니 메모로 남긴다)',
-    '- 고른 소재마다 **받은 페이지 주소를 그대로 적는다.** 앱에 올릴 때 출처 URL이 없으면 거부된다',
+    `- 고른 소재마다 **받은 페이지 주소를 그대로 적는다.** 직접 만든 것은 \`${SELF_MADE}\`,`,
+    `  AI로 만든 것은 \`${AI_GENERATED}\`이다. 출처가 없으면 앱이 거부한다`,
+    '- **식별 가능한 인물이 있는지(`hasFace`)를 반드시 표시한다.** 앱은 얼굴을 찾아주지 않는다 —',
+    '  표시가 없으면 「안 봤음」으로 보고 막는다 (`false`는 「보고 없다고 판단했다」는 뜻이다)',
   ].join('\n');
 }

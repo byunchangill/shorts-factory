@@ -71,3 +71,69 @@ describe('캡컷 묶음의 출처 대장', () => {
     expect(item!.name.startsWith('업로드킷/')).toBe(true);
   });
 });
+
+/*
+  🔴 **없는 폴더를 설명하면 안 된다** (2026-08-27 검증 실측).
+
+  씬 이미지로 만든 편은 `sceneVideo()`가 늘 `null`이라 `01_영상/`이 통째로 안 생기는데,
+  안내문은 「`01_영상` — 씬 순서대로」라고 **있다고 적어 뒀다.** 사용자는 영상이 든 줄 알고
+  풀었다가 소리만 있는 것을 본다 — 「안 담긴다」보다 **「담겼다고 안내한다」가 더 나쁘다.**
+*/
+describe('이미지로 만든 편의 캡컷 묶음', () => {
+  const imageScript = ScriptSchema.parse({
+    version: 1, title: '서랍 정리함',
+    scenes: [
+      { sceneId: 'i01', narration: '한 문장.', subtitle: '한 문장',
+        imageRef: { file: 'menu-b/p/jobs/j1/scenes/i01_v1.png', sourceUrl: 'AI생성', hasFace: false } },
+      { sceneId: 'i02', narration: '두 문장.', subtitle: '두 문장',
+        imageRef: { file: 'menu-b/p/jobs/j1/scenes/i02_v1.png', sourceUrl: 'AI생성', hasFace: false } },
+    ],
+  });
+  const items = () => planCapcut({ ...base, script: imageScript });
+  const readme = () => items().find((i) => i.name === '읽어보세요.md')!.text!;
+
+  it('영상이 하나도 안 담기는 편이다 (전제 확인)', () => {
+    expect(items().some((i) => i.name.startsWith('01_영상/'))).toBe(false);
+  });
+
+  it('없는 01_영상 폴더를 설명하지 않는다', () => {
+    expect(readme()).not.toContain('`01_영상`');
+  });
+
+  it('왜 비었는지와 어디서 받는지를 말한다', () => {
+    const text = readme();
+    expect(text).toContain('영상 재료가 없습니다');
+    expect(text).toContain('씬 이미지 2장');
+    expect(text).toContain('이미지'); // 「제품 폴더로 내보내기」의 이미지 폴더
+  });
+
+  /*
+    묶음에 안 담겨도 **대장에는 실린다** — 그 편이 실제로 그 그림으로 나가기 때문이다.
+    담긴 것만 신고하면 이미지 편에는 대장이 아예 안 붙어, 출처를 다 적어 놓고도 기록이 사라진다.
+  */
+  it('묶음에 안 담긴 씬 이미지도 대장에는 실린다', () => {
+    const csv = planCapcut({
+      ...base, script: imageScript,
+      ledger: [
+        { id: 'scene:i01', title: '씬 i01 이미지', where: 'scene', sourceUrl: 'AI생성', hasFace: false },
+        { id: 'scene:i02', title: '씬 i02 이미지', where: 'scene', sourceUrl: 'AI생성', hasFace: false },
+      ],
+    }).find((i) => i.name.endsWith('에셋출처.csv'))?.text;
+    expect(csv).toBeDefined();
+    expect(csv).toContain('scene:i01');
+    expect(csv).toContain('AI생성');
+  });
+
+  /** 클립으로 만든 편은 예전 그대로 — 안내문이 영상 폴더를 계속 설명해야 한다 */
+  it('영상이 담기는 편에서는 01_영상 안내가 그대로다', () => {
+    const clip = { id: 'c01', sourceId: 's01', frames: [], sceneTimes: [], zones: [],
+      cleanVersions: [], segments: [] } as never;
+    const withClip = ScriptSchema.parse({
+      version: 1, title: 't',
+      scenes: [{ sceneId: 's01', narration: 'a', subtitle: 'a', clipRef: { clipId: 'c01' } }],
+    });
+    const text = planCapcut({ ...base, script: withClip, clips: [clip] })
+      .find((i) => i.name === '읽어보세요.md')!.text!;
+    expect(text).toContain('`01_영상`');
+  });
+});

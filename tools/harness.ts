@@ -275,6 +275,21 @@ async function makeSilentAudio(outPath: string, seconds: number): Promise<void> 
   ]);
 }
 
+/**
+ * 씬 이미지 대용 단색 PNG.
+ *
+ * **단색이라야 픽셀 검사가 뜻을 갖는다** — 완성본에서 뽑은 프레임의 평균색을 여기 넣은
+ * 색과 맞대면 「그 이미지가 실제로 화면에 깔렸는가」가 확인된다. 합성 영상(testsrc2)처럼
+ * 저 혼자 움직이는 소재로는 그걸 못 가른다 (2026-08-25에 컷 쪼개기에서 겪은 것과 같다).
+ */
+async function makeSolidImage(outPath: string, color: string): Promise<void> {
+  await runCmd('ffmpeg', [
+    '-y', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', `color=c=${color}:s=${W}x${H}`,
+    '-frames:v', '1', outPath,
+  ]);
+}
+
 // ── 타입 ──────────────────────────────────────────────────────────
 
 interface JobView {
@@ -1740,6 +1755,242 @@ async function main(): Promise<void> {
     assert(kitText.includes('pixabay.com'), '출처 대장에 출처가 없다');
     assert(kitText.includes('자산id'), `업로드킷에 대장 CSV가 없다: ${kitText.slice(0, 120)}`);
     return `출처 삭제 → ${(ms / 1000).toFixed(1)}초 만에 차단 · 되돌리면 통과 · 대장 CSV 확인`;
+  });
+
+  /*
+    ── 씬 이미지 (2026-08-26) ──
+
+    🔴 **이 경로는 하네스가 한 번도 안 밟았다.** 하네스의 잡은 전부 클립으로 씬을 채워서
+    `resolveVisual`의 이미지 갈래(`imageRef`)가 E2E에서 한 번도 안 돌았다. 그리고
+    `scenes.json` → `imageRef` 배선 자체가 없었다 — 요청서가 이미지를 만들어 놔도
+    화면에도 조립에도 안 나타났다. 그래서 **요청서 왕복부터 렌더까지** 한 판 돈다.
+
+    🔴 **막히는 쪽을 마지막에 둔다.** `assembleAndWait`은 이벤트를 뒤에서부터 훑다
+    `assemble.failed`를 만나면 곧바로 중단하므로, 일부러 실패시킨 뒤 또 조립하면 그 실패를
+    물려받는다 (39단계 주석과 같은 이유). 그래서 통과 → 차단 순서다.
+  */
+  await step('씬 이미지 — 요청서 결과가 대본에 붙고 그 그림으로 조립된다', async () => {
+    const SCENE_SECS = [3, 4];
+    /** 씬마다 다른 색 — 완성본에서 뽑은 프레임과 맞대 「그 그림이 깔렸는가」를 본다 */
+    const COLORS = ['red', 'blue'];
+
+    /*
+      앞 단계(38)가 menu-a 기준 설정으로 되돌려 놓았으므로 여기서 다시 세운다.
+
+      🔴 **자막·카드·인트로 제목을 끈다.** 이 단계가 보는 것은 **깔린 그림의 색**인데
+      글자가 그 자리를 덮으면 무엇을 잰 것인지 알 수 없다.
+      훅 게이트는 지금 이미지 씬을 아예 안 재지만(`visual.type === 'video'`일 때만 잰다)
+      0으로 둔다 — 그 조건이 바뀌는 날 정지 화면인 이 잡이 먼저 걸리고, 그때 이 단계가
+      「배선이 깨졌다」로 잘못 읽힌다.
+      끝나면 되돌린다 — 뒤 단계는 menu-a 기준으로 돈다.
+    */
+    await put('/settings', {
+      ...bBaseSettings,
+      layout: 'banded', insertCards: false, burnSubtitles: false, burnDisclosure: false,
+      introTitleSec: 0, hookMotionMin: 0, mirror: false, zoom: 1, grade: '',
+    });
+
+    const job = await post<JobView>(
+      `/projects/menu-b/${encodeURIComponent(bProduct)}/jobs`, { title: '이미지편' });
+    const imgJobDir = path.join(workspace, 'menu-b', bProduct, 'jobs', job.id);
+
+    /*
+      ① 소재를 하나도 안 넣는다. 요청서가 그 사실을 보고 「imagePrompt를 쓰라」고 해야 한다 —
+      소재 유무로 갈리는 안내(`buildRequestMd`)의 반대쪽 가지라 여기서만 밟힌다.
+    */
+    const sp = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'script' });
+    const sreq = await get<PacketView>(`/packets/${sp.id}`);
+    assert(sreq.requestMd.includes('영상 소재가 없습니다'),
+      '소재 없는 잡인데 요청서가 clipRef를 쓰라고 한다');
+
+    const imgScenes = [
+      { sceneId: 'i01', narration: '서랍 안쪽을 이렇게 쓰는 사람이 있다고 함.', subtitle: '이렇게 쓴다고 함', imagePrompt: '밝은 주방 서랍' },
+      { sceneId: 'i02', narration: '근데 높이가 낮아 큰 물건은 안 들어간다 함.', subtitle: '큰 건 안 들어감', imagePrompt: '낮은 서랍', isDownside: true },
+    ];
+    assert(imgScenes.length === SCENE_SECS.length, '씬 수와 씬 길이 표가 어긋난다');
+    const pasted = await post<{ errors: string[] }>(`/packets/${sp.id}/paste`,
+      { raw: `\`\`\`json\n${JSON.stringify({ title: '서랍 정리', scenes: imgScenes })}\n\`\`\`` });
+    assert(pasted.errors.length === 0, `이미지편 대본 반려됨: ${pasted.errors.join(', ')}`);
+    await waitFor('이미지편 대본 반영', async () => {
+      const j = await get<JobView>(`/jobs/${job.id}`);
+      return j.script.currentVersion === 1 ? j : null;
+    }, 30_000);
+    await post(`/packets/${sp.id}/accept`);
+    await post(`/jobs/${job.id}/script/approve`);
+
+    // 음성 (타입캐스트는 실제 키가 필요해 첨부 경로로 간다)
+    const imgAudio = path.join(workspace, '_tmp_audio_img');
+    await fsp.mkdir(imgAudio, { recursive: true });
+    for (const [i, sc] of imgScenes.entries()) {
+      const f = path.join(imgAudio, `i${i + 1}.mp3`);
+      await makeSilentAudio(f, SCENE_SECS[i]);
+      const fd = new FormData();
+      fd.append('sceneId', sc.sceneId);
+      fd.append('file', new Blob([await fsp.readFile(f)], { type: 'audio/mpeg' }), `i${i + 1}.mp3`);
+      const r = await fetch(`${API}/jobs/${job.id}/voice/upload`, { method: 'POST', body: fd });
+      assert(r.ok, `이미지편 음성 첨부 실패: ${r.status} ${await r.text()}`);
+    }
+    await post(`/jobs/${job.id}/tts`, {});
+    const imgTimings = await waitFor('이미지편 타이밍', async () => {
+      await abortIfJobFailed(job.id, 'tts.failed');
+      return readMenuBTimings(job.id);
+    }, 60_000);
+    const imgNarration = imgTimings.reduce((n, t) => n + t.duration, 0);
+
+    /*
+      ② 씬 이미지 요청서. **출처 칸과 AI 생성 값이 실려야** 결과가 통과할 수 있다 —
+      명세가 그걸 안 알려주면 시키는 대로 한 결과가 늘 거부된다.
+    */
+    const ip = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'scene-images' });
+    const ireq = await get<PacketView>(`/packets/${ip.id}`);
+    for (const token of ['imageFile', 'sourceUrl', 'hasFace', 'AI생성']) {
+      assert(ireq.requestMd.includes(token), `씬 이미지 요청서에 ${token}이 없다`);
+    }
+
+    /** 요청서 결과를 파일로 떨구고 `.done`을 만든다 (Claude Code가 하는 그대로) */
+    const putResult = async (
+      packetId: string,
+      entries: unknown,
+      files: Array<{ name: string; color: string }> = [],
+    ) => {
+      const dir = path.join(imgJobDir, 'requests', packetId, 'result');
+      await fsp.mkdir(dir, { recursive: true });
+      for (const f of files) await makeSolidImage(path.join(dir, f.name), f.color);
+      await fsp.writeFile(path.join(dir, 'scenes.json'), JSON.stringify(entries), 'utf8');
+      await fsp.writeFile(path.join(dir, '.done'), '', 'utf8');
+      return waitFor('씬 이미지 결과 반영', async () => {
+        const v = await get<PacketView>(`/packets/${packetId}`);
+        return v.status === 'received' ? v : null;
+      }, 15_000, 200);
+    };
+    const sceneImageRefs = async () => {
+      const raw = await fsp.readFile(path.join(imgJobDir, 'script', 'script_v1.json'), 'utf8');
+      return (JSON.parse(raw) as { scenes: Array<{ sceneId: string; imageRef?: { file: string; sourceUrl?: string } }> })
+        .scenes;
+    };
+
+    /*
+      ③ **어긋나면 거부한다.** 조용히 버리면 사용자는 「반영됨」만 보고 이미지가 왜 안
+      붙는지 모른다 (`scriptRuleErrors`와 같은 태도). 없는 씬과 출처 누락 둘 다 본다.
+    */
+    const badScene = await putResult(ip.id,
+      [{ sceneId: 'i99', imageFile: 'a.png', sourceUrl: 'AI생성', hasFace: false }],
+      [{ name: 'a.png', color: 'green' }]);
+    assert(badScene.validationErrors.some((e) => e.includes('i99')),
+      `없는 씬이 안 걸렸다: ${badScene.validationErrors.join(', ')}`);
+    assert((await sceneImageRefs()).every((s) => !s.imageRef), '거부된 결과가 대본에 붙었다');
+
+    const ip2 = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'scene-images' });
+    const noSource = await putResult(ip2.id,
+      [{ sceneId: 'i01', imageFile: 'a.png' }], [{ name: 'a.png', color: 'green' }]);
+    assert(noSource.validationErrors.some((e) => e.includes('출처 URL')),
+      `출처 없는 이미지가 안 걸렸다: ${noSource.validationErrors.join(', ')}`);
+    assert((await sceneImageRefs()).every((s) => !s.imageRef), '출처 없는 결과가 대본에 붙었다');
+
+    /*
+      ④ **AI 생성이 정상 경로다.** 정책이 「인물이 필요하면 AI 그림을 쓰라」고 말하는데
+      출처를 URL로만 받으면 그 방법이 통과할 길이 없다. 여기서 실제로 통과하는지 본다.
+    */
+    const ip3 = await post<{ id: string }>(`/jobs/${job.id}/packets`, { kind: 'scene-images' });
+    const okResult = await putResult(ip3.id,
+      imgScenes.map((sc) => ({
+        sceneId: sc.sceneId,
+        imagePrompt: sc.imagePrompt,
+        imageFile: `${sc.sceneId}.png`,
+        sourceUrl: 'AI생성',
+        license: '하네스 모델',
+        downloadedAt: '2026-08-26',
+        hasFace: false,
+      })),
+      imgScenes.map((sc, i) => ({ name: `${sc.sceneId}.png`, color: COLORS[i] })));
+    assert(okResult.validationErrors.length === 0,
+      `출처를 갖춘 결과가 반려됨: ${okResult.validationErrors.join(', ')}`);
+
+    const refs = await sceneImageRefs();
+    assert(refs.every((s) => s.imageRef?.sourceUrl === 'AI생성'),
+      `imageRef가 안 붙었다: ${JSON.stringify(refs.map((s) => s.imageRef))}`);
+    /*
+      🔴 **요청서 폴더가 아니라 잡의 `scenes/`를 가리켜야 한다.** `result/`는 요청서를
+      다시 발행하거나 지우면 사라지는 자리다 — 대본이 그걸 가리키면 조립이 통째로 막힌다.
+    */
+    for (const s of refs) {
+      assert(s.imageRef!.file.includes('/scenes/'),
+        `이미지가 잡 폴더로 안 옮겨졌다: ${s.imageRef!.file}`);
+      await fsp.access(path.join(workspace, s.imageRef!.file));
+    }
+
+    // ⑤ 그 그림으로 실제로 조립된다 — `resolveVisual`의 이미지 갈래가 여기서 처음 돈다
+    const done = await assembleAndWait(job.id, imgJobDir, 0);
+    const finalPath = path.join(imgJobDir, 'output', `final_v${done.output.currentVersion}.mp4`);
+    const probe = await probeJson(finalPath);
+    const videoDur = Number(probe.format.duration);
+    assert(Math.abs(videoDur - imgNarration) < 1.0,
+      `길이가 어긋났다 — 영상 ${videoDur.toFixed(2)}초 / 나레이션 ${imgNarration.toFixed(2)}초`);
+
+    /*
+      🔴 **픽셀로 본다.** 문자열 검사는 「대본에 경로가 적혔다」까지만 말한다 — 그 그림이
+      실제로 화면에 깔렸는지는 렌더해 보고서야 안다 (인트로 제목 이중 인쇄를 그렇게 잡았다).
+      씬마다 색을 달리 줬으므로 두 씬의 색이 서로 달라야 하고, 각각 준 색이어야 한다.
+      띠 아래 한쪽만 잘라 잰다 — 폭 전체 평균은 상쇄돼 회색이 된다.
+    */
+    const topBandH = Math.round(1920 * Number(bBaseSettings.topBandRatio ?? 0.22));
+    const strip = `crop=300:120:150:${topBandH + 200}`;
+    const first = await frameStats(finalPath, 1.0, strip);
+    const second = await frameStats(finalPath, imgTimings[0].duration + 1.0, strip);
+    assert(first.mean[0] > first.mean[2] + 60,
+      `첫 씬이 빨강이 아니다 (rgb ${first.mean.map((v) => v.toFixed(0)).join(',')})`);
+    assert(second.mean[2] > second.mean[0] + 60,
+      `둘째 씬이 파랑이 아니다 (rgb ${second.mean.map((v) => v.toFixed(0)).join(',')})`);
+
+    /*
+      ⑥ 대장에 씬 이미지도 실린다 — 감사 이벤트와 내보내기 CSV가 같은 목록을 본다.
+      예전에는 짤방·효과음만 실려서, 제일 위험한 소재가 대장에 아예 없었다.
+    */
+    const events = await get<Array<{ type: string; assets?: Array<{ id: string; sourceUrl: string }> }>>(
+      `/jobs/${job.id}/events`);
+    const ledger = events.filter((e) => e.type === 'assemble.done').at(-1)?.assets ?? [];
+    assert(ledger.some((a) => a.id === 'scene:i01' && a.sourceUrl === 'AI생성'),
+      `감사 이벤트 대장에 씬 이미지가 없다: ${JSON.stringify(ledger)}`);
+    const kit = await fetch(`${API}/jobs/${job.id}/download/uploadKit`);
+    assert(kit.ok, `이미지편 업로드킷 묶음 실패: ${kit.status}`);
+    const kitText = Buffer.from(await kit.arrayBuffer()).toString('utf8');
+    assert(kitText.includes('scene:i01'), '내보내기 대장에 씬 이미지가 없다');
+
+    /*
+      ⑦ 🔴 **막히는 쪽 — 옛 대본의 문자열 `imageRef`.** 이 형태를 만들 다른 길이 없다.
+      앱은 이제 객체만 쓰므로 파일을 직접 옛 형식으로 되돌려 놓는다. 두 가지를 한꺼번에 본다:
+      **(a) 옛 파일이 그대로 열리는가**(안 열리면 대본 없음으로 400이 난다) ·
+      **(b) 출처가 없으니 게이트가 무는가**(승격이 출처를 지어내면 여기가 조용히 통과한다).
+    */
+    const scriptFile = path.join(imgJobDir, 'script', 'script_v1.json');
+    const legacy = JSON.parse(await fsp.readFile(scriptFile, 'utf8')) as {
+      scenes: Array<{ imageRef?: { file: string } | string }>;
+    };
+    for (const s of legacy.scenes) {
+      if (s.imageRef && typeof s.imageRef === 'object') s.imageRef = s.imageRef.file;
+    }
+    await fsp.writeFile(scriptFile, JSON.stringify(legacy, null, 2), 'utf8');
+
+    const beforeV = (await get<JobView>(`/jobs/${job.id}`)).output.currentVersion ?? 0;
+    const t0 = Date.now();
+    await post(`/jobs/${job.id}/assemble`, {});
+    const failure = await waitFor('씬 이미지 게이트 차단', async () => {
+      const ev = await get<Array<{ type: string; error?: string }>>(`/jobs/${job.id}/events`);
+      return ev.filter((e) => e.type === 'assemble.failed').at(-1) ?? null;
+    }, 60_000);
+    const ms = Date.now() - t0;
+    assert(String(failure.error).includes('씬 i01 이미지'),
+      `다른 이유로 실패함: ${failure.error}`);
+    // 고치는 자리가 자료실이 아니다 — 씬 이미지에는 출처를 적는 화면이 없다
+    assert(String(failure.error).includes('요청서'),
+      `안내가 고치는 자리를 안 가리킨다: ${failure.error}`);
+    const afterV = (await get<JobView>(`/jobs/${job.id}`)).output.currentVersion ?? 0;
+    assert(afterV === beforeV, `막혔는데 새 판이 나왔다 (v${beforeV} → v${afterV})`);
+    assert(ms < 10_000, `막히는 데 ${(ms / 1000).toFixed(1)}초 — 렌더를 돌고 나서 막은 것 같다`);
+
+    await put('/settings', bBaseSettings); // 뒤 단계는 menu-a 기준으로 돈다
+    return `없는 씬·무출처 거부 → AI생성 통과 → 이미지 ${refs.length}장으로 `
+      + `${videoDur.toFixed(1)}초 조립 · 대장 기재 · 옛 문자열은 ${(ms / 1000).toFixed(1)}초 만에 차단`;
   });
 
   // ── 요청서 파일 직접 처리 경로 (파일 접근이 가능한 AI = Claude Code) ──

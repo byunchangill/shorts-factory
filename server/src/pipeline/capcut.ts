@@ -3,7 +3,7 @@ import type { Job, Script, Clip, Settings, Asset } from '@shared/types';
 import type { SceneTiming } from './tts.js';
 import { buildSrt, splitLines, wrapKorean, type SubCue } from './subtitles.js';
 import { subtitleCharsPerLine } from '@shared/constants';
-import { assetLedgerCsv, assetLedgerRows } from '@shared/assetPolicy';
+import { assetLedgerCsv, assetLedgerRows, type AssetSubject } from '@shared/assetPolicy';
 import { exportFileName } from './exporter.js';
 import { fromWorkspaceRel } from '../store/workspace.js';
 
@@ -28,6 +28,15 @@ export interface CapcutInput {
   clips: Clip[];
   /** 자료실에서 이 잡에 담아둔 편집 재료 (짤방·효과음). 없으면 그 폴더가 안 생긴다 */
   assets?: Asset[];
+  /**
+   * 출처 대장에 실을 소재 전부 — **묶음에 담기는 것보다 넓다.**
+   *
+   * 씬 이미지는 이 묶음에 **안 담기는데도** 대장에는 실린다(아래 「씬 이미지」 주석).
+   * 담긴 것만 신고하면, 그 편이 실제로 무엇을 써서 나갔는지가 묶음마다 다르게 적힌다 —
+   * 대장은 「이 묶음에 든 파일 목록」이 아니라 「이 편이 쓴 소재의 출처」다.
+   * 비면 `assets`를 쓴다 (옛 호출부 호환).
+   */
+  ledger?: AssetSubject[];
 }
 
 export interface CapcutItem {
@@ -83,12 +92,15 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
   ];
 
   let cursor = 0;
+  // 안내문이 없는 폴더를 설명하지 않게 실제로 담긴 영상 수를 센다 (아래 주석)
+  let videoCount = 0;
   for (const [i, scene] of script.scenes.entries()) {
     const timing = timings[i];
     const dur = timing?.duration ?? scene.durationHint ?? 0;
 
     const video = sceneVideo(scene, clips, jobDir);
     if (video) {
+      videoCount++;
       items.push({ name: `01_영상/${no(i)}_${scene.sceneId}.mp4`, src: video });
     }
     if (timing) {
@@ -110,8 +122,26 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
   lines.push('');
   lines.push(`총 길이 약 ${cursor.toFixed(1)}초`);
   lines.push('');
-  lines.push('- `01_영상` — 씬 순서대로. 정리본(자막·워터마크 지운 것)이 있으면 그쪽입니다');
-  lines.push('- `02_음성` — 씬별 나레이션. 영상과 번호가 짝입니다');
+  /*
+    🔴 **없는 폴더를 설명하지 않는다** (2026-08-27 검증 지적).
+
+    씬 이미지로 만든 편은 `sceneVideo()`가 늘 `null`이라 `01_영상/`이 통째로 안 생기는데,
+    안내문은 「`01_영상` — 씬 순서대로」라고 **있다고 적어 뒀다.** 사용자는 영상이 든
+    줄 알고 풀었다가 소리만 있는 것을 본다 — 「안 담긴다」보다 **「담겼다고 안내한다」가
+    더 나쁘다**(기록이 실물과 갈린다).
+
+    **씬 이미지를 묶음에 담을지는 설계 판단이라 이번에 넓히지 않았다** (`TODO.md` 1-1).
+    대신 왜 비었는지와 어디서 받는지를 안내문이 말한다.
+  */
+  const sceneImages = script.scenes.filter((s) => s.imageRef).length;
+  if (videoCount) {
+    lines.push('- `01_영상` — 씬 순서대로. 정리본(자막·워터마크 지운 것)이 있으면 그쪽입니다');
+  } else if (sceneImages) {
+    lines.push(`- **영상 재료가 없습니다** — 이 편은 씬 이미지 ${sceneImages}장으로 만든 편입니다.`);
+    lines.push('  그림은 이 묶음에 안 들어갑니다. 「제품 폴더로 내보내기」의 `이미지` 폴더에서 받거나,');
+    lines.push('  웹 자동 조립으로 완성본을 만드세요');
+  }
+  lines.push('- `02_음성` — 씬별 나레이션. 영상이 있으면 번호가 짝입니다');
   lines.push('- `03_자막` — SRT. 캡컷에서 자막 트랙으로 바로 읽힙니다');
   /*
     편집 재료는 **번호를 안 붙인다.** 씬 폴더는 이름이 곧 순서지만 짤방·효과음은
@@ -143,13 +173,20 @@ export function planCapcut(input: CapcutInput): CapcutItem[] {
     `변형` 칸은 **앱이 거는 값이 아니다.** 캡컷 재료는 좌우반전·그레이딩·확대가 안 걸린
     원본이고 그 작업을 편집기에서 사람이 한다 — 설정값을 적으면 그 자체가 거짓말이 된다.
   */
-  if (assets.length) {
+  /*
+    🔴 **대장은 묶음에 든 것보다 넓다** (2026-08-27). 씬 이미지는 이 묶음에 안 담기는데도
+    여기 실린다 — 그 편이 실제로 그 그림으로 나가기 때문이다. 담긴 것만 신고하면
+    이미지로 만든 편에는 **대장이 아예 안 붙어**, 출처를 다 적어 놓고도 그 기록이
+    묶음에서 사라진다 (검증 실측: 이미지 편 묶음에 CSV가 없었다).
+  */
+  const ledger = input.ledger ?? assets;
+  if (ledger.length) {
     items.push({
       name: `업로드킷/${exportFileName(productName, job.title, '에셋출처.csv')}`,
-      text: assetLedgerCsv(assetLedgerRows(assets, '없음 (캡컷에서 직접 겁니다)')),
+      text: assetLedgerCsv(assetLedgerRows(ledger, '없음 (캡컷에서 직접 겁니다)')),
     });
-    lines.push('- `업로드킷/…에셋출처.csv` — 담아둔 재료의 출처 대장.'
-      + ' 「미기록」이 있으면 자료실에서 채우세요');
+    lines.push('- `업로드킷/…에셋출처.csv` — 이 편이 쓴 소재의 출처 대장'
+      + ' (묶음에 안 담긴 씬 이미지도 실립니다). 「미기록」이 있으면 자료실에서 채우세요');
   }
 
   lines.push('');

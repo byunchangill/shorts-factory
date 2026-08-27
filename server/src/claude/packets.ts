@@ -5,7 +5,7 @@ import {
   PACKET_KIND_LABELS, syllableBudget, subtitleCharsPerLine, TARGET_SEC_BY_MENU,
   type PacketKind, type Menu,
 } from '@shared/constants';
-import { assetSourcingRules } from '@shared/assetPolicy';
+import { assetSourcingRules, AI_GENERATED, SELF_MADE } from '@shared/assetPolicy';
 import { packetMenu } from './scriptRules.js';
 import { paths, toWorkspaceRel, WORKSPACE_ROOT, loadSettings } from '../store/workspace.js';
 import { ensureDir, listDirs, readJson, writeJsonAtomic } from '../util/fsx.js';
@@ -204,7 +204,10 @@ const RESULT_SPECS: Record<PacketKind, Array<{ file: string; schema: string }>> 
   'product-extract': [{ file: 'product.json', schema: 'product' }],
   script: [{ file: 'script.json', schema: 'script' }],
   'format-create': [{ file: 'format.json', schema: 'format' }],
-  'scene-images': [{ file: 'scenes.json', schema: 'json' }],
+  // `json`(무검증)이었다 — 씬 이름·출처가 맞물려야 하는 결과라 전용 스키마로 올렸다.
+  // 옛 요청서의 packet.json에는 `json`이 적혀 있는데, 그쪽도 `planSceneImages`가 같은
+  // 스키마로 다시 파싱하므로 검증이 갈리지 않는다
+  'scene-images': [{ file: 'scenes.json', schema: 'scene-images' }],
   'upload-kit': [{ file: 'upload-kit.md', schema: 'markdown' }],
   revision: [{ file: 'script.json', schema: 'script' }],
 };
@@ -499,6 +502,48 @@ const PURPOSES: Record<PacketKind, string> = {
   revision: '반려 사유를 반영해 대본을 수정한다. 지침과 검증 규칙은 동일하게 적용된다.',
 };
 
+/**
+ * 씬 이미지 산출물 명세.
+ *
+ * 🔴 **출처 5필드가 여기 실려야 배선이 산다.** 앱은 `imageFile`이 있는 항목에서 출처를
+ * 요구하는데(`planSceneImages`), 명세가 그 칸을 안 알려주면 결과가 늘 거부되고
+ * 그 이유가 어디에도 안 적혀 있다.
+ *
+ * 🔴 **화이트리스트를 여기 베껴 적지 않는다.** 목록은 `assetSourcingRules()`가
+ * 「검증 규칙」 절에 이미 싣는다 (`MENU_B_RULES['scene-images']`) — 두 벌을 두면
+ * 늘렸을 때 한쪽만 옛 값을 말한다. 여기 적는 것은 **어느 칸에 적느냐**뿐이다.
+ */
+function sceneImagesOutputSpec(): string {
+  return `scenes.json — 씬마다 항목 하나인 배열:
+\`\`\`json
+[
+  {
+    "sceneId": "s01",
+    "imagePrompt": "...",
+    "negativePrompt": "...",
+    "imageFile": "s01.png",
+    "sourceUrl": "${AI_GENERATED}",
+    "license": "Gemini 3 Pro Image",
+    "downloadedAt": "2026-08-26",
+    "hasFace": false,
+    "transformNote": "선택: 사람이 읽을 메모"
+  }
+]
+\`\`\`
+- \`sceneId\`는 **대본에 있는 씬 이름 그대로**여야 한다. 없는 씬을 적으면 결과 전체가 거부된다
+- 이미지를 만들었으면 \`result/\` **바로 아래**에 저장하고(하위 폴더 금지) \`imageFile\`에
+  그 파일명을 적는다. png·jpg·webp·gif만 된다
+- 🔴 \`imageFile\`을 적은 항목에는 **출처 4칸이 필수**다 (\`transformNote\`만 선택):
+  - \`sourceUrl\` — 받아온 페이지 주소. 직접 만들었으면 \`${SELF_MADE}\`,
+    **AI로 만들었으면 \`${AI_GENERATED}\`**
+  - \`license\` — 라이선스 이름. 무료 소재 사이트면 비워도 앱이 채운다.
+    AI 생성이면 어느 모델로 만들었는지 적는다
+  - \`downloadedAt\` — 받은/만든 날짜
+  - \`hasFace\` — **식별 가능한 실존 인물이 있는가.** 앱은 얼굴을 찾아주지 않는다.
+    빠뜨리면 「안 봤음」으로 보고 막는다. AI로 만든 얼굴은 실존 인물이 아니므로 보통 \`false\`다
+- 프롬프트만 내고 이미지를 안 만들었으면 \`imageFile\`과 출처 칸을 통째로 뺀다 (그건 계획이라 통과한다)`;
+}
+
 const OUTPUT_SPECS: Record<PacketKind, string> = {
   'product-extract': `product.json 스키마:
 \`\`\`json
@@ -543,8 +588,7 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
   "typecastVoiceId": ""
 }
 \`\`\``,
-  'scene-images': `scenes.json: [{ "sceneId": "s01", "imagePrompt": "...", "negativePrompt": "..." }] 배열.
-이미지를 직접 생성할 수 있으면 result/에 s01.png 형식으로 저장하고 scenes.json에 "imageFile": "s01.png"를 추가.`,
+  'scene-images': sceneImagesOutputSpec(),
   'upload-kit': `upload-kit.md 구성: ## 제목 후보 (5개) / ## 설명 / ## 해시태그 / ## 썸네일 문구.
 설명 마지막 줄에 쿠팡파트너스 공시문구를 반드시 포함:
 "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."`,

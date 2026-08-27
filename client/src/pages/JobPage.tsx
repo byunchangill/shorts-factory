@@ -7,6 +7,8 @@ import {
   Play, Trash2, FolderOpen, Upload, Star,
 } from 'lucide-react';
 import { MENU_LABELS, STATE_LABELS, PACKET_KIND_DESCRIPTIONS } from '@shared/constants';
+// 화면이 이 값을 손으로 적으면 상수를 바꿨을 때 여기만 옛말을 한다
+import { AI_GENERATED } from '@shared/assetPolicy';
 import { api } from '@/api/client';
 import { VOICE_KO, voiceLabel } from '@/voiceNames';
 import { TTS_END_EVENT } from '@/api/sse';
@@ -797,8 +799,15 @@ function ScenesPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             <Button onClick={() => next.mutate()} disabled={next.isPending}>이미지 준비 완료 → 음성 생성</Button>
           </div>
         </div>
+        {/*
+          배선이 생기기 전에는 「imageRef가 채워지면」이라고만 적혀 있었는데, 채우는 코드가
+          앱에 없어서 사용자가 채울 길도 없었다. 지금은 요청서 결과가 그대로 붙는다.
+        */}
         <p className="mt-2 text-sm text-slate-500">
-          요청서 결과의 이미지 프롬프트로 이미지를 준비한 뒤, 대본의 imageRef가 채워지면 조립에 사용됩니다.
+          요청서가 만든 이미지는 결과를 받는 순간 대본의 해당 씬에 붙어 조립에 쓰입니다.
+          이미지를 실제로 만들었다면 <span className="font-medium text-slate-600">출처</span>도 같이 적어야
+          반영됩니다 — AI로 만든 그림이면 출처에 「{AI_GENERATED}」이라고 적습니다.
+          프롬프트만 낸 결과는 그대로 통과하고 대본을 건드리지 않습니다.
         </p>
       </Card>
       {scenePackets.map((p) => <PacketCard key={p.id} packet={p} />)}

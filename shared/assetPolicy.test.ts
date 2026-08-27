@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifySource, defaultLicense, assetPolicyProblems, assetLogError, usedAssetIds,
-  sourceVerdictMessage,
+  sourceVerdictMessage, sceneImageSubjects,
   transformSummary, assetLedgerRows, assetLedgerCsv, assetSourcingRules,
-  ASSET_SOURCE_WHITELIST, ASSET_SOURCE_BLACKLIST, SELF_MADE,
+  ASSET_SOURCE_WHITELIST, ASSET_SOURCE_BLACKLIST, SELF_MADE, AI_GENERATED,
   type AssetSubject,
 } from './assetPolicy.js';
 
@@ -62,6 +62,27 @@ describe('출처 URL 판정', () => {
   it('직접 만든 것은 URL 없이도 기록된다', () => {
     expect(classifySource(SELF_MADE).kind).toBe('self');
     expect(defaultLicense(SELF_MADE)).toBe('자체 제작');
+  });
+
+  /*
+    🔴 정책이 「인물이 필요하면 AI로 만든 그림을 쓰라」고 말한다. 그 그림에는 받아온
+    페이지가 없으므로, AI 생성이 일급 출처가 아니면 **시키는 대로 한 사람이 막힌다**.
+  */
+  it('AI로 만든 그림도 URL 없이 기록된다 — 정책이 권하는 방법이다', () => {
+    expect(classifySource(AI_GENERATED).kind).toBe('ai');
+    expect(sourceVerdictMessage(classifySource(AI_GENERATED))).toBeNull();
+    expect(assetPolicyProblems(ok({ sourceUrl: AI_GENERATED, license: '' }))).toEqual([]);
+  });
+
+  it('AI 생성과 직접 제작을 갈라 둔다 — 대장에서 뜻이 다르다', () => {
+    expect(classifySource(AI_GENERATED).kind).not.toBe(classifySource(SELF_MADE).kind);
+    expect(defaultLicense(AI_GENERATED)).not.toBe(defaultLicense(SELF_MADE));
+  });
+
+  /** 상수를 안 쓰고 비슷한 말을 적으면 통과하지 않는다 — 값이 하나여야 한다 */
+  it('「AI 생성」처럼 비슷하게 적은 것은 통과하지 않는다', () => {
+    expect(classifySource('AI 생성').kind).toBe('invalid');
+    expect(classifySource('ai생성').kind).toBe('invalid');
   });
 
   it('비어 있으면 missing — invalid와 구분한다 (사유 문구가 다르다)', () => {
@@ -137,10 +158,53 @@ describe('조립 게이트 (양방향)', () => {
     expect(msg).not.toContain('다시 눌러도 같');
   });
 
-  /** 안 한 일을 안 했다고 말해야 한다 — 안 그러면 「이미지 출처는 어디 적나」에서 막힌다 */
-  it('씬 이미지는 아직 안 본다는 것을 안내가 말한다', () => {
-    const msg = assetLogError('menu-b', [ok({ sourceUrl: '' })]) ?? '';
-    expect(msg).toContain('씬 이미지는 아직');
+  /*
+    🔴 **이 게이트가 씬 이미지도 본다** (2026-08-26). 예전에는 안내가 「씬 이미지는 아직
+    출처를 기록하지 않습니다」라고 스스로 말했다 — 그 문장이 없어졌는지가 아니라
+    **실제로 막는지**를 본다.
+  */
+  it('씬 이미지도 막는다 — 스톡 인물이 들어올 자리가 정확히 거기다', () => {
+    const msg = assetLogError('menu-b', [
+      { id: 'scene:s01', title: '씬 s01 이미지', where: 'scene', hasFace: false },
+    ]) ?? '';
+    expect(msg).toContain('씬 s01 이미지');
+    expect(msg).toContain('출처 URL');
+  });
+
+  /** 고치는 자리가 다르다 — 씬 이미지에는 출처를 적는 화면이 아예 없다 */
+  it('씬 이미지는 「요청서를 다시 받으라」고, 자료실 자료는 「화면에서 채우라」고 한다', () => {
+    const scene = assetLogError('menu-b', [
+      { id: 'scene:s01', title: '씬 s01 이미지', where: 'scene', hasFace: false },
+    ]) ?? '';
+    expect(scene).toContain('요청서');
+    expect(scene).toContain(AI_GENERATED);
+    expect(scene).not.toContain('「편집 재료」 화면');
+
+    const lib = assetLogError('menu-b', [ok({ sourceUrl: undefined })]) ?? '';
+    expect(lib).toContain('「편집 재료」 화면');
+    expect(lib).not.toContain('요청서');
+  });
+
+  /** 둘 다 걸리면 두 안내가 같이 나와야 한다 — 하나만 고치고 또 막히면 안 된다 */
+  it('자료실과 씬 이미지가 같이 걸리면 고칠 곳을 둘 다 말한다', () => {
+    const msg = assetLogError('menu-b', [
+      ok({ sourceUrl: undefined }),
+      { id: 'scene:s01', title: '씬 s01 이미지', where: 'scene', hasFace: false },
+    ]) ?? '';
+    expect(msg).toContain('「편집 재료」 화면');
+    expect(msg).toContain('요청서');
+    expect(msg).toContain('2개');
+  });
+
+  /**
+   * 🔴 옛 대본의 `imageRef`는 경로 문자열이라 출처가 없다. 승격이 출처를 지어내지 않으므로
+   * 여기서 걸려야 한다 — 「기록이 없다」가 「기록이 있다」로 바뀌면 게이트가 죽는다.
+   */
+  it('출처 없는 씬 이미지(옛 대본에서 승격된 것)는 통과하지 않는다', () => {
+    const msg = assetLogError('menu-b',
+      sceneImageSubjects([{ sceneId: 's01', imageRef: { file: 'a/b/s01.png' } }])) ?? '';
+    expect(msg).toContain('씬 s01 이미지');
+    expect(msg).toContain('옛 대본');
   });
 
   it('걸린 자료를 전부 보여준다 — 하나씩 고치고 다시 돌리게 하지 않는다', () => {
@@ -174,6 +238,41 @@ describe('이 편이 쓰는 자료 목록', () => {
 
   it('아무것도 없으면 빈 배열', () => {
     expect(usedAssetIds([], [{}])).toEqual([]);
+  });
+
+  it('씬 이미지가 없는 대본에서는 아무것도 안 나온다', () => {
+    expect(sceneImageSubjects([{ sceneId: 's01' }, { sceneId: 's02' }])).toEqual([]);
+  });
+
+  /** 출처 5필드가 **그대로** 넘어가야 한다 — 한 칸이라도 흘리면 대장이 조용히 빈다 */
+  it('씬 이미지의 출처 5필드를 그대로 옮긴다', () => {
+    const [s] = sceneImageSubjects([{
+      sceneId: 's02',
+      imageRef: {
+        file: 'menu-b/제품/jobs/j1/scenes/s02_v1.png',
+        sourceUrl: AI_GENERATED,
+        license: '어떤 모델',
+        downloadedAt: '2026-08-26',
+        hasFace: false,
+        transformNote: '메모',
+      },
+    }]);
+    expect(s).toEqual({
+      id: 'scene:s02',
+      title: '씬 s02 이미지',
+      where: 'scene',
+      sourceUrl: AI_GENERATED,
+      license: '어떤 모델',
+      downloadedAt: '2026-08-26',
+      hasFace: false,
+      transformNote: '메모',
+    });
+  });
+
+  /** 🔴 `hasFace`가 `false`로 뭉개지면 아무도 안 본 그림이 통과한다 */
+  it('표시하지 않은 인물 여부는 undefined로 남는다', () => {
+    const [s] = sceneImageSubjects([{ sceneId: 's01', imageRef: { file: 'x.png' } }]);
+    expect(s.hasFace).toBeUndefined();
   });
 });
 

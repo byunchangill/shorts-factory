@@ -1161,7 +1161,7 @@ async function resolveVisual(
   settings: Settings,
 ): Promise<{ type: 'video'; cuts: Cut[] } | { type: 'image'; path: string }> {
   if (scene.imageRef) {
-    return { type: 'image', path: input.resolveWorkspacePath(scene.imageRef) };
+    return { type: 'image', path: input.resolveWorkspacePath(scene.imageRef.file) };
   }
   if (scene.clipRef) {
     const sources = await sceneCutSources(scene, input, sceneIdx, settings);

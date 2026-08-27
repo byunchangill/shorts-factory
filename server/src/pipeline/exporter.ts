@@ -1,9 +1,11 @@
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import type { Job, Script, Settings, Clip, Asset } from '@shared/types';
+import type { Job, Script, Settings, Clip } from '@shared/types';
 import { EXPORT_DIRS, COUPANG_PARTNERS_DISCLOSURE } from '@shared/constants';
-import { assetLedgerCsv, assetLedgerRows, transformSummary } from '@shared/assetPolicy';
+import {
+  assetLedgerCsv, assetLedgerRows, transformSummary, type AssetSubject,
+} from '@shared/assetPolicy';
 import { ensureDir, exists, listFiles } from '../util/fsx.js';
 import type { SceneTiming } from './tts.js';
 
@@ -70,10 +72,13 @@ export interface ExportInput {
   /**
    * 이 편이 쓴 편집 재료 — 출처 대장(`업로드킷/에셋출처.csv`)의 재료다.
    *
-   * 조립·캡컷 묶음과 같은 목록(`usedAssetIds`)이어야 한다. 부르는 쪽에서 풀어 넘긴다 —
+   * 조립과 같은 목록(`ledgerSubjects`)이어야 한다. 부르는 쪽에서 풀어 넘긴다 —
    * 내보내기가 자료실을 직접 뒤지면 자료실이 없는 환경에서 못 돈다 (`planCapcut`과 같은 결).
+   *
+   * `Asset`이 아니라 `AssetSubject`인 이유: 여기 실리는 것은 자료실 자료만이 아니다.
+   * 대본 씬의 이미지도 같은 대장에 오르는데 그건 자료실 항목이 아니다 (2026-08-26).
    */
-  assets?: Asset[];
+  assets?: AssetSubject[];
 }
 
 export interface ExportResult {
