@@ -655,6 +655,31 @@ hflip → zoom → (레이아웃 합성) → drawtext → GRADE
 흔들리므로 메뉴별로 갈라 둔다. 기본값은 `MENU_SKILL`(store/projects.ts) 한 곳에서 정한다 —
 **이미 만든 카테고리는 자동으로 안 바뀐다.** 화면에서 붙여넣거나 파일을 갈아야 한다.
 
+## 단점 씬의 재료는 리뷰에 있다 (2026-09-06)
+
+**상세페이지에는 단점이 없다.** 파는 쪽이 쓴 글이기 때문이다. 그런데 menu-b는 단점 씬
+1개가 필수고(`isDownside`), 서버는 표시 유무만 보므로 **내용이 진짜 단점인지는 재료가
+있어야 정해진다.** 그 재료가 구매자 리뷰다. `ProductSchema.reviews`가 그 자리다.
+
+- **수집기는 이 저장소에 없다.** 별도 저장소(https://github.com/byungjunjang/web-crawler)의
+  `web-crawler` 스킬이 정찰·수집·검증을 하고, 이 저장소의 `.claude/skills/product-crawl`이
+  **그 결과를 잡의 `product/`에 앉히는 일**만 한다. 저장소는 형제 폴더·홈 아래 순으로 찾는다
+  (도구 경로를 설정에 안 박는 것과 같은 결). 파이썬은 그쪽 `.venv`이고
+  `python scripts/preflight.py`가 준비 상태를 CORE/agent-browser로 갈라 답한다
+- 🔴 **요청서 본문에 실려야 참고된다.** `product/` 첨부파일 목록에만 적는 것으로는 모자라다 —
+  파일을 못 여는 경로(API 자동·웹 챗 복붙)에서 그 지시가 허공을 가리킨다. `product.json`은
+  요청서 3절에 **통째로** 실리므로, 스키마에 칸을 만드는 것이 곧 배선이다 (추가 코드 없음)
+- 🔴 **리뷰는 구매자 의견이지 제품 사실이 아니다.** 그대로 실으면 「~라고 하더라」가 근거 없는
+  효능 주장의 방패가 된다 — 화법만 바뀌었을 뿐 주장은 그대로다 (썰형 교리와 같은 자리).
+  그래서 **값과 경계 규칙이 한 벌로 실린다**: 쓸 수 있는 자리는 단점 씬(`complaints`)과
+  말투의 온도(`quotes`) 둘뿐. 리뷰가 없는 잡에는 그 규칙을 안 싣는다 — 없는 재료의 규칙은 소음이다
+- **리뷰 0개와 「불만이 없는 제품」은 다르다.** `reviews.source`에 어디서 몇 개를 어떤 정렬로
+  모았는지 적고, 화면도 표본 수와 출처를 같이 보여준다. 안 보이면 빈 칸을 조용한 성공으로 읽는다
+- **최신순으로 모으고 별점 낮은 것을 반드시 포함한다.** 상위 노출 리뷰는 걸러진 표본이라
+  거기만 보면 단점이 안 나온다
+- **리뷰 문장은 소재가 아니다.** 씬 이미지·짤방으로 쓰려면 출처 5필드가 따로 필요하다
+  (「소재의 출처를 적지 않으면 조립이 안 된다」). 작성자 이름·아이디·사진은 애초에 안 가져온다
+
 ## 편집 재료 자료실 — 짤방·효과음 (2026-08-23)
 
 썰형은 **제품 연출컷 대신 흐름에 맞는 짤방**을 쓴다. 그 재료를 화면에서 관리하고
@@ -834,7 +859,7 @@ broadcast한 **뒤에** 데이터를 반영했다. 그런데 `received` + `valid
 
 | 묶음 | 개수 | 내용 |
 |---|---:|---|
-| 이 저장소 자체 | 10 | answer-job · create-format · shorts-content-team · shorts-dev-team · shorts-direct-script · shorts-script-qc · shorts-viral-script · temcasting-shorts · **temcasting-v33**(menu-a 기본) · **ssul-shopping**(menu-b 기본) |
+| 이 저장소 자체 | 11 | answer-job · create-format · product-crawl · shorts-content-team · shorts-dev-team · shorts-direct-script · shorts-script-qc · shorts-viral-script · temcasting-shorts · **temcasting-v33**(menu-a 기본) · **ssul-shopping**(menu-b 기본) |
 | ECC에서 복사 | 13 | 아래 표. 출처·이유는 `.claude/skills/NOTICE.md` |
 | 에이전트 | 7 | `.claude/agents/` |
 

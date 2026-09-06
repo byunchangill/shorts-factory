@@ -279,6 +279,19 @@ async function buildRequestMd(packet: Packet, opts: CreatePacketOptions): Promis
       lines.push('```json');
       lines.push(JSON.stringify(product, null, 2));
       lines.push('```');
+      /*
+        리뷰가 실리는 순간 「~라고 하더라」가 근거 없는 효능 주장의 방패가 된다 — 화법만
+        바뀌었을 뿐 주장은 그대로다 (CLAUDE.md 썰형 교리). 그래서 쓸 수 있는 자리를 여기서
+        못 박는다. 리뷰가 없는 잡에는 안 적는다 — 없는 재료의 규칙은 소음이다
+      */
+      if (product.reviews.count > 0 || product.reviews.complaints.length) {
+        lines.push('');
+        lines.push(
+          '> `reviews`는 **구매자 의견**이지 제품 사실이 아닙니다. 효능·사양·성능 주장의 근거로 ' +
+            '쓰지 마세요. 쓸 수 있는 자리는 두 곳입니다 — **단점 씬의 재료**(`complaints`)와 ' +
+            '**말투의 온도**(`quotes`).',
+        );
+      }
     } else {
       lines.push('(아직 product.json이 없습니다)');
     }
@@ -556,9 +569,20 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
   "specs": { "사양명": "값" },
   "sellingPoints": ["구매 포인트 (쇼츠 훅으로 쓸 만한 것)"],
   "cautions": ["주의사항/단점 (있으면)"],
+  "reviews": {
+    "count": 0,
+    "avgRating": "평균 별점 (예: 4.6)",
+    "praises": ["자주 나온 칭찬"],
+    "complaints": ["자주 나온 불만 — 단점 씬의 재료"],
+    "quotes": ["그대로 인용할 만한 구매자 표현"],
+    "source": "어디서 몇 개를 어떤 정렬로 모았는지",
+    "collectedAt": "YYYY-MM-DD"
+  },
   "extractedFrom": ["근거가 된 첨부파일명"]
 }
-\`\`\``,
+\`\`\`
+- \`reviews\`는 첨부 자료에 **구매자 리뷰가 실제로 있을 때만** 채운다. 없으면 통째로 뺀다
+  (빈 칸이 「리뷰가 없는 제품」으로 읽히지 않게 \`source\`에 어디서 모았는지 반드시 적는다)`,
   script: `script.json 스키마:
 \`\`\`json
 {
@@ -596,7 +620,10 @@ const OUTPUT_SPECS: Record<PacketKind, string> = {
 };
 
 const VALIDATION_RULES: Record<PacketKind, string> = {
-  'product-extract': '- 첨부 자료에 없는 사실을 지어내지 않는다\n- 효능/성능 주장은 자료 원문 근거가 있는 것만 포함',
+  'product-extract':
+    '- 첨부 자료에 없는 사실을 지어내지 않는다\n' +
+    '- 효능/성능 주장은 자료 원문 근거가 있는 것만 포함\n' +
+    '- 리뷰는 요약하되 문장을 지어내지 않는다. `quotes`는 원문 그대로만 옮긴다',
   script: `- **{SEC_MIN}~{SEC_MAX}초.** {SPEECH_RATE}배속 낭독 기준 한국어 **{CHAR_MIN}~{CHAR_MAX}음절** (권장 {CHAR_REC}음절)
   — 글자수가 아니라 **한글 음절수**다. 공백·기호·숫자·영문은 세지 않는다
 - 원본 영상의 문장을 그대로 옮기지 않는다 (구조만 참고)

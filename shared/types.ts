@@ -350,6 +350,32 @@ export type Job = z.infer<typeof JobSchema>;
 
 // ── 제품 정보 ─────────────────────────────────────────────────────
 
+/**
+ * 구매자 리뷰 요약. 상품 페이지에서 모아 오거나(`.claude/skills/product-crawl`)
+ * 첨부한 상세페이지 자료에서 뽑는다.
+ *
+ * 🔴 **리뷰는 구매자 의견이지 제품 사실이 아니다.** 효능·사양·성능 주장의 근거로 쓰지
+ * 않는다 — 「~라고 하더라」는 화법만 바꾼 같은 주장이라 썰형 교리가 정확히 그것을 막는다
+ * (CLAUDE.md 「정황은 각색해도 제품에 관한 사실은 못 지어낸다」). 리뷰가 값을 하는 자리는
+ * 둘이다: **단점 씬의 재료**(`complaints`)와 **말투의 온도**(`quotes`).
+ */
+export const ProductReviewsSchema = z.object({
+  /** 몇 개짜리 이야기인지. 3개를 읽고 「다들 그런다」고 쓰면 안 된다 */
+  count: z.number().int().min(0).default(0),
+  /** 평균 별점 (예: "4.6") */
+  avgRating: z.string().default(''),
+  /** 자주 나온 칭찬 */
+  praises: z.array(z.string()).default([]),
+  /** 자주 나온 불만 — menu-b 단점 씬(`isDownside`)이 여기서 나온다 */
+  complaints: z.array(z.string()).default([]),
+  /** 그대로 인용할 만한 구매자 표현. 커뮤니티체의 온도가 여기서 온다 */
+  quotes: z.array(z.string()).default([]),
+  /** 어디서 · 몇 개를 · 어떤 정렬로 모았는지 (예: "쿠팡 상품평 최신순 60개") */
+  source: z.string().default(''),
+  collectedAt: z.string().default(''),
+});
+export type ProductReviews = z.infer<typeof ProductReviewsSchema>;
+
 export const ProductSchema = z.object({
   name: z.string().default(''),
   price: z.string().default(''),
@@ -359,6 +385,7 @@ export const ProductSchema = z.object({
   specs: z.record(z.string()).default({}),
   sellingPoints: z.array(z.string()).default([]),
   cautions: z.array(z.string()).default([]),
+  reviews: ProductReviewsSchema.default({}),
   extractedFrom: z.array(z.string()).default([]),
 });
 export type Product = z.infer<typeof ProductSchema>;

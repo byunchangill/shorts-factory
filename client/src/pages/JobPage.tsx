@@ -57,7 +57,10 @@ interface SceneLine {
 }
 interface ScriptData { version: number; title: string; scenes: SceneLine[]; notes: string }
 interface ProductData {
-  product: { name: string; price: string; features: string[]; sellingPoints: string[] };
+  product: {
+    name: string; price: string; features: string[]; sellingPoints: string[];
+    reviews: { count: number; avgRating: string; complaints: string[]; source: string };
+  };
   files: Array<{ name: string; url: string }>;
 }
 
@@ -1450,6 +1453,33 @@ export function ProductPanel({ jobId }: { jobId: string }) {
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-slate-500">가격</dt><dd>{product.price}</dd></div>
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-slate-500">핵심 기능</dt><dd>{product.features.join(', ')}</dd></div>
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-slate-500">구매 포인트</dt><dd>{product.sellingPoints.join(', ')}</dd></div>
+            {/*
+              리뷰를 안 모은 것과 「불만이 없는 제품」은 다르다. 표본 수와 출처를 같이 보여줘야
+              그 둘이 갈린다 — 안 보이면 비어 있는 것을 조용한 성공으로 읽는다
+            */}
+            <div className="flex gap-2">
+              <dt className="w-24 shrink-0 text-slate-500">구매자 리뷰</dt>
+              <dd>
+                {product.reviews.count > 0 || product.reviews.complaints.length ? (
+                  <>
+                    <span>
+                      {product.reviews.count}개
+                      {product.reviews.avgRating && ` · 평균 ${product.reviews.avgRating}`}
+                      {product.reviews.source && ` · ${product.reviews.source}`}
+                    </span>
+                    {product.reviews.complaints.length > 0 && (
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-600">
+                        {product.reviews.complaints.map((c) => <li key={c}>{c}</li>)}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-slate-500">
+                    수집 안 됨 — 단점 씬의 재료는 리뷰에서 나옵니다
+                  </span>
+                )}
+              </dd>
+            </div>
           </dl>
         ) : (
           <p className="text-sm text-slate-500">아직 추출되지 않았습니다. 작업 화면에서 "제품정보 추출" 요청서를 발행하세요.</p>
