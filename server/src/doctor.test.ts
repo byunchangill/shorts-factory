@@ -31,6 +31,9 @@ vi.mock('./pipeline/vsr.js', () => ({
   vsrProvider: { available: async () => false },
   vsrPaths: async () => ({ repo: '', python: '' }),
 }));
+vi.mock('./pipeline/productCrawl.js', () => ({
+  crawlerPaths: async () => ({ repo: '', python: '' }),
+}));
 vi.mock('./sourcing/browser.js', () => ({ chromiumAvailable: async () => ({ available: false }) }));
 
 const { runDoctor, resetDoctorCache } = await import('./doctor.js');
