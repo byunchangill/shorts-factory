@@ -95,8 +95,12 @@ export function useServerEvents(): void {
     });
     es.addEventListener('assemble.done', () => invalidate('job', 'output', 'active-jobs'));
     es.addEventListener('assemble.failed', (e) => {
+      // 실패는 화면을 갱신해야 「조립 중」 표시가 걷힌다 — 경고창만 띄우면 계속 도는 것처럼 보인다
+      invalidate('job', 'active-jobs');
       alert(`조립 실패: ${JSON.parse((e as MessageEvent).data).error}`);
     });
+    // 취소는 실패가 아니다 — 사용자가 스스로 멈춘 것에 오류창을 띄우지 않는다
+    es.addEventListener('assemble.cancelled', () => invalidate('job', 'active-jobs'));
 
     return () => es.close();
   }, [qc]);

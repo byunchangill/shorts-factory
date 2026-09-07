@@ -344,6 +344,17 @@ export const JobSchema = z.object({
     currentVersion: z.number().int().optional(),
     uploadKitReady: z.boolean().default(false),
   }).default({ uploadKitReady: false }),
+  /**
+   * 지금 이 잡에서 도는 긴 작업의 표식 (`pipeline/jobControl.ts`).
+   *
+   * 🔴 **메모리 플래그만으로는 중단을 못 알아본다** — 서버가 죽으면 같이 사라져서, 잡은
+   * `assembling`에 갇힌 채 아무 신호도 없이 남는다. 디스크에 남겨야 부팅이 보고 수습한다.
+   * 부팅 시점에는 도는 작업이 있을 수 없으므로, 남아 있는 표식은 전부 중단된 것이다.
+   */
+  running: z.object({
+    task: z.enum(['assemble', 'clean', 'voice']),
+    startedAt: z.string(),
+  }).optional(),
   error: z.string().optional(),
 });
 export type Job = z.infer<typeof JobSchema>;

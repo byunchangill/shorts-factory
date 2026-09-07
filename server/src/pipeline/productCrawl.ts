@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
 import type { Product, ProductReviews } from '@shared/types';
-import { loadSettings } from '../store/workspace.js';
+import { loadSettings, paths } from '../store/workspace.js';
 import { findCrawlerRepo } from '../util/toolPath.js';
 
 /**
@@ -83,11 +83,48 @@ function isInternalHost(hostname: string): boolean {
       a >= 224                              // 멀티캐스트·예약
     );
   }
-  if (host.includes(':')) {
-    // IPv6: 루프백·미지정·유니크로컬(fc00::/7)·링크로컬(fe80::/10)
-    return host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
-  }
+  if (host.includes(':')) return ipv6Internal(host);
   return false;
+}
+
+/**
+ * IPv6 내부망 판정.
+ *
+ * 🔴 **문자열 접두어로 거르면 뚫린다.** `::1`·`fe80`만 보면
+ * `::ffff:127.0.0.1`(IPv4-매핑)과 `0:0:0:0:0:0:0:1`(펼친 루프백)이 통과한다 —
+ * 실측으로 확인했다(2026-09-07). 같은 주소를 여러 모양으로 쓸 수 있는 것이 IPv6라
+ * **펼쳐서 숫자로 본다.**
+ */
+function ipv6Internal(host: string): boolean {
+  const g = expandIpv6(host);
+  if (!g) return true; // 못 읽는 주소는 안 보낸다
+  // 앞 80비트가 0 → ::/128(미지정) · ::1/128(루프백) · ::ffff:0:0/96(IPv4-매핑) · ::/96(IPv4-호환)
+  if (g.slice(0, 5).every((h) => h === 0) && (g[5] === 0 || g[5] === 0xffff)) return true;
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 유니크 로컬
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 링크 로컬
+  return false;
+}
+
+/** `::` 압축과 끝의 점 표기를 풀어 16비트 8덩어리로. 못 읽으면 null */
+function expandIpv6(host: string): number[] | null {
+  let s = host;
+  const v4 = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(s);
+  if (v4) {
+    const o = v4[1].split('.').map(Number);
+    if (o.some((n) => n > 255)) return null;
+    const hex = (n: number) => n.toString(16);
+    s = `${s.slice(0, v4.index)}${hex((o[0] << 8) | o[1])}:${hex((o[2] << 8) | o[3])}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : null;
+  const parts = tail === null
+    ? head
+    : [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail];
+  if (parts.length !== 8) return null;
+  const out = parts.map((p) => (/^[0-9a-f]{1,4}$/.test(p) ? parseInt(p, 16) : NaN));
+  return out.some(Number.isNaN) ? null : out;
 }
 
 /** 이 PC에서 쓸 web-crawler 저장소와 파이썬 */
@@ -184,7 +221,7 @@ export async function crawlProduct(rawUrl: string, outDir: string): Promise<Craw
       실행 파일이라 그대로 써야 한다. 표준입력은 닫는다(아무도 입력을 안 준다).
       cwd를 저장소로 잡아 그쪽 모듈이 import 경로에 들어오게 한다.
     */
-    await execa(python, [SCRIPT, url, output], {
+    await execa(python, [SCRIPT, url, output, '--profiles', paths.crawlProfiles()], {
       cwd: repo,
       timeout: TIMEOUT_MS,
       stdin: 'ignore',

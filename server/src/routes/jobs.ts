@@ -15,6 +15,9 @@ import { getProject, readProduct, writeProduct, listProductFiles } from '../stor
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
 import { crawlProduct, applyCrawl, CrawlError } from '../pipeline/productCrawl.js';
+import {
+  beginJob, endJob, checkpointFor, isCancelled, requestCancel, requestPause, controlState,
+} from '../pipeline/jobControl.js';
 import { progressOf, sourceEntryState, statesFor } from '../pipeline/stateMachine.js';
 import { normalizeSourceUrl } from '../sourcing/links.js';
 import {
@@ -65,6 +68,12 @@ async function jobView(ref: jobs.JobRef) {
     progress: progressOf(job.menu, job.state),
     pipeline: statesFor(job.menu),
     downloading: isDownloading(job.id),
+    /*
+      지금 도는 긴 작업. 화면을 새로 고치면 「실행 중」이라는 카드 상태가 날아가므로
+      서버에 물어 되살린다 — 시작 시각까지 줘야 흐른 시간을 0부터 세지 않는다
+      (요청서 실행의 `runningSince`와 같은 이유).
+    */
+    control: controlState(job.id),
   };
 }
 
@@ -1001,6 +1010,17 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
   const timings = await readJson<SceneTiming[]>(path.join(jobDir, 'voice', 'timing.json'));
   if (!timings) return res.status(400).json({ error: 'TTS 타이밍 없음 — 음성을 먼저 생성하세요' });
 
+  /*
+    🔴 **중복 실행을 여기서 막는다.** 조립 버튼을 두 번 누르면 같은 잡에 렌더가 둘 붙어
+    같은 `output/tmp/`에 쓰고 판 번호도 둘 다 올라갔다. 응답을 먼저 보내는 구조라
+    화면의 버튼 잠금만으로는 새로고침 한 번에 뚫린다 (요청서 실행의 `inFlight`와 같은 전례).
+  */
+  try {
+    await beginJob(ref, 'assemble');
+  } catch (e) {
+    return res.status(409).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+
   res.json({ started: true });
   try {
     await jobs.advanceTo(ref, 'assembling');
@@ -1028,6 +1048,7 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
       assetPaths,
       // 출처 게이트가 볼 기록. 잡에 담은 것 + 씬이 가리키는 짤·효과음 + 씬 이미지가 한 목록이다
       assets: subjects,
+      checkpoint: checkpointFor(ref.jobId),
     });
     await jobs.mutateJob(ref, (j) => { j.output.currentVersion = version; });
     const j2 = await jobs.readJob(ref);
@@ -1051,9 +1072,40 @@ router.post('/jobs/:jid/assemble', async (req, res) => {
     broadcast('assemble.done', { jobId: ref.jobId, version, url: toMediaUrl(finalPath) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await jobs.logJobEvent(ref, { type: 'assemble.failed', error: msg });
-    broadcast('assemble.failed', { jobId: ref.jobId, error: msg });
+    /*
+      🔴 **취소는 실패가 아니다.** 같은 자리로 흘려보내면 사용자가 스스로 멈춘 것을 화면이
+      「오류」라고 말한다. 잡도 `failed`가 아니라 대본 승인 자리로 되돌린다 — 다시 누르면
+      되는 상태여야 한다.
+    */
+    if (isCancelled(e)) {
+      await jobs.mutateJob(ref, (j) => { j.state = 'script_approved'; delete j.error; });
+      await jobs.logJobEvent(ref, { type: 'assemble.cancelled' });
+      broadcast('assemble.cancelled', { jobId: ref.jobId });
+    } else {
+      await jobs.logJobEvent(ref, { type: 'assemble.failed', error: msg });
+      broadcast('assemble.failed', { jobId: ref.jobId, error: msg });
+    }
+  } finally {
+    await endJob(ref);
   }
+});
+
+/**
+ * 긴 작업 제어 — 취소 · 일시정지 · 재개.
+ *
+ * 조립은 몇 분이 걸리는데 시작하면 손댈 방법이 없었다. 안 도는 잡에 눌러도 404가 아니라
+ * 409다 — 「없는 잡」과 「안 도는 잡」은 다르고, 화면이 방금 끝난 작업에 취소를 누르는 것은
+ * 오류가 아니라 경합이다.
+ */
+router.post('/jobs/:jid/control', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const { action } = z.object({ action: z.enum(['cancel', 'pause', 'resume']) }).parse(req.body);
+  const ok = action === 'cancel'
+    ? requestCancel(ref.jobId)
+    : requestPause(ref.jobId, action === 'pause');
+  if (!ok) return res.status(409).json({ error: '지금 이 작업에서 도는 것이 없습니다.' });
+  broadcast('job', { jobId: ref.jobId });
+  res.json({ ok: true, control: controlState(ref.jobId) });
 });
 
 router.get('/jobs/:jid/output', async (req, res) => {

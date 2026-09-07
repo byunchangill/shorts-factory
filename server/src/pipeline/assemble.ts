@@ -104,6 +104,14 @@ export interface AssembleInput {
    * 지워져 경로가 없는 id도 출처 판정 대상이 될 수 있다. 비면 검사할 것이 없다.
    */
   assets?: AssetSubject[];
+  /**
+   * 단계 사이의 검문소 (`pipeline/jobControl.ts`의 `checkpointFor`).
+   *
+   * 취소면 던지고 일시정지면 기다린다. **안 주면 아무 일도 안 한다** — 하네스와 테스트는
+   * 제어 밖에서 도므로 기본값이 그대로 통과다. 조립은 씬 하나가 몇 초라, 씬 경계에서
+   * 부르는 것이 곧 취소 반응 속도다.
+   */
+  checkpoint?: () => Promise<void>;
 }
 
 /**
@@ -258,7 +266,10 @@ export async function assembleFinal(
   }
 
   // 1) 씬별 세그먼트 렌더 (나레이션 길이에 맞춤)
+  const checkpoint = input.checkpoint ?? (async () => {});
   for (let i = 0; i < script.scenes.length; i++) {
+    // 씬 경계가 취소·일시정지가 듣는 자리다. 씬 안에서는 ffmpeg가 끝날 때까지 못 끊는다
+    await checkpoint();
     const scene = script.scenes[i];
     // 위에서 규격을 맞춰 **재 둔** 길이다 — 첨부 파일의 컨테이너 길이가 아니다
     const dur = narration[i].dur;

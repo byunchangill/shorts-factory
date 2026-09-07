@@ -5,6 +5,7 @@ import { assetPaths } from './store/assets.js';
 import { scanJobs, listJobRefs } from './store/jobs.js';
 import { reconcileDownloadState, analyzePendingSources } from './pipeline/downloadQueue.js';
 import { scanPackets } from './claude/packets.js';
+import { recoverInterrupted } from './pipeline/jobControl.js';
 import { startResultWatcher, startResultSweep, catchUpPendingResults } from './claude/resultWatcher.js';
 
 /**
@@ -115,6 +116,14 @@ export async function bootstrap(): Promise<BootState> {
   await step('밀린 결과 수습', () => catchUpPendingResults());
   await step('결과 재확인 타이머', () => startResultSweep());
   await step('중단된 다운로드 수습', recoverStalledDownloads);
+  /*
+    긴 작업(조립 등)은 표식을 남기고 돈다. 부팅 시점에 남아 있는 표식은 전부 앱이 죽으며
+    끊긴 것이다 — 안 치우면 그 잡이 `assembling`에 갇힌 채 아무 신호 없이 남는다.
+  */
+  await step('중단된 작업 수습', async () => {
+    const n = await recoverInterrupted();
+    if (n) console.log(`[boot] 중단된 작업 ${n}건을 표시했습니다`);
+  });
   await step('업로드 대기 자리 비우기', clearUploadStaging);
 
   const failed = state.steps.filter((s) => s.error);

@@ -302,6 +302,11 @@ interface JobView {
   sceneVoiceFiles: Record<string, string>;
   output: { currentVersion?: number };
   exportedAt?: string;
+  /** 지금 도는 긴 작업 (`pipeline/jobControl.ts`) */
+  control?: {
+    task: string; label: string; startedAt: number;
+    cancelRequested: boolean; pauseRequested: boolean; paused: boolean;
+  } | null;
 }
 interface ClipView {
   id: string; sourceId: string;
@@ -1696,6 +1701,66 @@ async function main(): Promise<void> {
     await put('/settings', bBaseSettings); // 뒤 단계는 menu-a 기준으로 돈다
     return `카드 ${cards}장 · +${added.toFixed(2)}초 (${cardSec}초×${cards})`
       + ` · 밝기 ${lum(onScene.mean).toFixed(0)}→${lum(onCard.mean).toFixed(0)}`;
+  });
+
+  /*
+    ── 긴 작업 제어 (2026-09-07) ──
+
+    조립은 몇 분이 걸리는데 시작하면 손댈 방법이 없었다. 단위 테스트는 `jobControl`만
+    보므로, **조립 경로에 실제로 배선됐는지는 여기서만 드러난다** (씬 이미지의 이미지
+    갈래가 E2E에서 한 번도 안 돌았던 것과 같은 자리).
+
+    🔴 **에셋 게이트 단계보다 앞에 둔다.** 그 단계는 일부러 조립을 실패시키고, 그 뒤로는
+    같은 잡을 조립하면 `assembleAndWait`이 그 실패를 물려받는다. 취소는 `assemble.failed`가
+    아니라 `assemble.cancelled`를 남기므로 여기서는 그 문제가 없다.
+  */
+  await step('긴 작업 제어 — 중복 차단 · 일시정지 · 취소', async () => {
+    assert(bJobId, '앞 단계가 잡을 안 넘겼다');
+    const before = (await get<JobView>(`/jobs/${bJobId}`)).output.currentVersion ?? 0;
+    await post(`/jobs/${bJobId}/assemble`, {});
+
+    /*
+      ① 중복 차단. 응답을 먼저 보내는 구조라 화면 버튼 잠금은 새로고침 한 번에 뚫린다 —
+      막는 자리는 서버여야 한다.
+    */
+    const dup = await post(`/jobs/${bJobId}/assemble`, {}).then(() => '', (e: Error) => e.message);
+    assert(dup.includes('409'), `두 번째 조립이 안 막혔다 — ${dup || '그냥 통과했다'}`);
+
+    // ② 일시정지가 실제로 선다 (검문소에 닿아야 `paused`가 참이 된다)
+    await post(`/jobs/${bJobId}/control`, { action: 'pause' });
+    await waitFor('일시정지', async () => {
+      const v = await get<JobView>(`/jobs/${bJobId}`);
+      return v.control?.paused ? v : null;
+    }, 120_000);
+
+    /*
+      🔴 **멈춘 뒤 정말 안 나아가는지 본다.** 「멈췄다」고 표시만 하고 계속 도는 것이
+      제일 나쁜 실패다 — 화면은 멈췄는데 파일은 늘어난다.
+    */
+    await new Promise((r) => setTimeout(r, 2500));
+    const still = await get<JobView>(`/jobs/${bJobId}`);
+    assert(still.control?.paused === true, '멈춤이 저절로 풀렸다');
+    assert((still.output.currentVersion ?? 0) === before, '멈춰 있는데 판이 올라갔다');
+
+    // ③ 멈춰 있어도 취소가 통한다 (안 그러면 재개했다 다시 취소해야 한다)
+    await post(`/jobs/${bJobId}/control`, { action: 'cancel' });
+    const after = await waitFor('취소 완료', async () => {
+      const v = await get<JobView>(`/jobs/${bJobId}`);
+      return v.control ? null : v;
+    }, 120_000);
+
+    // ④ 취소는 실패가 아니다 — 다시 누르면 되는 자리로 돌아온다
+    assert(after.state === 'script_approved',
+      `취소 후 상태가 이상하다 — ${after.state} (다시 조립할 수 없는 자리다)`);
+    assert((after.output.currentVersion ?? 0) === before,
+      `취소했는데 판이 나왔다 — v${after.output.currentVersion}`);
+
+    const events = await fsp.readFile(path.join(bJobPath, 'events.ndjson'), 'utf8');
+    assert(events.includes('assemble.cancelled'), '취소가 감사 로그에 안 남았다');
+    assert(!events.trim().split('\n').slice(-3).some((l) => l.includes('assemble.failed')),
+      '취소가 실패로 기록됐다 — 사용자가 멈춘 것을 오류라고 말한다');
+
+    return `중복 409 · 멈춤 유지 2.5초 · 취소 → ${after.state} · 판 v${before} 유지`;
   });
 
   /*

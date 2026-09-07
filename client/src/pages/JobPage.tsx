@@ -37,6 +37,21 @@ interface JobDetail {
   sceneVoiceFiles: Record<string, string>;
   exportedAt?: string;
   output: { currentVersion?: number; uploadKitReady: boolean };
+  /**
+   * 지금 도는 긴 작업. 없으면 null.
+   *
+   * 서버가 준다 — 화면을 새로 고치면 「조립 중」이라는 화면 상태가 날아가서,
+   * 그것만 보고 있으면 몇 분짜리 작업이 안 도는 것처럼 보인다.
+   */
+  control: JobControl | null;
+}
+interface JobControl {
+  task: 'assemble' | 'clean' | 'voice';
+  label: string;
+  startedAt: number;
+  cancelRequested: boolean;
+  pauseRequested: boolean;
+  paused: boolean;
 }
 interface ClipInfo {
   id: string; sourceId: string;
@@ -1134,6 +1149,55 @@ function VoicePanel({ job }: { job: JobDetail }) {
   );
 }
 
+/**
+ * 도는 작업 표시 + 제어.
+ *
+ * 흐른 시간은 **서버가 준 시작 시각**에서 센다 — 화면 상태로 세면 새로고침할 때마다
+ * 0으로 돌아가 방금 시작한 것처럼 보인다 (요청서 실행 카드에서 같은 문제를 겪었다).
+ */
+function RunningBanner(
+  { control, onAction, busy }:
+  { control: JobControl; onAction: (a: 'cancel' | 'pause' | 'resume') => void; busy: boolean },
+) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const sec = Math.max(0, Math.floor((now - control.startedAt) / 1000));
+  const elapsed = `${Math.floor(sec / 60)}분 ${String(sec % 60).padStart(2, '0')}초`;
+
+  // 「멈추는 중」과 「멈췄다」는 다르다 — 누른 뒤 아무 반응이 없으면 안 먹은 줄 안다
+  const status = control.cancelRequested ? '취소하는 중…'
+    : control.paused ? '멈춤'
+      : control.pauseRequested ? '멈추는 중…'
+        : `${control.label} 중…`;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+      <span className="flex items-center gap-1.5 text-sm text-slate-600">
+        {!control.paused && !control.cancelRequested && <Spinner />}
+        {status}
+      </span>
+      <span className="text-sm tabular-nums text-slate-500">{elapsed}</span>
+      <div className="ml-auto flex gap-2">
+        {control.paused || control.pauseRequested ? (
+          <Button variant="secondary" onClick={() => onAction('resume')} disabled={busy || control.cancelRequested}>
+            이어서 하기
+          </Button>
+        ) : (
+          <Button variant="secondary" onClick={() => onAction('pause')} disabled={busy || control.cancelRequested}>
+            잠시 멈추기
+          </Button>
+        )}
+        <Button variant="secondary" onClick={() => onAction('cancel')} disabled={busy || control.cancelRequested}>
+          취소
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── 조립 / 검수 ───────────────────────────────────────────────────
 
 function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }) {
@@ -1148,6 +1212,13 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
   });
   const assemble = useMutation({
     mutationFn: () => api.post(`/jobs/${job.id}/assemble`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
+    onError: (e: Error) => alert(e.message),
+  });
+  const control = useMutation({
+    mutationFn: (action: 'cancel' | 'pause' | 'resume') =>
+      api.post(`/jobs/${job.id}/control`, { action }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['job'] }),
     onError: (e: Error) => alert(e.message),
   });
   const uploadKit = useMutation({
@@ -1207,7 +1278,10 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
           <div className="flex gap-2">
             <Button
               onClick={() => assemble.mutate()}
-              disabled={assemble.isPending || (job.menu === 'menu-a' && !job.rightsConfirmed)}
+              disabled={
+                assemble.isPending || !!job.control
+                || (job.menu === 'menu-a' && !job.rightsConfirmed)
+              }
             >
               {job.output.currentVersion ? '재조립' : '조립 시작'}
             </Button>
@@ -1218,7 +1292,12 @@ function ReviewPanel({ job, packets }: { job: JobDetail; packets: PacketInfo[] }
             )}
           </div>
         </div>
-        {assemble.isPending && <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-500"><Spinner /> 조립 중… 완료되면 여기에 나타납니다</p>}
+        {/*
+          진행 표시는 **서버가 준 상태**로 그린다. 예전에는 조립 요청의 `isPending`을 봤는데
+          그 요청은 「시작했다」만 받고 곧바로 끝나서, 몇 분짜리 작업이 도는 동안 화면에는
+          아무것도 안 남았다 (새로고침하면 더더욱).
+        */}
+        {job.control && <RunningBanner control={job.control} onAction={(a) => control.mutate(a)} busy={control.isPending} />}
         {output.data?.finalUrl && (
           <div className="mt-4 flex flex-col items-start gap-3 sm:flex-row">
             <video src={output.data.finalUrl} controls className="max-h-[480px] rounded-lg bg-black" />
