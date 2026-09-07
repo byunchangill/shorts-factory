@@ -14,6 +14,7 @@ import { trashJob } from '../store/remove.js';
 import { getProject, readProduct, writeProduct, listProductFiles } from '../store/projects.js';
 import { loadSettings, paths, toMediaUrl, fromWorkspaceRel, toWorkspaceRel } from '../store/workspace.js';
 import { probeVideo, extractFrames } from '../pipeline/probe.js';
+import { crawlProduct, applyCrawl, CrawlError } from '../pipeline/productCrawl.js';
 import { progressOf, sourceEntryState, statesFor } from '../pipeline/stateMachine.js';
 import { normalizeSourceUrl } from '../sourcing/links.js';
 import {
@@ -1332,6 +1333,29 @@ router.put('/jobs/:jid/product', async (req, res) => {
   const product = ProductSchema.parse(req.body);
   await writeProduct(ref, product);
   res.json({ ok: true });
+});
+
+/**
+ * 상품 페이지에서 제품 정보와 구매자 리뷰를 모아 `product.json`에 채운다.
+ *
+ * **규칙이 산문이 아니라 코드에 있다.** 주소 검사(`validatePublicUrl`)와 robots 확인·
+ * 요청 간격·공개 접근 사다리(`tools/crawl/collect_product.py`)를 통과하지 못하면
+ * 아예 시작하지 않는다. 막힌 이유는 사용자가 **할 일이 다르므로** 갈라서 400으로 답한다.
+ */
+router.post('/jobs/:jid/product/crawl', async (req, res) => {
+  const ref = refOr404(req.params.jid);
+  const { url } = z.object({ url: z.string() }).parse(req.body);
+  const outDir = path.join(paths.product(ref.menu, ref.projectId, ref.jobId), 'crawl');
+  try {
+    const crawled = await crawlProduct(url, outDir);
+    const product = applyCrawl(await readProduct(ref), crawled);
+    await writeProduct(ref, product);
+    res.json({ product, fetcher: crawled.fetcher, warnings: crawled.warnings ?? [] });
+  } catch (e) {
+    // 수집 실패는 사용자 데이터·환경 문제다. 500으로 올리면 원인이 로그에만 남는다
+    if (e instanceof CrawlError) return res.status(400).json({ error: e.message });
+    throw e;
+  }
 });
 
 export default router;

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fsp from 'node:fs/promises';
 import { checkToolAny, checkIopaint } from './util/toolCheck.js';
 import { loadSettings } from './store/workspace.js';
 import { hasKey } from './store/secrets.js';
@@ -7,6 +8,7 @@ import { resolvePython, OCR_MODULE } from './pipeline/ocrDetect.js';
 import { vsrProvider, vsrPaths } from './pipeline/vsr.js';
 import { resolveBin } from './util/toolPath.js';
 import { chromiumAvailable } from './sourcing/browser.js';
+import { crawlerPaths } from './pipeline/productCrawl.js';
 
 export interface DoctorReport {
   tools: Array<{
@@ -198,6 +200,24 @@ async function probeTools(): Promise<ToolEntry[]> {
       + '없으면 iopaint로, 그것도 없으면 1차 제거만으로 내려갑니다)',
   });
 
+  /*
+    상품 수집 런타임도 실행해 묻지 않는다 — scrapling을 import하면 브라우저 엔진까지
+    끌고 올라와 수 초가 걸리고, 그 사이 상한에 걸리면 멀쩡한 도구가 「없음」이 된다
+    (VSR·iopaint에서 겪은 그 함정). 파일이 있는지만 본다.
+  */
+  const crawler = await crawlerPaths();
+  tools.push({
+    name: '상품 수집 (제품정보·리뷰)',
+    required: false,
+    available: Boolean(crawler.python) && await fileExists(crawler.python),
+    version: undefined,
+    path: crawler.repo || undefined,
+    installHint:
+      'byungjunjang/web-crawler를 이 저장소의 형제 폴더나 홈 아래에 받고 '
+      + 'scripts/setup.ps1을 한 번 실행하세요. 다른 자리면 설정에서 폴더를 지정합니다 '
+      + '(선택 — 없으면 상품 페이지 수집만 막히고, 제품자료를 직접 첨부하는 길은 그대로입니다)',
+  });
+
   // 틱톡은 yt-dlp로 못 받는다 — 이 브라우저가 없으면 그 플랫폼만 조용히 막힌다
   const browser = await chromiumAvailable();
   tools.push({
@@ -224,4 +244,8 @@ async function probeTools(): Promise<ToolEntry[]> {
   });
 
   return tools;
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  return fsp.access(p).then(() => true, () => false);
 }

@@ -661,11 +661,35 @@ hflip → zoom → (레이아웃 합성) → drawtext → GRADE
 1개가 필수고(`isDownside`), 서버는 표시 유무만 보므로 **내용이 진짜 단점인지는 재료가
 있어야 정해진다.** 그 재료가 구매자 리뷰다. `ProductSchema.reviews`가 그 자리다.
 
-- **수집기는 이 저장소에 없다.** 별도 저장소(https://github.com/byungjunjang/web-crawler)의
-  `web-crawler` 스킬이 정찰·수집·검증을 하고, 이 저장소의 `.claude/skills/product-crawl`이
-  **그 결과를 잡의 `product/`에 앉히는 일**만 한다. 저장소는 형제 폴더·홈 아래 순으로 찾는다
-  (도구 경로를 설정에 안 박는 것과 같은 결). 파이썬은 그쪽 `.venv`이고
-  `python scripts/preflight.py`가 준비 상태를 CORE/agent-browser로 갈라 답한다
+- 🔴 **수집 규칙은 산문이 아니라 코드에 있다** (2026-09-07). 스킬 문서에 「robots를
+  확인하라」고 적어두면 지키는 AI와 안 지키는 AI가 갈리고 **안 지킨 것을 아무도 모른다.**
+  그래서 `POST /jobs/:jid/product/crawl` 하나로 모으고 아래를 코드가 강제한다.
+  스킬(`product-crawl`)은 그것을 부르고 결과를 읽는 법만 적는다 — 직접 긁는 것을 금지한다
+  - **주소 검사**(`validatePublicUrl`) — 루프백·사설 IP·링크로컬·`user:pass@`를 거부한다.
+    🔴 주소는 사용자가 넣고 **서버가 그리로 요청을 보낸다** — 안 막으면 앱을 시켜
+    내부망을 두드리게 할 수 있다 (ClipFlow `crawler.rs`에서 옮겨 온 목록이다)
+  - **robots·간격·사다리**(`tools/crawl/collect_product.py`) — robots.txt를 실제로 읽어
+    `can_fetch`를 확인하고 `crawl_delay`(최소 1초)를 지키며, 공개 접근 사다리 3단
+    (`Fetcher → FetcherSession → DynamicFetcher`, `impersonate=None`)에서 **멈춘다.**
+    CAPTCHA를 풀지 않고 브라우저인 척하지 않는다
+  - 런타임(Scrapling)은 별도 저장소(https://github.com/byungjunjang/web-crawler)의 `.venv`다.
+    형제 폴더 → 홈 아래 순으로 찾고 `settings.crawlerPath`로 지정할 수 있다.
+    준비 상태는 `npm run doctor`의 「상품 수집」이 **뽑힌 경로와 함께** 보여준다
+  - 🔴 **형제 폴더를 `process.cwd()`로 찾지 않는다.** cwd는 띄우는 방법마다 다르다 —
+    `npm run dev`는 저장소 뿌리지만 `npm run doctor -w server`는 `server/`라, 설치돼
+    있는데도 도구 점검만 ⚠️가 됐다 (2026-09-07 실측). 모듈 위치에서 뿌리를 센다
+- 🔴 **실패는 종류를 갈라 말한다.** 사용자가 할 일이 다르기 때문이다 —
+  `ROBOTS_FORBIDDEN`(robots.txt조차 403 · **다시 눌러도 같다**) ·
+  `ROBOTS_UNKNOWN`(못 읽음 · 잠시 후 다시) · `PUBLIC_FETCH_FAILED`(내용 못 찾음).
+  **쿠팡이 첫 번째다** (2026-09-07 실측: robots.txt에 HTTP 403 · Akamai). 이걸
+  「잠시 후 다시」로 안내하면 사용자가 영원히 다시 누른다. **답은 우회가 아니라
+  브라우저로 저장한 HTML을 제품자료로 첨부하고 「제품정보 추출」을 돌리는 것이다**
+- 🔴 **`praises`·`complaints`는 앱이 안 채운다.** 칭찬과 불만을 가르는 것은 판단이고,
+  어림짐작으로 채우면 「검사했다」는 잘못된 안심만 준다 (얼굴을 자동으로 안 찾는 것과
+  같은 자리). 앱은 **별점이 앞에 붙은 원문**을 `quotes`에 싣고 가르는 일은 요청서가 한다
+- **사람이 적은 칸을 덮지 않는다.** 비어 있는 칸만 채운다 — 손으로 고친 제품명을
+  크롤러가 페이지 제목으로 되돌리면 고쳐놓고도 옛 값으로 계속 나간다.
+  리뷰 칸만 예외다(수집이 소유하고 다시 모으면 갈아 끼운다)
 - 🔴 **요청서 본문에 실려야 참고된다.** `product/` 첨부파일 목록에만 적는 것으로는 모자라다 —
   파일을 못 여는 경로(API 자동·웹 챗 복붙)에서 그 지시가 허공을 가리킨다. `product.json`은
   요청서 3절에 **통째로** 실리므로, 스키마에 칸을 만드는 것이 곧 배선이다 (추가 코드 없음)

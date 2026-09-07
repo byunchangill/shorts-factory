@@ -218,6 +218,41 @@ export async function findVsrRepo(configured: string): Promise<string> {
 
 const VSR_CACHE_KEY = '\0vsr-repo';
 
+/**
+ * web-crawler 저장소 자리.
+ *
+ * 설정에 안 적었으면 **형제 폴더 → 홈 아래** 순으로 본다. VSR과 달리 형제 폴더를 먼저
+ * 보는 이유는, 이 저장소를 받는 사람은 보통 같은 작업 폴더 아래에 나란히 받기 때문이다
+ * (실측: `C:\YouTube_Channels\web-crawler`).
+ *
+ * 🔴 **형제 폴더를 `process.cwd()`로 찾지 않는다.** cwd는 **어떻게 띄웠느냐에 따라 다르다** —
+ * `npm run dev`는 저장소 뿌리지만 `npm run doctor -w server`는 `server/`라, cwd를 보면
+ * 같은 PC에서 도구 점검만 「없음」이 된다 (2026-09-07 실측). 이 파일 위치에서 뿌리를 센다.
+ *
+ * 있다고 판정하는 근거는 **우리가 실제로 쓰는 것**이다 — `scripts/` 폴더가 아니라
+ * 수집 런타임이 들어 있는 `.venv`를 본다. 저장소만 클론하고 셋업을 안 한 폴더를
+ * 「있음」으로 잡으면, 실행 시점에 파이썬이 없어 원인이 엉뚱한 데를 가리킨다.
+ */
+export async function findCrawlerRepo(configured: string): Promise<string> {
+  const wanted = (configured ?? '').trim();
+  if (wanted) return wanted;
+
+  const hit = cache.get(CRAWLER_CACHE_KEY);
+  if (hit !== undefined) return hit;
+
+  // server/src/util/toolPath.ts → 저장소 뿌리 → 그 옆
+  const parent = fileURLToPath(new URL('../../../../', import.meta.url));
+  for (const dir of [path.join(parent, 'web-crawler'), path.join(os.homedir(), 'web-crawler')]) {
+    if (await exists(path.join(dir, '.venv'))) {
+      cache.set(CRAWLER_CACHE_KEY, dir);
+      return dir;
+    }
+  }
+  return '';
+}
+
+const CRAWLER_CACHE_KEY = '\0crawler-repo';
+
 /** 테스트용 — 탐색 캐시를 비운다 */
 export function resetBinCache(): void {
   cache.clear();

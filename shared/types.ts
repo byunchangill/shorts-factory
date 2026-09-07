@@ -434,6 +434,15 @@ export const SettingsSchema = z.object({
    * 이 파일은 브라우저에서도 읽혀서 `process`를 만지는 순간 화면이 통째로 죽는다.
    */
   pythonPath: z.string().default(''),
+  /**
+   * web-crawler 저장소 폴더. 비우면 형제 폴더·홈 아래를 본다 (`findCrawlerRepo`).
+   *
+   * 상품 페이지 수집에 쓰는 Scrapling 런타임이 그 저장소의 `.venv`에 있다.
+   * 우리 스크립트(`tools/crawl/collect_product.py`)만 그 파이썬으로 돌린다.
+   */
+  crawlerPath: z.string().default(''),
+  /** 수집을 돌릴 파이썬. 비우면 저장소 안의 `.venv`를 본다 */
+  crawlerPython: z.string().default(''),
   // 내보내기 (제품별 별도 폴더 저장)
   exportRoot: z.string().default(''), // 빈 값 = OS 다운로드 폴더 자동 사용
   exportIncludeSources: z.boolean().default(false), // 다운로드 원본 포함 (용량 큼)
