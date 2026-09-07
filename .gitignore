@@ -29,3 +29,4 @@ _workspace_prev/
 # 설치본이 만드는 파일 (개발 클론에는 없다)
 /.version
 /tools/win/local-config.cmd
+__pycache__/

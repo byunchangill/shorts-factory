@@ -18,6 +18,26 @@ import { packetSlashCommand } from './packets.js';
 const CLI_BIN = 'claude';
 
 /**
+ * CLI를 부르기 전에 지우는 환경변수.
+ *
+ * 🔴 **과금 경계가 환경변수 하나로 뚫린다.** 「지금 실행」은 로그인된 Claude Code를 그대로
+ * 돌려 **구독(Pro/Max) 사용량**에서 나가는 것이 전제인데(CLAUDE.md 「과금이 갈리는 자리다」),
+ * `ANTHROPIC_API_KEY`가 환경에 있으면 CLI가 조용히 **종량 과금 API**로 넘어간다.
+ * 요청서 하나가 소재 프레임 수십 장을 읽으므로 금액 차이가 작지 않고, **아무 표시도 안 난다.**
+ *
+ * 이 앱의 API 자동 실행(2번 경로)은 `workspace/secrets.json`의 키를 쓰므로 여기서 지워도
+ * 영향이 없다. 지우는 것은 이 프로세스가 물려받은 셸 환경뿐이다.
+ *
+ * ClipFlow(`connectors.rs`)가 세 공급자 모두에 같은 처리를 해 둔 것을 옮겨 왔다.
+ */
+export const STRIPPED_ENV: NodeJS.ProcessEnv = {
+  ANTHROPIC_API_KEY: undefined,
+  ANTHROPIC_AUTH_TOKEN: undefined,
+  ANTHROPIC_BASE_URL: undefined,
+  ANTHROPIC_API_URL: undefined,
+};
+
+/**
  * 붙일 수 있는 도구.
  *
  * 읽기는 저장소 전체가 필요하다 — 요청서가 제품 첨부·클립 프레임·지침을 가리킨다.
@@ -141,6 +161,8 @@ export async function runPacketWithCli(
       // 저장소 루트에서 돌려야 스킬(`.claude/skills/`)과 상대경로가 잡힌다
       cwd: REPO_ROOT,
       timeoutMs: TIMEOUT_MS,
+      // 구독으로 돌린다는 약속을 여기서 지킨다 (위 STRIPPED_ENV 주석)
+      env: STRIPPED_ENV,
       onStdout: (line) => {
         // 실패 메시지에 붙일 꼬리는 원문 그대로 둔다 (JSON 한 줄이 통째로 길다)
         keep(line.slice(0, 300));

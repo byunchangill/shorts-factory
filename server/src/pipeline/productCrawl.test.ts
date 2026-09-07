@@ -43,6 +43,16 @@ describe('공개 상품 주소만 받는다', () => {
     ['http://localhost/item', '루프백 이름'],
     ['http://127.0.0.1/item', '루프백 IPv4'],
     ['http://[::1]/item', '루프백 IPv6'],
+    /*
+      🔴 아래 넷은 문자열 접두어 검사(`::1`·`fe80`)를 통과했다 (2026-09-07 실측).
+      같은 주소를 여러 모양으로 쓸 수 있는 것이 IPv6라 펼쳐서 숫자로 봐야 한다.
+    */
+    ['http://[::ffff:127.0.0.1]/item', 'IPv4-매핑 루프백'],
+    ['http://[::ffff:192.168.0.5]/item', 'IPv4-매핑 사설망'],
+    ['http://[0:0:0:0:0:0:0:1]/item', '펼친 루프백'],
+    ['http://[0:0:0:0:0:ffff:7f00:1]/item', '펼친 IPv4-매핑'],
+    ['http://[fe80:0:0:0:0:0:0:1]/item', '펼친 링크로컬'],
+    ['http://[fd12:3456::1]/item', '유니크 로컬'],
     ['http://192.168.0.2/item', '사설망'],
     ['http://10.1.2.3/item', '사설망'],
     ['http://172.16.0.9/item', '사설망'],
@@ -66,6 +76,11 @@ describe('공개 상품 주소만 받는다', () => {
   it('앞뒤 공백은 다듬는다', () => {
     expect(validatePublicUrl('  https://shop.example.com/p/1  '))
       .toBe('https://shop.example.com/p/1');
+  });
+
+  // 공인 IPv6는 막지 않는다 — 내부망만 거른다
+  it('공인 IPv6는 통과한다', () => {
+    expect(() => validatePublicUrl('http://[2606:4700:4700::1111]/item')).not.toThrow();
   });
 });
 

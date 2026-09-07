@@ -24,6 +24,12 @@ export const paths = {
   trash: () => path.join(WORKSPACE_ROOT, '.trash'),
   /** 화면에서 받은 무료 글꼴 — 설치 없이 여기 두고 바로 쓴다 (`pipeline/googleFonts.ts`) */
   fonts: () => path.join(WORKSPACE_ROOT, 'fonts'),
+  /**
+   * 상품 수집이 도메인마다 「무엇으로 닿았는지」를 적어두는 곳.
+   * 같은 사이트를 다시 모을 때 사다리 1단부터 다시 올라가지 않게 한다 —
+   * 우리도 빠르고 **사이트도 덜 두드린다** (`pipeline/productCrawl.ts`).
+   */
+  crawlProfiles: () => path.join(WORKSPACE_ROOT, 'cache', 'crawl-profiles'),
   menu: (menu: Menu) => path.join(WORKSPACE_ROOT, menu),
   formats: () => path.join(WORKSPACE_ROOT, 'menu-b', 'formats'),
   format: (formatId: string) => path.join(WORKSPACE_ROOT, 'menu-b', 'formats', formatId),

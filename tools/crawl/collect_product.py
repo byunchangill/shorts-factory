@@ -30,6 +30,9 @@ from urllib.request import Request, urlopen
 
 UA = 'shorts-factory-product-crawler/1.0'
 
+"""쓸 만한 결과의 바닥. 이 아래면 수집 실패로 본다 (프로필 재사용의 조기 종료 기준과 같다)"""
+MIN_USABLE_SCORE = 80
+
 
 class RateLimiter:
     """초당 1건 이하. robots가 더 긴 간격을 요구하면 그쪽을 따른다."""
@@ -112,6 +115,37 @@ def soft_blocked(content: str, status: int) -> bool:
     sample = content[:20000].lower()
     signals = ('captcha', 'cf-chl-', 'access denied', 'verify you are human', 'bot detection')
     return sum(signal in sample for signal in signals) >= 2
+
+
+def profile_path(base: Path, domain: str) -> Path:
+    return base / re.sub(r'[^A-Za-z0-9._-]', '_', domain) / 'profile.json'
+
+
+def load_profile(base: Path, domain: str) -> dict | None:
+    """이 도메인에 지난번 무엇으로 닿았는지.
+
+    없거나 깨졌으면 None이다 — 프로필은 **속도를 위한 힌트**이지 정답이 아니라서,
+    못 읽었다고 수집을 멈추면 캐시가 원본보다 강해진다.
+    """
+    path = profile_path(base, domain)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8-sig'))
+    except Exception:
+        return None
+
+
+def save_profile(base: Path, domain: str, fetcher: str, robots: dict) -> None:
+    path = profile_path(base, domain)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        'domain': domain,
+        'fetcher_type': fetcher,
+        'site_type': 'csr' if fetcher == 'DynamicFetcher' else 'static',
+        'crawl_delay': robots.get('crawl_delay'),
+        'updatedAt': time.strftime('%Y-%m-%d'),
+    }, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 def compact(value: object, limit: int = 12000) -> str:
@@ -318,7 +352,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('url')
     parser.add_argument('output')
+    parser.add_argument('--profiles', help='도메인별 성공 기록을 둘 폴더 (없으면 안 쓴다)')
     args = parser.parse_args()
+
+    domain = urlparse(args.url).hostname or ''
+    profiles = Path(args.profiles) if args.profiles else None
+    previous = load_profile(profiles, domain) if profiles and domain else None
 
     robots = check_robots(args.url)
     if robots.get('forbidden'):
@@ -334,9 +373,18 @@ def main() -> int:
         ('FetcherSession', plain_session),
         ('DynamicFetcher', plain_dynamic),
     ]
+    """
+    지난번 닿은 방식을 맨 앞에 세운다. 사다리를 1단부터 다시 올라가면 우리도 느리고
+    **사이트를 더 두드린다** — 부담을 줄이는 게 이 모듈의 존재 이유다.
+    순서만 바꿀 뿐 목록에서 빼지 않는다: 사이트가 바뀌면 나머지가 그대로 받아준다.
+    """
+    preferred = str((previous or {}).get('fetcher_type', ''))
+    if any(name == preferred for name, _ in ladder):
+        ladder.sort(key=lambda item: item[0] != preferred)
 
     best: tuple[int, dict] | None = None
     errors: list[str] = []
+    used = ''
     for fetcher_name, fetch in ladder:
         try:
             limiter.wait()
@@ -351,18 +399,34 @@ def main() -> int:
             score = score_of(result)
             if best is None or score > best[0]:
                 best = (score, result)
+                used = fetcher_name
             # 리뷰를 얻었으면 더 무거운 단계로 올라갈 이유가 없다
             if result['reviews'] or score >= 2200:
+                break
+            """
+            🔴 **지난번 쓴 방식이 이번에도 쓸 만하면 거기서 멈춘다.**
+            순서만 바꾸고 끝까지 올라가면 요청 수가 그대로라 재사용이 아무 일도 안 한다
+            (실측: 재방문에도 3회를 그대로 두드렸다). 사이트 부담을 줄이는 게 목적이다.
+            쓸 만한지의 기준은 아래 실패 판정(`< 80`)과 같은 값을 쓴다 — 두 벌로 두면 어긋난다.
+            """
+            if fetcher_name == preferred and score >= MIN_USABLE_SCORE:
                 break
         except Exception as exc:
             errors.append(f'{fetcher_name}: {exc}')
 
-    if best is None or best[0] < 80:
+    if best is None or best[0] < MIN_USABLE_SCORE:
         detail = '; '.join(errors[-3:])
         raise RuntimeError(f'PUBLIC_FETCH_FAILED: 공개 접근 단계에서 상품 내용을 찾지 못했습니다. {detail}')
 
     result = best[1]
     result['warnings'] = errors
+    # 성공한 것만 적는다 — 실패한 방식을 기록하면 다음번에 그것부터 시도한다
+    if profiles and domain and used:
+        try:
+            save_profile(profiles, domain, used, robots)
+        except Exception as exc:
+            # 기록 실패로 수집 결과를 버리지 않는다. 힌트일 뿐이다
+            errors.append(f'프로필 저장 실패: {exc}')
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
